@@ -1,0 +1,69 @@
+# MakoraIDE — Auto-contexto para retomar el trabajo
+
+Última actualización: 2026-08-18. **LEER ESTE ARCHIVO PRIMERO al retomar.**
+
+## Qué es este proyecto
+
+Prototipo de IDE de escritorio (Windows first, luego macOS/Linux) orientado EXCLUSIVAMENTE a desarrollo agéntico: el usuario conecta su modelo vía API key; el IDE gestiona cómo el modelo interactúa con herramientas y optimiza tokens de entrada/salida al máximo matemático/algorítmico posible sin degradar razonamiento. Nombre: **MakoraIDE**.
+
+## Estado actual
+
+- Fase: **M3 en curso** — IDE completo con agente funcional. Módulos activos: (1) layout con split panes redimensionables y persistentes + explorador en árbol expandible in situ; (2) terminal PTY integrada (xterm.js ↔ portable-pty, control dual usuario/agente); (3) **bucle agéntico con tool-calling** (read_file/list_dir/grep/bash/write_file restringidos al workspace, eventos en vivo, cancelación); (4) **cliente MCP** (stdio JSON-RPC, `mcp__server__tool`, configurable en UI); (5) multimodal (pegar imágenes/arrastrar archivos) + @mentions; (6) Markdown con diffs, tablas, copia de código y **artifacts** (aplicar al workspace/descargar); (7) monitor de crédito/tokens (DeepSeek/OpenRouter balance + estimador de coste por modelo).
+- Proveedores: OpenAI, DeepSeek (default), OpenRouter, Anthropic, Ollama, Custom. Gateway en `src-tauri/src/gateway.rs`; bucle en `agent.rs`; MCP en `mcp.rs`; terminal en `terminal.rs`; balance en `balance.rs`.
+- Contratos TS en `docs/contracts.md` (terminal, proveedores, MCP, tools, layout).
+- Estética Makora: extraída de `C:\Users\lewis\Projects\ai_trading_dashboard` (paleta CSS + logo SVG copiado a `public/makora.svg`). Paleta: fondo `#0b0d14`, tarjeta `rgba(18,22,34,.75)`, texto `#f0f2f5`/`#8b94a5`, acentos `#2979ff`/`#00e676`/`#ff3d00`/`#ffd700`, gradiente Makora blanco→`#00F0FF`→`#7000FF`→`#FF0055`. Tipografía Inter + Consolas/Fira Code.
+- Entorno: Rust 1.97.1 (stable-msvc) vía rustup ✓; Visual Studio Build Tools 2022 (17.14, workload VCTools → MSVC 14.44, link.exe) ✓; Node 22.13.1 ✓; WebView2 ✓; Windows 11 (26200).
+- Verificado: `cargo build` OK y `npm run build` OK. `src/bindings.ts` es un stub manual; tauri-specta lo regenera en el primer `npm run tauri dev`.
+- Nota: M0 (spike CM6/Monaco) quedó descartado en favor del IDE real; el editor de código integrado se reintroduce en M2/M3. La decisión CM6 vs Monaco queda pendiente para cuando haya editor.
+
+## Mapa de documentos (orden de lectura al retomar)
+
+1. `CONTEXT.md` (este archivo)
+2. `docs/decisions.md` — ADR de stack y arquitectura
+3. `docs/architecture.md` — capas, módulos implementados, flujo de un turno, IPC, SQLite, seguridad, multiplataforma
+4. `docs/contracts.md` — contratos TS (terminal, proveedores, MCP, tools, layout)
+5. `docs/token-engine.md` — diseño del diferenciador (composer, compresión, cachés, KPIs, invariantes)
+6. `docs/roadmap.md` — M0..M7 con tareas y criterios de aceptación
+7. `docs/research/*.md` — evidencia cacheada con fuentes (releer solo ante dudas concretas)
+8. `docs/review.md` — revisión de calidad/seguridad/SOLID con plan de acción priorizado (P0-P3)
+
+## Política de caché (¡importante!)
+
+- `docs/research/*.md` es el CACHÉ de la investigación web (fecha 2026-08-18, fuentes con URL dentro de cada archivo). **NO re-fetchear** salvo que: (a) una decisión esté bloqueada por datos desactualizados, (b) hayan pasado >30 días y se toque esa área, (c) se detecte contradicción con la realidad.
+- Las cifras de APIs (prompt caching, descuentos, precios) viven en `docs/research/token-engine.md`; si cambian, actualizar ahí y propagar a `docs/token-engine.md`.
+- Al tomar decisiones nuevas: añadir ADR numerado en `docs/decisions.md` y actualizar este archivo (estado + fecha).
+
+## Convenciones
+
+- Documentación en español; código en inglés.
+- Sin comentarios innecesarios en código.
+- Toda feature de eficiencia exige métrica (KPIs en `docs/token-engine.md` §3).
+- Documentos vivos: editar en sitio; no crear duplicados.
+
+## Notas técnicas de M0 (gotchas, actualizado 2026-08-18)
+
+- **tauri-specta es 2.0.0-rc.25** (no hay estable aún). API actual: `collect_commands!`, `collect_events!`, atributo `#[specta::specta]` en cada comando, derive `Event` (nombre del evento = kebab-case del tipo, p. ej. `StreamEvent` → `stream-event`). Requiere features `derive` + `typescript` y dependencias directas `specta = "=2.0.0-rc.25"` y `specta-typescript = "0.0.12"`. No hay re-export de `Type` ni `Typescript` desde tauri-specta (importarlos de `specta`/`specta_typescript`).
+- **Monaco + Vite:** los workers se importan como `monaco-editor/editor/editor.worker.js?worker` (el exports map de monaco antepone `esm/vs/`, así que NO usar `monaco-editor/esm/vs/...`).
+- **Instalador VS Build Tools:** la versión nueva del instalador (setup.exe 4.9.x) rechaza la opción `--log` con exit 87 (código de "opción desconocida"). Ejecutar el bootstrapper SIN `--log`.
+- Toda la instalación de VS Build Tools requirió elevación UAC interactiva.
+- **DeepSeek tool-calling validado (2026-08-18):** `delta.tool_calls` llega por fragmentos con `index/id/function.arguments` (el parser de `gateway.rs` los acumula por índice); el segundo turno con `assistant.tool_calls` + `role:"tool"` se acepta. El fallo de "cards con errores" era el workspace vacío: ahora `effective_folders()` en Rust usa el home dir como workspace por defecto, y `write_file` crea directorios padre.
+- **bash del agente = PTY real** (`agent.rs::run_bash`): shell del sistema (`%COMSPEC%`/`$SHELL`) con `@echo off`/`stty -echo` + marcador `__MAKORA_DONE_x__<exit>` para detectar fin; timeout 120s y cancelación cerrando el master.
+- **Pensamiento (thinking):** `deepseek-v4-pro` emite `delta.reasoning_content`; se captura como evento `thinking-delta` y se muestra en `<details>` colapsado. NO se guarda en el transcript (Anthropic factura los thinking blocks preservados como input — no replicar eso). Investigación UI en `docs/research/agent-ux.md`.
+- **Bucle agéntico:** si se agota `maxToolLoops` (24 por defecto) se ejecuta un turno final SIN herramientas para forzar respuesta. Los errores siempre se muestran (⚠️) aunque haya texto parcial. `resolve_path` tiene fallback por nombre (profundidad 2) para rutas tipo "makora-ide/README.md" contra el home.
+- **Sin límites artificiales (2026-08-18):** el bucle agéntico NO tiene tope de iteraciones — solo detección de bucle degenerado (4 turnos seguidos con las MISMAS tools/args → turno final forzado para no quemar saldo). `bash` con timeout de 600s. **El único límite es el saldo**: si `coste sesión ≥ saldo` (DeepSeek/OpenRouter), el chat bloquea el envío con explicación. 
+- **Makora Core Skill (universal):** constante en Rust (`agent.rs::MAKORA_BASE_SKILL`) prependida a TODOS los system prompts (cualquier proveedor/modelo): respuestas esenciales, tools agrupadas, lectura selectiva (grep/list_dir), bloques `lenguaje:ruta`, reintentos, ejecución hasta completar. Visible como card de solo lectura en ⚙ → Skills.
+- **Paridad de proveedores:** Anthropic ahora tiene tool-calling (`tool_use`/`input_json_delta`/`tool_result`), imágenes (bloques `image` base64) y thinking (`thinking_delta`) — mismo bucle que OpenAI-compat. Ollama usa el path OpenAI-compat with tools.
+- **Visión por modelo (2026-08-18):** DeepSeek v4 es text-only (verificado: rechaza `image_url` con 400). `ModelConfig.visionEnabled` (default false en DeepSeek, true en gpt-5.6/claude-sonnet-5): si el modelo no soporta visión, las imágenes adjuntas se omiten con aviso "🖼 El modelo X no soporta imágenes…" en vez de romper la petición. Imágenes >4 MB se omiten con aviso. Toggle en ⚙ → Modelos.
+- **Spec MAKORA_SPEC_AGENT_DIRECTIVES (implementado 2026-08-18):** (1) **ADR-012**: tool `apply_patch` con bloques `<<<<<<< SEARCH/=======/>>>>>>> REPLACE` + fuzzy match (trim), `read_file_range` con nº de línea, skill base reescrita con directivas de edición quirúrgica; (2) **ADR-013 Provider Shield**: `ChatConfig.vision_enabled`; si el modelo es text-only, el gateway guarda las imágenes en `%TEMP%/makora_attachments/` y sustituye por referencia textual (sin 400 al cambiar de modelo); (3) **ADR-014**: evicción de resultados de tools antiguas (se conservan crudos los últimos 6, el resto `[Resultado previo resumido: N líneas]`) y prefijo estable; (4) **ADR-015**: coste local por matriz de precios (ya activo) + gauge de contexto (caché/input/libre del último turno) + perfiles Eco/Balanced/Deep + monitor MCP. `inspect_image` y `repo_map_query` con tree-sitter quedan pendientes (M2).
+- **Editor y explorador (2026-08-18):** visor con pestañas (CodeMirror 6 editable/read-only) con `Ctrl+S` para guardar, modo Diff (LCS) con Revertir, artifacts abren diff al aplicar (`write_file` devuelve contenido previo). Explorador con iconos de tipo de archivo (`.ts`, `.rs`, `.py`, `.json`, etc.), menú contextual y rutas normalizadas.
+- **Motor de Temas Makora (2026-08-18):** 5 temas completos (`Makora Void`, `Makora Obsidian Emerald`, `Makora Tokyo Night`, `Makora Solar Flare`, `Makora Synthwave 84`), con persistencia en localStorage, sincronizados en tiempo real en UI, CodeMirror, xterm.js y galerías de configuración.
+- **Command Palette (`Ctrl+P` / `Ctrl+K`) & Atajos Globales:** Spotlight flotante para búsqueda difusa de archivos en todos los workspaces y lanzador rápido de acciones (`Ctrl+P`, `Ctrl+B`, `Ctrl+J`, `Ctrl+W`, `Ctrl+,`).
+- **Status Bar Inferior:** Barra de estado profesional con info de workspace, estado del agente (Listo / Ejecutando / Razonando), badge de modelo activo, tokens y coste en vivo, alternador de terminal y selector de tema.
+- **Terminal PTY en Workspace:** `term_spawn` inicia la shell en la ruta del workspace activo (`cwd`) en vez de la carpeta del ejecutable.
+- **Chat UX Mejorada:** Smart autoscroll durante streaming, navegación con flechas en popup `@` de archivos (Enter/Tab/Escape), acciones rápidas (Copiar conversación, Exportar Markdown, Nuevo Chat).
+
+## Siguiente acción
+
+- **Validar en ejecución**: ejecutar `npm run tauri dev` o build de producción.
+- **P0 de seguridad** (`docs/review.md`): DPAPI/Keychain para API keys, CSP de producción, presupuesto duro por turno.
+- Después: **M2/M4 (motor de contexto)**: presupuestos reales por componente (repo-map estilo Aider con tree-sitter) y prompt caching con prefijo estable. Ver `docs/token-engine.md`.

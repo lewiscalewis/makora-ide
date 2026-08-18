@@ -1,0 +1,73 @@
+import type { AppConfig, ThinkingLevel } from "./types";
+
+export const THINKING_LEVELS: { value: ThinkingLevel; label: string }[] = [
+  { value: "none", label: "Ninguno (rápido)" },
+  { value: "minimal", label: "Mínimo" },
+  { value: "low", label: "Bajo" },
+  { value: "medium", label: "Medio" },
+  { value: "high", label: "Alto" },
+];
+
+export const DEFAULT_CONFIG: AppConfig = {
+  models: [
+    {
+      id: "deepseek-v4-flash",
+      label: "DeepSeek V4 Flash",
+      providerId: "deepseek",
+      thinkingLevel: "low",
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+      reasoningEnabled: false,
+      visionEnabled: false,
+      inputPrice: 0.28,
+      outputPrice: 1.1,
+    },
+    {
+      id: "deepseek-v4-pro",
+      label: "DeepSeek V4 Pro",
+      providerId: "deepseek",
+      thinkingLevel: "high",
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+      reasoningEnabled: false,
+      visionEnabled: false,
+      inputPrice: 0.55,
+      outputPrice: 2.19,
+    },
+    {
+      id: "gpt-5.6",
+      label: "OpenAI GPT-5.6",
+      providerId: "openai",
+      thinkingLevel: "medium",
+      contextWindow: 400000,
+      maxOutputTokens: 16384,
+      reasoningEnabled: true,
+      visionEnabled: true,
+      inputPrice: 1.25,
+      outputPrice: 10,
+    },
+    {
+      id: "claude-sonnet-5",
+      label: "Anthropic Claude Sonnet 5",
+      providerId: "anthropic",
+      thinkingLevel: "medium",
+      contextWindow: 200000,
+      maxOutputTokens: 8192,
+      reasoningEnabled: true,
+      visionEnabled: true,
+      inputPrice: 3,
+      outputPrice: 15,
+    },
+  ],
+  skills: [],
+  mcps: [],
+  context: {
+    maxTokens: 64000,
+    systemShare: 5,
+    historyShare: 30,
+    filesShare: 45,
+    repoMapTokens: 2000,
+    compactionThreshold: 0.6,
+    includeWorkspace: true,
+  },
+};

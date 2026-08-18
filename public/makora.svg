@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Gradiente de Cuchilla: Platino a Rojo Carmesí / Cian de Adaptación -->
+    <linearGradient id="bladeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="25%" stop-color="#00F0FF" />
+      <stop offset="70%" stop-color="#7000FF" />
+      <stop offset="100%" stop-color="#FF0055" />
+    </linearGradient>
+
+    <!-- Gradiente Metálico Oscuro para el Chasis -->
+    <linearGradient id="darkChassis" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1A1D26" />
+      <stop offset="100%" stop-color="#080A0F" />
+    </linearGradient>
+
+    <!-- Gradiente de Núcleo Reactivo -->
+    <radialGradient id="coreEnergy" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="30%" stop-color="#00F0FF" />
+      <stop offset="75%" stop-color="#FF0055" />
+      <stop offset="100%" stop-color="#080A0F" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Sombra Dura Angular -->
+    <filter id="hardShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.8" />
+    </filter>
+  </defs>
+
+  <!-- Fondo Transparente / Contenedor Base -->
+  <g filter="url(#hardShadow)">
+    
+    <!-- 1. ANILLO EXTERIOR DE DIENTES DE SIERRA (Octágono de Corte) -->
+    <polygon points="
+      256,40 290,74 360,40 374,90 440,90 422,142 472,160 438,206 
+      472,256 438,306 472,352 422,370 440,422 374,422 360,472 290,438 
+      256,472 222,438 152,472 138,422 72,422 90,370 40,352 74,306 
+      40,256 74,206 40,160 90,142 72,90 138,90 152,40 222,74" 
+      fill="url(#darkChassis)" stroke="#2A2E3D" stroke-width="3" />
+
+    <!-- Anillo Interior Biselado -->
+    <circle cx="256" cy="256" r="140" fill="none" stroke="#FF0055" stroke-width="2" opacity="0.4" stroke-dasharray="12 6" />
+    <circle cx="256" cy="256" r="125" fill="none" stroke="#00F0FF" stroke-width="3" opacity="0.8" />
+
+    <!-- 2. LAS 8 CUCHILLAS DE ADAPTACIÓN DE MAKORA (Spokes Afilados) -->
+    <g id="blades">
+      <!-- Daga 0° (Norte) -->
+      <g transform="rotate(0 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 45° (Noreste) -->
+      <g transform="rotate(45 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 90° (Este) -->
+      <g transform="rotate(90 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 135° (Sureste) -->
+      <g transform="rotate(135 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 180° (Sur) -->
+      <g transform="rotate(180 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 225° (Suroeste) -->
+      <g transform="rotate(225 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 270° (Oeste) -->
+      <g transform="rotate(270 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+      <!-- Daga 315° (Noroeste) -->
+      <g transform="rotate(315 256 256)">
+        <polygon points="256,18 274,70 264,150 256,160 248,150 238,70" fill="url(#bladeGrad)" />
+        <polygon points="256,18 256,160 248,150 238,70" fill="#FFFFFF" opacity="0.35" />
+      </g>
+    </g>
+
+    <!-- 3. CHILDO OCTAGONAL CENTRAL (Cubo de Fijación) -->
+    <polygon points="256,186 305,206 326,256 305,306 256,326 207,306 186,256 207,206" fill="#0E1118" stroke="#00F0FF" stroke-width="4" />
+
+    <!-- 4. NÚCLEO SINGULAR / OJO CUÁNTICO (Adaptation Eye) -->
+    <circle cx="256" cy="256" r="42" fill="url(#coreEnergy)" />
+    
+    <!-- Diamante Central Afilado -->
+    <polygon points="256,220 286,256 256,292 226,256" fill="#FFFFFF" />
+    <polygon points="256,232 274,256 256,280 238,256" fill="#080A0F" />
+    <polygon points="256,242 266,256 256,270 246,256" fill="#FF0055" />
+  </g>
+</svg>
