@@ -157,10 +157,20 @@ function App() {
 
   // Chat history state (persisted in localStorage)
   const sessionCostRef = useRef(0);
+  const sessionTokensRef = useRef<{ inputTokens: number; outputTokens: number; cachedTokens: number }>({
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+  });
   const [sessionState, setSessionState] = useState(() => {
     const s = initSessions();
-    sessionCostRef.current =
-      s.sessions.find((x) => x.id === s.activeId)?.totalCostUsd ?? 0;
+    const act = s.sessions.find((x) => x.id === s.activeId);
+    sessionCostRef.current = act?.totalCostUsd ?? 0;
+    sessionTokensRef.current = {
+      inputTokens: act?.inputTokens ?? 0,
+      outputTokens: act?.outputTokens ?? 0,
+      cachedTokens: act?.cachedTokens ?? 0,
+    };
     return s;
   });
   const sessions = sessionState.sessions;
@@ -380,11 +390,12 @@ function App() {
     setFolders((f) => f.filter((x) => x !== path));
 
   const addUsage = (u: ChatUsage) => {
-    setUsage((prev) => ({
-      inputTokens: prev.inputTokens + u.inputTokens,
-      outputTokens: prev.outputTokens + u.outputTokens,
-      cachedTokens: prev.cachedTokens + u.cachedTokens,
-    }));
+    sessionTokensRef.current = {
+      inputTokens: sessionTokensRef.current.inputTokens + u.inputTokens,
+      outputTokens: sessionTokensRef.current.outputTokens + u.outputTokens,
+      cachedTokens: sessionTokensRef.current.cachedTokens + u.cachedTokens,
+    };
+    setUsage(sessionTokensRef.current);
     setLastUsage(u);
     refreshBalance();
     if (modelConfig) {
@@ -393,6 +404,28 @@ function App() {
           u.outputTokens * modelConfig.outputPrice) /
         1_000_000;
       if (Number.isFinite(turnCost)) sessionCostRef.current += turnCost;
+    }
+    const id = activeSessionIdRef.current;
+    if (id) {
+      const inTok = sessionTokensRef.current.inputTokens;
+      const outTok = sessionTokensRef.current.outputTokens;
+      const cacheTok = sessionTokensRef.current.cachedTokens;
+      setSessionState((prev) => ({
+        ...prev,
+        sessions: prev.sessions.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                inputTokens: inTok,
+                outputTokens: outTok,
+                cachedTokens: cacheTok,
+                totalTokens: inTok + outTok,
+                totalCostUsd: sessionCostRef.current,
+                updatedAt: Date.now(),
+              }
+            : s,
+        ),
+      }));
     }
   };
 
@@ -526,6 +559,9 @@ function App() {
         !target.title || target.title === "Nueva Conversación"
           ? deriveTitle(cleaned)
           : target.title;
+      const inTok = sessionTokensRef.current.inputTokens || target.inputTokens || 0;
+      const outTok = sessionTokensRef.current.outputTokens || target.outputTokens || 0;
+      const cacheTok = sessionTokensRef.current.cachedTokens || target.cachedTokens || 0;
       const updated: ChatSession = {
         ...target,
         model: settings.model || target.model,
@@ -534,6 +570,10 @@ function App() {
         messageCount: cleaned.length,
         messages: cleaned,
         totalCostUsd: sessionCostRef.current,
+        inputTokens: inTok,
+        outputTokens: outTok,
+        cachedTokens: cacheTok,
+        totalTokens: inTok + outTok,
       };
       return {
         ...prev,
@@ -544,11 +584,13 @@ function App() {
 
   const handleNewSession = useCallback(() => {
     const fresh = makeSession(settings.model || "");
+    sessionCostRef.current = 0;
+    sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    setUsage(sessionTokensRef.current);
     setSessionState((prev) => ({
       sessions: [fresh, ...prev.sessions],
       activeId: fresh.id,
     }));
-    sessionCostRef.current = 0;
   }, [settings.model]);
 
   const handleOpenSession = useCallback(
@@ -556,6 +598,12 @@ function App() {
       const target = sessions.find((s) => s.id === id);
       if (!target) return;
       sessionCostRef.current = target.totalCostUsd ?? 0;
+      sessionTokensRef.current = {
+        inputTokens: target.inputTokens ?? 0,
+        outputTokens: target.outputTokens ?? 0,
+        cachedTokens: target.cachedTokens ?? 0,
+      };
+      setUsage(sessionTokensRef.current);
       setSessionState((prev) => ({ ...prev, activeId: id }));
       setShowHistory(false);
     },
@@ -570,11 +618,20 @@ function App() {
         return;
       }
       if (remaining.length > 0) {
-        sessionCostRef.current = remaining[0].totalCostUsd ?? 0;
-        setSessionState({ sessions: remaining, activeId: remaining[0].id });
+        const nextActive = remaining[0];
+        sessionCostRef.current = nextActive.totalCostUsd ?? 0;
+        sessionTokensRef.current = {
+          inputTokens: nextActive.inputTokens ?? 0,
+          outputTokens: nextActive.outputTokens ?? 0,
+          cachedTokens: nextActive.cachedTokens ?? 0,
+        };
+        setUsage(sessionTokensRef.current);
+        setSessionState({ sessions: remaining, activeId: nextActive.id });
       } else {
         const fresh = makeSession(settings.model || "");
         sessionCostRef.current = 0;
+        sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+        setUsage(sessionTokensRef.current);
         setSessionState({ sessions: [fresh], activeId: fresh.id });
       }
     },
@@ -592,8 +649,10 @@ function App() {
 
   const handleClearSessions = useCallback(() => {
     const fresh = makeSession(settings.model || "");
-    setSessionState({ sessions: [fresh], activeId: fresh.id });
     sessionCostRef.current = 0;
+    sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    setUsage(sessionTokensRef.current);
+    setSessionState({ sessions: [fresh], activeId: fresh.id });
   }, [settings.model]);
 
   // Global Keyboard Shortcuts

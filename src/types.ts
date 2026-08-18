@@ -60,6 +60,8 @@ export interface UiMessage {
   id: number;
   role: "user" | "assistant";
   text: string;
+  activities?: ToolActivity[];
+  thinking?: string;
 }
 
 export type Usage = ChatUsage;
@@ -232,6 +234,10 @@ export interface ChatSession {
   model: string;
   messages: ChatMessage[];
   totalCostUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
 }
 
 export interface GitStatusInfo {

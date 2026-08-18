@@ -44,17 +44,70 @@ import type {
 function transcriptToUi(transcript: ChatMessage[]): UiMessage[] {
   const out: UiMessage[] = [];
   let id = 0;
-  for (const m of transcript) {
+  let currentAssistant: UiMessage | null = null;
+
+  for (let i = 0; i < transcript.length; i++) {
+    const m = transcript[i];
     if (m.role === "user") {
-      out.push({ id: ++id, role: "user", text: m.content || "(adjuntos)" });
-    } else if (m.role === "assistant") {
+      if (currentAssistant) {
+        out.push(currentAssistant);
+        currentAssistant = null;
+      }
       out.push({
         id: ++id,
-        role: "assistant",
-        text: m.content || (m.toolCalls?.length ? "(ejecutó herramientas)" : ""),
+        role: "user",
+        text: m.content || "(adjuntos)",
       });
+    } else if (m.role === "assistant") {
+      if (!currentAssistant) {
+        currentAssistant = {
+          id: ++id,
+          role: "assistant",
+          text: m.content || "",
+          activities: [],
+        };
+      } else if (m.content) {
+        currentAssistant.text = m.content;
+      }
+
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        currentAssistant.activities = currentAssistant.activities || [];
+        for (const tc of m.toolCalls) {
+          let toolLog = "";
+          for (let j = i + 1; j < transcript.length; j++) {
+            if (
+              transcript[j].role === "tool" &&
+              (transcript[j].toolCallId === tc.id || !transcript[j].toolCallId)
+            ) {
+              toolLog = transcript[j].content || "";
+              break;
+            }
+          }
+          if (!currentAssistant.activities.some((a) => a.id === tc.id)) {
+            currentAssistant.activities.push({
+              id: tc.id || `tc_${id}_${currentAssistant.activities.length}`,
+              name: tc.name,
+              arguments: tc.arguments,
+              log: toolLog,
+              ok: true,
+            });
+          }
+        }
+      }
+    } else if (m.role === "tool") {
+      if (currentAssistant && currentAssistant.activities && currentAssistant.activities.length > 0) {
+        const lastAct = currentAssistant.activities[currentAssistant.activities.length - 1];
+        if (lastAct && !lastAct.log) {
+          lastAct.log = m.content || "";
+        }
+      }
     }
   }
+
+  if (currentAssistant) {
+    out.push(currentAssistant);
+  }
+
   return out;
 }
 
@@ -73,17 +126,45 @@ function thinkingNudge(level: ThinkingLevel): string {
   }
 }
 
-function prettyArgs(args: string): string {
-  if (!args) return "";
+function getAntigravityToolTitle(activity: ToolActivity): string {
+  const name = activity.name.replace(/^mcp__[^_]+__/, "");
+  let detail = "";
   try {
-    const parsed = JSON.parse(args);
-    return JSON.stringify(parsed, null, 2);
+    const parsed = JSON.parse(activity.arguments);
+    if (parsed.command) detail = `"${parsed.command.slice(0, 50)}"`;
+    else if (parsed.path) detail = `"${parsed.path.slice(0, 45)}"`;
+    else if (parsed.pattern) detail = `"${parsed.pattern.slice(0, 35)}"`;
+    else if (parsed.query) detail = `"${parsed.query.slice(0, 35)}"`;
   } catch {
-    return args;
+    detail = activity.arguments ? activity.arguments.replace(/\s+/g, " ").slice(0, 40) : "";
   }
+
+  const isRunning = activity.ok === null;
+  const isErr = activity.ok === false;
+
+  let action = name;
+  if (name === "bash" || name === "run" || name === "exec") {
+    action = `Run ${detail || "command"}`;
+  } else if (name === "read_file" || name === "read_file_range") {
+    action = `Read file ${detail}`;
+  } else if (name === "write_file") {
+    action = `Write file ${detail}`;
+  } else if (name === "apply_patch") {
+    action = `Apply patch to ${detail}`;
+  } else if (name === "grep" || name === "search") {
+    action = `Search ${detail}`;
+  } else if (name === "list_dir") {
+    action = `List dir ${detail || "."}`;
+  } else {
+    action = `${name} ${detail}`;
+  }
+
+  if (isRunning) return `${action} running...`;
+  if (isErr) return `${action} failed`;
+  return `${action} finished`;
 }
 
-function ActivityRow({
+function AntigravityToolItem({
   activity,
   copied,
   onCopyLog,
@@ -93,174 +174,62 @@ function ActivityRow({
   onCopyLog: (log: string) => void;
 }) {
   const [open, setOpen] = useState(activity.ok === null);
-  const [showFullLog, setShowFullLog] = useState(false);
-  const argsPreview = activity.arguments.replace(/\s+/g, " ").slice(0, 90);
-  const formattedArgs = prettyArgs(activity.arguments);
-  const LOG_PREVIEW = 1500;
-  const logTooLong = activity.log.length > LOG_PREVIEW;
-  const visibleLog = showFullLog ? activity.log : activity.log.slice(-LOG_PREVIEW);
+  const isRunning = activity.ok === null;
+  const isErr = activity.ok === false;
+  const title = getAntigravityToolTitle(activity);
 
   useEffect(() => {
-    if (activity.ok === null) setOpen(true);
-  }, [activity.ok]);
+    if (isRunning) setOpen(true);
+  }, [isRunning]);
+
+  const outputLog = activity.log || (isRunning ? "Ejecutando..." : "Completado sin salida.");
 
   return (
     <details
-      className={`activity-item ${activity.ok === null ? "running" : activity.ok ? "success" : "failed"}`}
+      className={`ag-tool-item ${isRunning ? "running" : isErr ? "failed" : "success"}`}
       open={open}
       onToggle={(e) => setOpen(e.currentTarget.open)}
     >
-      <summary className="activity-item-header">
-        <span
-          className={
-            "activity-item-icon " +
-            (activity.ok === null ? "run" : activity.ok ? "ok" : "err")
-          }
-        >
-          {activity.ok === null ? "⚙" : activity.ok ? "✓" : "✗"}
-        </span>
-        <code className="activity-item-name">{activity.name}</code>
-        <span className="activity-item-args font-mono" title={activity.arguments}>
-          {argsPreview}
-        </span>
-        <span
-          className={`activity-state-pill ${activity.ok === null ? "run" : activity.ok ? "ok" : "err"}`}
-        >
-          {activity.ok === null ? "ejecutando" : activity.ok ? "completada" : "fallida"}
-        </span>
-        <ChevronDown size={13} className="activity-item-chevron" />
+      <summary className="ag-tool-summary">
+        <span className="ag-tool-status-dot" />
+        <span className="ag-tool-title">{title}</span>
+        <ChevronDown size={12} className="ag-tool-chevron" />
       </summary>
-      {activity.arguments && (
-        <div className="tool-args-wrap">
-          <div className="tool-args-bar">
-            <span className="activity-log-label">Argumentos</span>
-          </div>
-          <pre className="tool-args-pre font-mono">{formattedArgs}</pre>
-        </div>
-      )}
-      {activity.log && (
-        <div className="activity-log-wrap">
-          <div className="activity-log-bar">
-            <span className="activity-log-label">
-              Resultado{logTooLong && !showFullLog ? ` (últimos ${LOG_PREVIEW} caracteres)` : ""}
-            </span>
-            <div className="activity-log-actions">
-              {logTooLong && (
-                <button
-                  type="button"
-                  className="activity-log-copy"
-                  onClick={() => setShowFullLog((v) => !v)}
-                >
-                  {showFullLog ? "Ver menos" : "Ver más"}
-                </button>
+      <div className="ag-tool-content">
+        <div className="ag-tool-terminal">
+          <div className="ag-tool-terminal-header">
+            <span className="ag-tool-terminal-label font-mono">{activity.name}</span>
+            <button
+              type="button"
+              className="ag-tool-copy-btn"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onCopyLog(activity.log || activity.arguments);
+              }}
+              title="Copiar resultado"
+            >
+              {copied ? (
+                <>
+                  <Check size={11} className="text-green" />
+                  <span>Copiado</span>
+                </>
+              ) : (
+                <>
+                  <Copy size={11} />
+                  <span>Copiar</span>
+                </>
               )}
-              <button
-                type="button"
-                className="activity-log-copy"
-                onClick={() => onCopyLog(activity.log)}
-              >
-                {copied ? (
-                  <>
-                    <Check size={10} />
-                    Copiado
-                  </>
-                ) : (
-                  <>
-                    <Copy size={10} />
-                    Copiar
-                  </>
-                )}
-              </button>
-            </div>
+            </button>
           </div>
-          <pre className="activity-log">{visibleLog}</pre>
-        </div>
-      )}
-    </details>
-  );
-}
-
-function toolVerb(name: string): string {
-  const base = name.replace(/^mcp__[^_]+__/, "").toLowerCase();
-  if (base.startsWith("read_file") || base.startsWith("list_dir") || base.startsWith("inspect")) return "Inspeccionó";
-  if (base.startsWith("grep") || base.startsWith("glob") || base.startsWith("search")) return "Buscó";
-  if (base.startsWith("write_file") || base.startsWith("create")) return "Escribió";
-  if (base.startsWith("apply_patch") || base.startsWith("edit")) return "Editó";
-  if (base.startsWith("bash") || base.startsWith("run") || base.startsWith("exec") || base.startsWith("term")) return "Ejecutó";
-  if (base.startsWith("delete") || base.startsWith("remove")) return "Eliminó";
-  return "Usó";
-}
-
-function summarizeActivities(activities: ToolActivity[]): string {
-  const counts = new Map<string, number>();
-  for (const a of activities) {
-    const verb = toolVerb(a.name);
-    counts.set(verb, (counts.get(verb) ?? 0) + 1);
-  }
-  const parts = Array.from(counts.entries()).map(([verb, n]) => `${verb} ×${n}`);
-  return parts.join(" · ") || "Sin herramientas";
-}
-
-function ToolActivityCard({
-  activities,
-  running,
-  copiedLogId,
-  onCopyLog,
-  onHoverChange,
-}: {
-  activities: ToolActivity[];
-  running: boolean;
-  copiedLogId: string | null;
-  onCopyLog: (id: string, log: string) => void;
-  onHoverChange?: (hovered: boolean) => void;
-}) {
-  const [open, setOpen] = useState(running);
-  const runningTool = activities.find((a) => a.ok === null);
-  const okCount = activities.filter((a) => a.ok === true).length;
-  const failCount = activities.filter((a) => a.ok === false).length;
-  const summary = runningTool
-    ? `${toolVerb(runningTool.name)} con ${runningTool.name}`
-    : summarizeActivities(activities);
-
-  useEffect(() => {
-    if (running) setOpen(true);
-  }, [running]);
-
-  return (
-    <details
-      className={`tool-card ${running ? "running" : ""}`}
-      open={open}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
-      onMouseEnter={() => onHoverChange?.(true)}
-      onMouseLeave={() => onHoverChange?.(false)}
-    >
-      <summary className="tool-card-header">
-        <span className={`tool-card-dot ${running ? "running" : failCount > 0 ? "failed" : "done"}`} />
-        <span className="tool-card-icon">{runningTool ? "⚙" : failCount > 0 ? "⚠" : "✓"}</span>
-        <span className="tool-card-summary">
-          {runningTool
-            ? `Ejecutando ${runningTool.name}…`
-            : summary}
-        </span>
-        <span className="tool-card-count">
-          {activities.length} herramienta{activities.length === 1 ? "" : "s"}
-          {!running && (okCount !== activities.length || failCount > 0) && (
-            <span className="tool-card-count-detail">
-              {" "}· {okCount} ✓ {failCount > 0 ? `· ${failCount} ✗` : ""}
-            </span>
+          {activity.arguments && (
+            <div className="ag-tool-args font-mono">
+              <span className="ag-tool-args-prefix">$ </span>
+              {activity.arguments}
+            </div>
           )}
-        </span>
-        <ChevronDown size={13} className={`tool-card-chevron ${open ? "rotated" : ""}`} />
-      </summary>
-      <div className="tool-card-body">
-        {activities.map((a) => (
-          <ActivityRow
-            key={a.id}
-            activity={a}
-            copied={copiedLogId === a.id}
-            onCopyLog={(log) => onCopyLog(a.id, log)}
-          />
-        ))}
+          <pre className="ag-tool-log font-mono">{outputLog}</pre>
+        </div>
       </div>
     </details>
   );
@@ -332,7 +301,6 @@ export default function Chat({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<number | null>(null);
   const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
-  const [hoveringToolCard, setHoveringToolCard] = useState(false);
   const [projectRules, setProjectRules] = useState<string | null>(null);
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -411,12 +379,6 @@ export default function Chat({
       scrollToBottom(false);
     }
   }, [messages, turnActivities, thinking]);
-
-  useEffect(() => {
-    if (hoveringToolCard) {
-      isAutoScrollEnabled.current = false;
-    }
-  }, [hoveringToolCard]);
 
   // Persist transcript changes upward once hydration has settled.
   useEffect(() => {
@@ -738,16 +700,16 @@ export default function Chat({
       const result = await chat(config, system, newTranscript, folders);
       onUsage(result);
       setTranscript(result.messages);
+      const uiMsgs = transcriptToUi(result.messages);
       const finalText =
         result.messages
           .filter((m) => m.role === "assistant")
           .map((m) => m.content)
           .pop() ?? "";
-      setMessages((m) =>
-        m.map((x) =>
-          x.id === assistantId ? { ...x, text: acc || finalText || "(sin respuesta)" } : x,
-        ),
-      );
+      if (uiMsgs.length > 0 && uiMsgs[uiMsgs.length - 1].role === "assistant") {
+        uiMsgs[uiMsgs.length - 1].text = acc || finalText || uiMsgs[uiMsgs.length - 1].text || "(sin respuesta)";
+      }
+      setMessages(uiMsgs);
     } catch (err) {
       const errText = `Error: ${err}`;
       const finalErr = acc ? `${acc}\n\n⚠️ ${errText}` : errText;
@@ -918,9 +880,11 @@ export default function Chat({
         {messages.map((m) => {
           const isCurrentAssistant = m.role === "assistant" && m.id === currentAssistantId.current;
           const isBusyCurrent = isCurrentAssistant && busy;
-          const hasThinking = thinking && thinking.id === m.id && thinking.text.trim().length > 0;
-          const msgActivities = m.role === "assistant" ? turnActivities[m.id] ?? [] : [];
-          const msgRunning = msgActivities.some((a) => a.ok === null);
+          const thinkingText = (isCurrentAssistant && thinking?.text) || m.thinking || "";
+          const hasThinking = thinkingText.trim().length > 0;
+          const liveActivities = m.role === "assistant" ? turnActivities[m.id] ?? [] : [];
+          const allActivities = liveActivities.length > 0 ? liveActivities : (m.activities ?? []);
+          const runningToolInMsg = isBusyCurrent ? allActivities.find((a) => a.ok === null) : undefined;
 
           return (
             <div key={m.id} className={"msg msg-" + m.role}>
@@ -932,7 +896,7 @@ export default function Chat({
                   {isBusyCurrent && (
                     <span className="msg-streaming-indicator">
                       <span className="pulse-dot" />
-                      <span>{runningTool ? `Ejecutando ${runningTool.name}...` : hasThinking ? "Razonando..." : "Generando respuesta..."}</span>
+                      <span>{runningToolInMsg ? `Ejecutando ${runningToolInMsg.name}...` : hasThinking ? "Razonando..." : "Generando respuesta..."}</span>
                     </span>
                   )}
                 </div>
@@ -957,75 +921,80 @@ export default function Chat({
                 )}
               </div>
 
-
-              {/* Discreet VS Code-style Thinking Collapsible Drawer */}
-              {hasThinking && (
-                <details className="thinking-discrete" open={isBusyCurrent && !m.text}>
-                  <summary className="thinking-discrete-summary">
-                    <span className="thinking-icon-dot" />
-                    <span className="thinking-discrete-title">
-                      Razonamiento interno ({thinking!.text.trim().split(/\s+/).length} palabras)
-                    </span>
-                  </summary>
-                  <div className="thinking-discrete-body font-mono">
-                    {thinking!.text}
-                  </div>
-                </details>
-              )}
-
-              {/* Assistant Content or Reassuring Working State */}
               {m.role === "assistant" ? (
-                m.text ? (
-                  <div className="msg-content">
-                    <Markdown text={m.text} onApplyArtifact={applyArtifact} />
-                  </div>
-                ) : isBusyCurrent ? (
-                  <div className="ai-working-indicator">
-                    <div className="ai-working-top">
-                      <div className="ai-working-spinner-wrap">
-                        <div className="ai-working-spinner" />
-                        <Zap size={11} className="ai-working-icon text-cyan" />
+                <>
+                  {/* 1. Antigravity-Style Discreet Tool Dropdowns at Top of Message Card */}
+                  {allActivities.length > 0 && (
+                    <div className="ag-tools-container">
+                      {allActivities.map((a) => (
+                        <AntigravityToolItem
+                          key={a.id}
+                          activity={a}
+                          copied={copiedLogId === a.id}
+                          onCopyLog={(log) => {
+                            navigator.clipboard.writeText(log).then(() => {
+                              setCopiedLogId(a.id);
+                              setTimeout(() => setCopiedLogId(null), 1400);
+                            });
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 2. Discreet Thinking Collapsible Drawer */}
+                  {hasThinking && (
+                    <details className="thinking-discrete" open={isBusyCurrent && !m.text}>
+                      <summary className="thinking-discrete-summary">
+                        <span className="thinking-icon-dot" />
+                        <span className="thinking-discrete-title">
+                          Razonamiento interno ({thinkingText.trim().split(/\s+/).length} palabras)
+                        </span>
+                        <ChevronDown size={11} className="thinking-chevron" />
+                      </summary>
+                      <div className="thinking-discrete-body font-mono">
+                        {thinkingText}
                       </div>
-                      <div className="ai-working-text-col">
-                        <span className="ai-working-title">
-                          {runningTool
-                            ? `Ejecutando herramienta: ${runningTool.name}`
-                            : hasThinking
-                              ? "Razonando solución técnica..."
-                              : "Analizando proyecto y preparando respuesta..."}
-                        </span>
-                        <span className="ai-working-detail font-mono">
-                          {runningTool
-                            ? runningTool.arguments.slice(0, 75)
-                            : `${currentTurnActivities.length} operaciones realizadas`}
-                        </span>
+                    </details>
+                  )}
+
+                  {/* 3. Assistant Response Markdown Text or Reassuring Working State */}
+                  {m.text ? (
+                    <div className="msg-content">
+                      <Markdown text={m.text} onApplyArtifact={applyArtifact} />
+                    </div>
+                  ) : isBusyCurrent ? (
+                    <div className="ai-working-indicator">
+                      <div className="ai-working-top">
+                        <div className="ai-working-spinner-wrap">
+                          <div className="ai-working-spinner" />
+                          <Zap size={11} className="ai-working-icon text-cyan" />
+                        </div>
+                        <div className="ai-working-text-col">
+                          <span className="ai-working-title">
+                            {runningToolInMsg
+                              ? `Ejecutando ${runningToolInMsg.name}...`
+                              : hasThinking
+                                ? "Razonando solución técnica..."
+                                : "Analizando proyecto y preparando respuesta..."}
+                          </span>
+                          <span className="ai-working-detail font-mono">
+                            {runningToolInMsg
+                              ? runningToolInMsg.arguments.slice(0, 75)
+                              : `${allActivities.length} operaciones realizadas`}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="ai-working-shimmer-track">
+                        <div className="ai-working-shimmer-bar" />
                       </div>
                     </div>
-                    <div className="ai-working-shimmer-track">
-                      <div className="ai-working-shimmer-bar" />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="msg-text muted font-mono">(sin contenido)</div>
-                )
+                  ) : (
+                    <div className="msg-text muted font-mono">(sin contenido)</div>
+                  )}
+                </>
               ) : (
                 <div className="msg-text">{m.text}</div>
-              )}
-
-              {/* Tool Activity Card: colapsable, asociada a este turno del agente */}
-              {msgActivities.length > 0 && (
-                <ToolActivityCard
-                  activities={msgActivities}
-                  running={msgRunning}
-                  copiedLogId={copiedLogId}
-                  onCopyLog={(id, log) => {
-                    navigator.clipboard.writeText(log).then(() => {
-                      setCopiedLogId(id);
-                      setTimeout(() => setCopiedLogId(null), 1400);
-                    });
-                  }}
-                  onHoverChange={setHoveringToolCard}
-                />
               )}
             </div>
           );

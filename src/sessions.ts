@@ -58,6 +58,13 @@ function sanitizeSession(raw: unknown): ChatSession | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Partial<ChatSession>;
   if (typeof s.id !== "string" || !s.id) return null;
+  const inTok = typeof s.inputTokens === "number" && Number.isFinite(s.inputTokens) ? s.inputTokens : 0;
+  const outTok = typeof s.outputTokens === "number" && Number.isFinite(s.outputTokens) ? s.outputTokens : 0;
+  const cacheTok = typeof s.cachedTokens === "number" && Number.isFinite(s.cachedTokens) ? s.cachedTokens : 0;
+  const totTok =
+    typeof s.totalTokens === "number" && Number.isFinite(s.totalTokens)
+      ? s.totalTokens
+      : inTok + outTok;
   return {
     id: s.id,
     title: safeString(s.title, "Nueva Conversación").slice(0, 120),
@@ -70,6 +77,10 @@ function sanitizeSession(raw: unknown): ChatSession | null {
       typeof s.totalCostUsd === "number" && Number.isFinite(s.totalCostUsd)
         ? s.totalCostUsd
         : 0,
+    inputTokens: inTok,
+    outputTokens: outTok,
+    cachedTokens: cacheTok,
+    totalTokens: totTok,
   };
 }
 
@@ -154,6 +165,10 @@ export function makeSession(model: string): ChatSession {
     model,
     messages: [],
     totalCostUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    totalTokens: 0,
   };
 }
 

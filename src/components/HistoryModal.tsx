@@ -9,6 +9,7 @@ import {
   Search,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import type { ChatSession } from "../types";
 
@@ -62,6 +63,10 @@ function HistoryRow({
     setEditing(false);
   };
 
+  const totalTok =
+    session.totalTokens ||
+    (session.inputTokens ?? 0) + (session.outputTokens ?? 0);
+
   return (
     <div
       className={`history-item${active ? " active" : ""}`}
@@ -109,9 +114,17 @@ function HistoryRow({
               {session.model}
             </span>
           )}
+          <span
+            title={`Consumo de tokens:\nEntrada: ${(session.inputTokens ?? 0).toLocaleString()}\nSalida: ${(session.outputTokens ?? 0).toLocaleString()}\nCaché: ${(session.cachedTokens ?? 0).toLocaleString()}`}
+          >
+            <Zap size={10} className="text-cyan" />
+            {totalTok > 0
+              ? `${totalTok >= 1000 ? (totalTok / 1000).toFixed(1) + "k" : totalTok} tok`
+              : "0 tok"}
+          </span>
           <span>
             <DollarSign size={10} />
-            {session.totalCostUsd.toFixed(4)}
+            {(session.totalCostUsd ?? 0).toFixed(4)}
           </span>
         </div>
       </div>

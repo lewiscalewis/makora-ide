@@ -1633,344 +1633,181 @@ input {
   100% { left: 120%; }
 }
 
-/* Tool Activity Cards (por turno del agente, estilo sutil Antigravity/VS Code) */
-.tool-card {
-  width: 100%;
-  margin: 8px 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.018);
-  overflow: hidden;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
+/* ==========================================================================
+   Antigravity-Style Subtle Tool Collapsible Dropdown (Inside Message Card)
+   ========================================================================== */
 
-.tool-card:hover {
-  border-color: rgba(255, 255, 255, 0.13);
-}
-
-.tool-card.running {
-  border-color: rgba(0, 200, 214, 0.28);
-  background: rgba(0, 200, 214, 0.03);
-}
-
-.tool-card[open] {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.028);
-}
-
-.tool-card-header {
+.ag-tools-container {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 8px 0;
+}
+
+.ag-tool-item {
+  width: fit-content;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+}
+
+.ag-tool-summary {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
   cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 6px;
   user-select: none;
   list-style: none;
-  font-size: 11.5px;
+  transition: all 0.15s ease;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  width: fit-content;
+  max-width: 100%;
 }
 
-.tool-card-header::-webkit-details-marker {
+.ag-tool-summary::-webkit-details-marker {
   display: none;
 }
 
-.tool-card-header:hover {
-  background: rgba(255, 255, 255, 0.035);
+.ag-tool-summary:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
-.tool-card-dot {
-  width: 7px;
-  height: 7px;
+.ag-tool-item.running .ag-tool-summary {
+  color: var(--cyan);
+  background: rgba(0, 200, 214, 0.08);
+  border-color: rgba(0, 200, 214, 0.25);
+}
+
+.ag-tool-item.failed .ag-tool-summary {
+  color: var(--accent-red);
+  background: rgba(255, 61, 0, 0.08);
+  border-color: rgba(255, 61, 0, 0.25);
+}
+
+.ag-tool-status-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+  background: var(--accent-green);
+  opacity: 0.8;
 }
 
-.tool-card-dot.running {
+.ag-tool-item.running .ag-tool-status-dot {
   background: var(--cyan);
-  box-shadow: 0 0 7px var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
   animation: pulse 1.2s infinite;
 }
 
-.tool-card-dot.done {
-  background: var(--accent-green);
-  opacity: 0.85;
-}
-
-.tool-card-dot.failed {
+.ag-tool-item.failed .ag-tool-status-dot {
   background: var(--accent-red);
-  opacity: 0.9;
 }
 
-.tool-card-icon {
+.ag-tool-title {
+  font-family: Consolas, "Fira Code", monospace;
   font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.tool-card-summary {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-secondary);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tool-card.running .tool-card-summary {
-  color: var(--cyan);
-}
-
-.tool-card-count {
-  flex-shrink: 0;
-  font-size: 10px;
-  color: var(--text-muted);
-  letter-spacing: 0.2px;
-}
-
-.tool-card-count-detail {
-  opacity: 0.8;
-}
-
-.tool-card-chevron {
-  flex-shrink: 0;
+.ag-tool-chevron {
   color: var(--text-muted);
   transition: transform 0.18s ease;
+  flex-shrink: 0;
+  margin-left: 2px;
 }
 
-.tool-card-chevron.rotated {
+.ag-tool-item[open] .ag-tool-chevron {
   transform: rotate(180deg);
 }
 
-.tool-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 4px 10px 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(0, 0, 0, 0.18);
-  max-height: 320px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+.ag-tool-content {
+  margin-top: 4px;
+  margin-bottom: 6px;
+  animation: fadeIn 0.15s ease;
+  max-width: 100%;
 }
 
-.tool-args-wrap {
-  margin: 8px 10px 0;
-  border-radius: 6px;
-  background: #06080f;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  overflow: hidden;
-}
-
-.tool-args-bar {
-  padding: 5px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.tool-args-pre {
-  margin: 0;
-  padding: 8px 10px;
-  font-size: 10.5px;
-  color: #b8c4d8;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.activity-log-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.activity-item {
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.02);
+.ag-tool-terminal {
+  background: #070911;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  transition: all 0.15s ease;
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  max-height: 280px;
+  overflow-y: auto;
 }
 
-.activity-item[open] {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.activity-item.running {
-  border-color: rgba(0, 200, 214, 0.35);
-  background: rgba(0, 200, 214, 0.04);
-}
-
-.activity-item.success {
-  border-left: 3px solid var(--accent-green);
-}
-
-.activity-item.failed {
-  border-left: 3px solid var(--accent-red);
-  background: rgba(255, 61, 0, 0.04);
-}
-
-.activity-item-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  font-size: 11.5px;
-  cursor: pointer;
-  user-select: none;
-  list-style: none;
-  transition: background 0.12s ease;
-}
-
-.activity-item-header::-webkit-details-marker {
-  display: none;
-}
-
-.activity-item-header:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.activity-item-icon {
-  width: 17px;
-  height: 17px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-
-.activity-item-icon.run {
-  background: rgba(0, 200, 214, 0.15);
-  color: var(--cyan);
-}
-
-.activity-item-icon.ok {
-  background: rgba(0, 230, 118, 0.15);
-  color: var(--accent-green);
-}
-
-.activity-item-icon.err {
-  background: rgba(255, 61, 0, 0.18);
-  color: var(--accent-red);
-}
-
-.activity-item-name {
-  background: rgba(255, 255, 255, 0.06);
-  padding: 2px 7px;
-  border-radius: 4px;
-  color: #fff;
-  font-weight: 700;
-  font-size: 10.5px;
-  flex-shrink: 0;
-}
-
-.activity-item-args {
-  color: var(--text-muted);
-  font-size: 10.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.activity-state-pill {
-  flex-shrink: 0;
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 9px;
-}
-
-.activity-state-pill.run {
-  color: var(--cyan);
-  background: rgba(0, 200, 214, 0.12);
-}
-
-.activity-state-pill.ok {
-  color: var(--accent-green);
-  background: rgba(0, 230, 118, 0.1);
-}
-
-.activity-state-pill.err {
-  color: var(--accent-red);
-  background: rgba(255, 61, 0, 0.12);
-}
-
-.activity-item-chevron {
-  flex-shrink: 0;
-  color: var(--text-muted);
-  transition: transform 0.18s ease;
-}
-
-.activity-item[open] .activity-item-chevron {
-  transform: rotate(180deg);
-}
-
-.activity-log-wrap {
-  margin: 0 10px 10px;
-  border-radius: 6px;
-  background: #06080f;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  max-height: 320px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.activity-log-bar {
+.ag-tool-terminal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 5px 10px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
 }
 
-.activity-log-label {
+.ag-tool-terminal-label {
   font-size: 10px;
+  color: var(--cyan);
   font-weight: 600;
-  letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: var(--text-muted);
+  letter-spacing: 0.5px;
 }
 
-.activity-log-copy {
+.ag-tool-copy-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 5px;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: all 0.15s ease;
 }
 
-.activity-log-copy:hover {
-  color: var(--text-main);
-  background: rgba(255, 255, 255, 0.08);
+.ag-tool-copy-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.2);
 }
 
-.activity-log {
-  margin: 0;
-  padding: 8px 10px;
-  font-family: Consolas, "Fira Code", monospace;
+.ag-tool-args {
   font-size: 10.5px;
   color: #94a3b8;
+  margin-bottom: 6px;
+  word-break: break-all;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.ag-tool-args-prefix {
+  color: var(--cyan);
+  font-weight: bold;
+}
+
+.ag-tool-log {
+  margin: 0;
+  font-size: 11px;
+  color: #cbd5e1;
   line-height: 1.45;
   white-space: pre-wrap;
-  overflow-y: auto;
-  max-height: 280px;
+  word-break: break-word;
+  font-family: Consolas, "Fira Code", monospace;
 }
 
 
