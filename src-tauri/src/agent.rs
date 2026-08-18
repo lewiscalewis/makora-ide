@@ -19,15 +19,22 @@ pub fn cancel() {
 const MAKORA_BASE_SKILL: &str = "\
 ## Makora Core Skill (universal — aplica en todos los proveedores y modelos)
 
-Reglas cardinales de eficiencia de tokens:
-1. Cero prosa innecesaria: sin introducciones, cortesías ni resúmenes redundantes. Responde directamente con herramientas o con el resultado técnico.
-2. Edición quirúrgica: NUNCA reescribas archivos completos con write_file (salvo archivos nuevos). Usa apply_patch con bloques <<<<<<< SEARCH / ======= / >>>>>>> REPLACE y ~3 líneas de anclaje.
-3. Lectura progresiva: usa list_dir para localizar; lee solo el rango necesario con read_file_range; nunca archivos enteros sin necesidad; agrupa TODAS las lecturas independientes en el mismo turno.
-4. Terminal silenciosa: usa bash con banderas de silencio y salidas acotadas; evita comandos que generen salidas masivas.
-5. Flujo: Localizar → Diagnosticar → Modificar (apply_patch) → Verificar (bash: tests/linter) → Concluir con un resumen de 1 línea por archivo modificado (ruta:línea - acción).
-6. Continúa hasta COMPLETAR la tarea entera — sin límites de pasos; el único límite es el saldo del usuario.
-7. Errores de herramienta: reintenta una vez con enfoque distinto; si persiste, informa con precisión.
-8. Para archivos NUEVOS completos, emite bloques ```lenguaje:ruta/del/archivo para que el usuario los aplique con un clic.
+Directrices Operativas de Calidad, Precisión y Eficiencia Extrema de Tokens:
+1. Cero prosa innecesaria: NUNCA generes introducciones, saludos ('Hola', 'Entendido'), confirmaciones verbales vacías ni despedidas redundantes. Responde directamente ejecutando las herramientas necesarias o con el resultado técnico concreto.
+2. Edición quirúrgica obligatoria: NUNCA uses write_file en archivos existentes ni reescribas archivos completos. Usa EXCLUSIVAMENTE apply_patch con bloques:
+   <<<<<<< SEARCH
+   [líneas exactas a reemplazar]
+   =======
+   [nuevas líneas]
+   >>>>>>> REPLACE
+   con 3-5 líneas de anclaje de contexto. Usa write_file ÚNICAMENTE para archivos 100% nuevos.
+3. Lectura progresiva y focalizada: NUNCA leas archivos enteros con read_file si solo requieres una función o sección. Usa read_file_range con rango [start_line, end_line]. Usa list_dir para ubicar archivos antes de leerlos.
+4. Tool Batching: Agrupa todas las lecturas de herramientas independientes en el primer turno para minimizar iteraciones de red y latencia.
+5. Exploración aislada: Cuando necesites buscar en múltiples archivos, logs extensos o diagnosticar dependencias complejas, utiliza explore_subagent para no polucionar el historial principal.
+6. Terminal silenciosa: Ejecuta comandos bash con parámetros de silencio (-q, --quiet, salidas acotadas). Evita volcados masivos.
+7. Conclusión estructurada y compacta: Al finalizar la tarea, emite un resumen conciso de máximo 1 línea por archivo modificado:
+   - `ruta/al/archivo:línea - acción realizada`
+8. Continúa autónomamente hasta COMPLETAR la tarea técnica en su totalidad; no te detengas a mitad de camino pidiendo confirmaciones triviales.
 ";
 
 fn now_id() -> String {
@@ -129,6 +136,20 @@ fn core_tools() -> Vec<ToolDef> {
                     "patch": { "type": "string", "description": "Bloques SEARCH/REPLACE" }
                 },
                 "required": ["path", "patch"]
+            }),
+        },
+        ToolDef {
+            name: "explore_subagent".into(),
+            description: "Ejecuta una tarea de investigación, búsqueda en logs o análisis multifichero en un contexto efímero aislado. Devuelve únicamente el resumen técnico condensado (100-200 tokens) sin ensuciar el historial principal.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Objetivo técnico concreto de la exploración (ej. 'Busca dónde se implementa calculate_correlations y resume sus parámetros y retorno')"
+                    }
+                },
+                "required": ["task"]
             }),
         },
         ToolDef {
@@ -506,29 +527,60 @@ fn apply_patch_to(text: &str, patch: &str) -> Result<(String, usize), String> {
             .trim_matches('\n')
             .replace("\r\n", "\n");
 
-        let candidates = [
-            search_block.clone(),
-            search_block
+        let mut replaced = false;
+
+        // Pass 1: Exact match
+        if let Some(pos) = result.find(&search_block) {
+            result.replace_range(pos..pos + search_block.len(), &replace_block);
+            replaced = true;
+        }
+
+        // Pass 2: Trailing whitespace tolerance on each line
+        if !replaced {
+            let search_trimmed = search_block
                 .lines()
                 .map(|l| l.trim_end())
                 .collect::<Vec<_>>()
-                .join("\n"),
-        ];
-        let mut replaced = false;
-        for candidate in candidates {
-            if let Some(pos) = result.find(&candidate) {
-                result.replace_range(pos..pos + candidate.len(), &replace_block);
+                .join("\n");
+            if let Some(pos) = result.find(&search_trimmed) {
+                result.replace_range(pos..pos + search_trimmed.len(), &replace_block);
                 replaced = true;
-                count += 1;
-                break;
             }
         }
+
+        // Pass 3: Fuzzy window matching (tolerant to indentation/whitespace differences)
+        if !replaced {
+            let result_lines: Vec<&str> = result.lines().collect();
+            let search_lines: Vec<&str> = search_block.lines().collect();
+            let s_len = search_lines.len();
+
+            if s_len > 0 && result_lines.len() >= s_len {
+                for i in 0..=result_lines.len() - s_len {
+                    let window = &result_lines[i..i + s_len];
+                    let matches = window
+                        .iter()
+                        .zip(search_lines.iter())
+                        .all(|(a, b)| a.trim() == b.trim());
+                    if matches {
+                        let mut new_lines = Vec::new();
+                        new_lines.extend_from_slice(&result_lines[..i]);
+                        new_lines.push(&replace_block);
+                        new_lines.extend_from_slice(&result_lines[i + s_len..]);
+                        result = new_lines.join("\n");
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         if !replaced {
             return Err(format!(
                 "anclaje no encontrado:\n{}",
                 search_block.lines().take(5).collect::<Vec<_>>().join("\n")
             ));
         }
+        count += 1;
         rest = &after_start[end + ">>>>>>> REPLACE".len()..];
     }
     if count == 0 {
@@ -715,8 +767,108 @@ fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
+async fn run_explore_subagent(
+    app: &AppHandle,
+    cfg: &ChatConfig,
+    task: &str,
+    folders: &[String],
+    registry: &McpRegistry,
+) -> Result<String, String> {
+    let sub_system = format!(
+        "Eres el Subagente Explorer de MakoraIDE. Tu misión exclusiva es investigar y responder con síntesis técnica concisa (100-250 palabras):\n{task}\n\nUsa las herramientas read_file_range, list_dir, grep para localizar la información. Al terminar emite directamente tu conclusión técnica sin rodeos."
+    );
+    let mut current_msgs = vec![ChatMessage {
+        role: "user".into(),
+        content: format!("Objetivo de exploración técnica: {task}"),
+        images: vec![],
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let sub_tools = vec![
+        ToolDef {
+            name: "read_file_range".into(),
+            description: "Lee un intervalo de líneas [start_line, end_line] de un archivo.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "start_line": { "type": "integer" },
+                    "end_line": { "type": "integer" }
+                },
+                "required": ["path", "start_line", "end_line"]
+            }),
+        },
+        ToolDef {
+            name: "list_dir".into(),
+            description: "Lista archivos en un directorio.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+        },
+        ToolDef {
+            name: "grep".into(),
+            description: "Busca patrones en archivos del workspace.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "pattern": { "type": "string" }, "path": { "type": "string" } },
+                "required": ["pattern"]
+            }),
+        },
+    ];
+
+    let mut last_text = String::new();
+    for _ in 0..4 {
+        if CANCEL.load(Ordering::SeqCst) {
+            return Err("exploración cancelada".into());
+        }
+        let outcome = if cfg.kind == "anthropic" {
+            gateway::anthropic_turn(app, cfg, &sub_system, &current_msgs, &sub_tools).await?
+        } else {
+            gateway::openai_turn(app, cfg, &sub_system, &current_msgs, &sub_tools).await?
+        };
+
+        if !outcome.text.trim().is_empty() {
+            last_text = outcome.text.clone();
+        }
+
+        if outcome.tool_calls.is_empty() {
+            break;
+        }
+
+        let mut tool_results = Vec::new();
+        for tc in &outcome.tool_calls {
+            let res = execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry).await
+                .unwrap_or_else(|e| format!("ERROR: {e}"));
+            tool_results.push(ChatMessage {
+                role: "tool".into(),
+                content: res,
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: Some(tc.id.clone()),
+            });
+        }
+        current_msgs.push(ChatMessage {
+            role: "assistant".into(),
+            content: outcome.text,
+            images: vec![],
+            tool_calls: Some(outcome.tool_calls),
+            tool_call_id: None,
+        });
+        current_msgs.extend(tool_results);
+    }
+
+    if last_text.trim().is_empty() {
+        Ok("[Subagente Explorer completó la investigación sin texto final]".into())
+    } else {
+        Ok(format!("[Resultado de Explorer Subagent]:\n{last_text}"))
+    }
+}
+
 async fn execute_tool(
     app: &AppHandle,
+    cfg: &ChatConfig,
     name: &str,
     arguments: &str,
     folders: &[String],
@@ -771,6 +923,13 @@ async fn execute_tool(
                 msg.push_str(&format!("\n⚠️ ALERTA DE SINTAXIS: {syntax_err}"));
             }
             Ok(msg)
+        }
+        "explore_subagent" => {
+            let task = s("task");
+            if task.trim().is_empty() {
+                return Err("debes especificar la tarea para explore_subagent".into());
+            }
+            run_explore_subagent(app, cfg, &task, folders, registry).await
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -1015,7 +1174,7 @@ pub async fn run(
                     arguments: tc.arguments.clone(),
                 },
             );
-            let result = execute_tool(app, &tc.name, &tc.arguments, folders, registry).await;
+            let result = execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry).await;
             let (ok, summary) = match &result {
                 Ok(s) => (true, truncate(s, 400)),
                 Err(e) => (false, e.clone()),

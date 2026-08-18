@@ -522,6 +522,7 @@ fn detect_project_rules(folders: Vec<String>) -> Result<Option<String>, String> 
     let candidates = [
         ".makora/rules.md",
         ".makora/RULES.md",
+        ".makorarules",
         "MAKORA.md",
         "AGENTS.md",
         "CLAUDE.md",
