@@ -113,10 +113,12 @@ export default function Chat({
   } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [copiedTranscript, setCopiedTranscript] = useState(false);
+  const [copiedMsgId, setCopiedMsgId] = useState<number | null>(null);
   const [projectRules, setProjectRules] = useState<string | null>(null);
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
+
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -501,7 +503,15 @@ export default function Chat({
     onApplyArtifact(path, content);
   };
 
+  const copyMessage = (id: number, text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedMsgId(id);
+      setTimeout(() => setCopiedMsgId(null), 1400);
+    });
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+
     if (mention && mention.results.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -651,16 +661,38 @@ export default function Chat({
           return (
             <div key={m.id} className={"msg msg-" + m.role}>
               <div className="msg-header">
-                <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
-                  {m.role === "user" ? "👤 Tú" : "⚔️ Makora"}
-                </span>
-                {isBusyCurrent && (
-                  <span className="msg-streaming-indicator">
-                    <span className="pulse-dot" />
-                    <span>{runningTool ? `Ejecutando ${runningTool.name}...` : hasThinking ? "Razonando..." : "Generando respuesta..."}</span>
+                <div className="msg-header-left">
+                  <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
+                    {m.role === "user" ? "👤 Tú" : "⚔️ Makora"}
                   </span>
+                  {isBusyCurrent && (
+                    <span className="msg-streaming-indicator">
+                      <span className="pulse-dot" />
+                      <span>{runningTool ? `Ejecutando ${runningTool.name}...` : hasThinking ? "Razonando..." : "Generando respuesta..."}</span>
+                    </span>
+                  )}
+                </div>
+                {m.text && (
+                  <button
+                    className="msg-copy-btn"
+                    onClick={() => copyMessage(m.id, m.text)}
+                    title="Copiar texto de este mensaje"
+                  >
+                    {copiedMsgId === m.id ? (
+                      <>
+                        <Check size={11} className="text-green" />
+                        <span>Copiado</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={11} />
+                        <span>Copiar</span>
+                      </>
+                    )}
+                  </button>
                 )}
               </div>
+
 
               {/* Discreet VS Code-style Thinking Collapsible Drawer */}
               {hasThinking && (

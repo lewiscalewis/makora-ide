@@ -1335,6 +1335,8 @@ svg {
   padding: 12px 16px;
   box-sizing: border-box;
   animation: fadeIn 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 
 .msg-user {
@@ -1351,6 +1353,8 @@ svg {
   color: #ffffff;
   font-weight: 500;
   white-space: pre-wrap;
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 
 .msg-assistant {
@@ -1360,13 +1364,49 @@ svg {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
   width: 100%;
   max-width: 96%;
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 
 .msg-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+  user-select: none;
+}
+
+.msg-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.msg-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.msg:hover .msg-copy-btn {
+  opacity: 1;
+}
+
+.msg-copy-btn:hover {
+  background: rgba(0, 200, 214, 0.15);
+  border-color: rgba(0, 200, 214, 0.35);
+  color: var(--cyan);
 }
 
 .msg-role-badge {
@@ -1405,6 +1445,35 @@ svg {
   border: 1px solid rgba(0, 200, 214, 0.25);
   font-weight: 500;
 }
+
+.msg-text,
+.msg-content,
+.markdown,
+.markdown p,
+.markdown li,
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown blockquote,
+.markdown table,
+.markdown pre,
+.markdown code,
+.inline-code,
+.code-pre,
+.diff-pre,
+.thinking-discrete-body,
+.activity-log {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+textarea,
+input {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
 
 .msg-content {
   color: #e2e8f0;
