@@ -1,34 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
-import { EditorView, basicSetup } from "codemirror";
+import { EditorView, lineNumbers, highlightActiveLineGutter, highlightActiveLine } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { keymap } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
-import { diffLines } from "../core/diff";
-import { getFileIcon } from "./Explorer";
+import { Edit3, Lock, Save, RotateCcw, FileCode } from "lucide-react";
+
 import type { DiffInfo, OpenFile } from "../types";
 
-function langFor(path: string) {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  if (["js", "jsx", "ts", "tsx", "mjs", "cjs"].includes(ext)) return [javascript()];
-  if (["rs"].includes(ext)) return [rust()];
+function getLanguageExtension(path: string) {
+  if (/\.(jsx?|tsx?|mjs|cjs)$/.test(path)) return [javascript({ jsx: true, typescript: true })];
+  if (/\.rs$/.test(path)) return [rust()];
   return [];
 }
 
-interface CodeViewProps {
+interface CmProps {
   content: string;
   path: string;
-  editable: boolean;
-  onChangeContent?: (newContent: string) => void;
+  editable?: boolean;
+  onUpdateContent?: (content: string) => void;
   onSave?: () => void;
 }
 
-function CodeView({
+function CodeMirrorEditor({
   content,
   path,
-  editable,
-  onChangeContent,
+  editable = true,
+  onUpdateContent,
   onSave,
-}: CodeViewProps) {
+}: CmProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 
@@ -36,7 +37,11 @@ function CodeView({
     const host = hostRef.current;
     if (!host) return;
 
-    const saveKeymap = EditorView.domEventHandlers({
+    if (viewRef.current) {
+      viewRef.current.destroy();
+    }
+
+    const saveHandler = EditorView.domEventHandlers({
       keydown(e) {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
           e.preventDefault();
@@ -48,21 +53,25 @@ function CodeView({
     });
 
     const updateListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged && onChangeContent) {
-        const text = update.state.doc.toString();
-        onChangeContent(text);
+      if (update.docChanged) {
+        const next = update.state.doc.toString();
+        onUpdateContent?.(next);
       }
     });
 
     const state = EditorState.create({
       doc: content,
       extensions: [
-        basicSetup,
-        ...langFor(path),
-        saveKeymap,
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        history(),
+        keymap.of([...defaultKeymap, ...historyKeymap]),
+        ...getLanguageExtension(path),
+        saveHandler,
         updateListener,
         EditorState.readOnly.of(!editable),
-        EditorView.editable.of(editable),
+        EditorView.lineWrapping,
       ],
     });
 
@@ -76,10 +85,8 @@ function CodeView({
       view.destroy();
       viewRef.current = null;
     };
-    // Recreate editor when path or editable mode changes
   }, [path, editable]);
 
-  // Synchronize document if content changed externally
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -110,9 +117,6 @@ export default function EditorPanel({
   files,
   activePath,
   diff,
-  onActivate,
-  onClose,
-  onCollapse,
   onRevertDiff,
   onUpdateContent,
   onSaveFile,
@@ -121,143 +125,116 @@ export default function EditorPanel({
   const [isEditable, setIsEditable] = useState(true);
   const active = files.find((f) => f.path === activePath) ?? null;
 
-  const fileName = active ? active.path.split(/[\\/]/).pop() || active.path : "";
-  const { icon, colorClass } = active ? getFileIcon(fileName) : { icon: "📄", colorClass: "" };
   const lineCount = active ? active.content.split("\n").length : 0;
+  const charCount = active ? active.content.length : 0;
+
 
   return (
     <div className="editor-panel">
-      <div className="editor-head">
-        <div className="editor-tabs">
-          {files.map((f) => {
-            const fName = f.path.split(/[\\/]/).pop() || f.path;
-            const fIcon = getFileIcon(fName);
-            const isActive = f.path === activePath;
-            return (
-              <div
-                key={f.path}
-                className={"editor-tab" + (isActive ? " active" : "")}
-                onClick={() => onActivate(f.path)}
-                onMouseDown={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    onClose(f.path);
-                  }
-                }}
-                title={f.path}
-              >
-                <span className={`file-badge-icon ${fIcon.colorClass} tab-file-icon`}>
-                  {fIcon.icon}
-                </span>
-                <span className="editor-tab-name">{fName}</span>
-                {f.isDirty && <span className="tab-dirty-dot" title="Modificado sin guardar">●</span>}
-                <button
-                  className="tab-close"
-                  title="Cerrar pestaña (Ctrl+W)"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClose(f.path);
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
+      {/* Sleek Sub-Toolbar */}
+      <div className="editor-sub-bar">
+        <div className="sub-bar-left">
+          <FileCode size={13} className="text-cyan" />
+          <span className="breadcrumb-path" title={active?.path || ""}>
+            {active?.path || "Ningún archivo abierto"}
+          </span>
+          {active?.isDirty && (
+            <span className="dirty-badge">● Modificado</span>
+          )}
         </div>
 
-        <div className="editor-actions-right">
+        <div className="sub-bar-right">
           {active && !diff && (
-            <div className="editor-mode-toggle">
+            <div className="sub-bar-actions">
               <button
-                className={`mode-btn ${isEditable ? "active" : ""}`}
+                className={`action-pill ${isEditable ? "active" : ""}`}
                 onClick={() => setIsEditable(!isEditable)}
                 title={isEditable ? "Modo Edición activo (Ctrl+S para guardar)" : "Modo Solo Lectura"}
               >
-                {isEditable ? "✏️ Editable" : "🔒 Lectura"}
+                {isEditable ? <Edit3 size={11} /> : <Lock size={11} />}
+                <span>{isEditable ? "Editable" : "Lectura"}</span>
               </button>
+
               {active.isDirty && onSaveFile && (
                 <button
                   className="btn btn-save"
                   onClick={() => onSaveFile(active.path)}
                   title="Guardar archivo (Ctrl+S)"
                 >
-                  💾 Guardar
+                  <Save size={11} />
+                  <span>Guardar</span>
                 </button>
               )}
             </div>
           )}
 
           {active && diff && (
-            <div className="editor-mode">
-              <button
-                className={"mode-btn" + (mode === "code" ? " active" : "")}
-                onClick={() => setMode("code")}
-              >
-                Código
-              </button>
-              <button
-                className={"mode-btn" + (mode === "diff" ? " active" : "")}
-                onClick={() => setMode("diff")}
-              >
-                Diff
-              </button>
+            <div className="sub-bar-actions">
+              <div className="segmented-control">
+                <button
+                  className={`seg-btn ${mode === "code" ? "active" : ""}`}
+                  onClick={() => setMode("code")}
+                >
+                  Código
+                </button>
+                <button
+                  className={`seg-btn ${mode === "diff" ? "active" : ""}`}
+                  onClick={() => setMode("diff")}
+                >
+                  Diff
+                </button>
+              </div>
+
               {mode === "diff" && (
                 <button className="btn btn-danger" onClick={onRevertDiff}>
-                  Revertir
+                  <RotateCcw size={11} />
+                  <span>Revertir</span>
                 </button>
               )}
             </div>
           )}
 
-          <button className="icon-btn" title="Colapsar panel" onClick={onCollapse}>
-            ▴
-          </button>
+          {active && (
+            <div className="editor-metrics">
+              <span>{lineCount} líneas</span>
+              <span className="metric-sep">•</span>
+              <span>{charCount} carácteres</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {active && (
-        <div className="editor-breadcrumb-bar">
-          <div className="breadcrumb-path">
-            <span className={`file-badge-icon ${colorClass}`}>{icon}</span>
-            <span className="breadcrumb-text">{active.path}</span>
-          </div>
-          <div className="breadcrumb-meta">
-            <span>{lineCount} líneas</span>
-            <span>{active.content.length} caracteres</span>
-            {active.isDirty && <span className="dirty-badge">Sin guardar</span>}
-          </div>
-        </div>
-      )}
-
+      {/* Editor Body */}
       <div className="editor-body">
-        {!active && (
-          <div className="muted editor-empty">
-            <p>Selecciona un archivo del explorador o presiona <kbd className="hint-kbd">Ctrl+P</kbd> para buscar.</p>
+        {!active ? (
+          <div className="editor-empty muted">
+            <p>Selecciona un archivo del explorador o presiona <kbd className="hint-kbd">Ctrl+P</kbd></p>
           </div>
-        )}
-        {active && mode === "code" && (
-          <CodeView
-            content={active.content}
-            path={active.path}
-            editable={isEditable}
-            onChangeContent={(text) => onUpdateContent?.(active.path, text)}
-            onSave={() => onSaveFile?.(active.path)}
-          />
-        )}
-        {active && mode === "diff" && diff && (
+        ) : diff && mode === "diff" ? (
           <div className="diff-view">
             <div className="diff-lines">
-              {diffLines(diff.before, diff.after).map((l, i) => (
-                <div key={i} className={"diff-line " + l.type}>
-                  <span className="diff-sign">
-                    {l.type === "add" ? "+" : l.type === "del" ? "-" : " "}
-                  </span>
-                  <span className="diff-text">{l.text}</span>
+              {diff.before.split("\n").map((line, i) => (
+                <div key={"b" + i} className="diff-line del">
+                  <span className="diff-sign">-</span>
+                  <span>{line}</span>
+                </div>
+              ))}
+              {diff.after.split("\n").map((line, i) => (
+                <div key={"a" + i} className="diff-line add">
+                  <span className="diff-sign">+</span>
+                  <span>{line}</span>
                 </div>
               ))}
             </div>
           </div>
+        ) : (
+          <CodeMirrorEditor
+            content={active.content}
+            path={active.path}
+            editable={isEditable}
+            onUpdateContent={(c) => onUpdateContent?.(active.path, c)}
+            onSave={() => onSaveFile?.(active.path)}
+          />
         )}
       </div>
     </div>

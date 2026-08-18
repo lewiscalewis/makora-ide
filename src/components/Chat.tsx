@@ -8,6 +8,22 @@ import {
   workspaceSummary,
 } from "../api";
 import Markdown from "./Markdown";
+import {
+  Zap,
+  ScrollText,
+  FlaskConical,
+  Copy,
+  Download,
+  Trash2,
+  Send,
+  Square,
+  Check,
+  Image as ImageIcon,
+  FileText,
+  X,
+} from "lucide-react";
+
+
 import type {
   AgentMode,
   Attachment,
@@ -466,7 +482,8 @@ export default function Chat({
 
           {projectRules && (
             <span className="rules-active-badge" title="Reglas del repositorio detectadas e inyectadas">
-              📜 Reglas Activas
+              <ScrollText size={10} />
+              <span>Reglas Activas</span>
             </span>
           )}
 
@@ -477,14 +494,16 @@ export default function Chat({
               onClick={() => onToggleMode?.("act")}
               title="Modo Acción: El agente analiza y aplica ediciones directamente"
             >
-              ⚡ Acción
+              <Zap size={10} />
+              <span>Acción</span>
             </button>
             <button
               className={`mode-pill ${agentMode === "plan" ? "active" : ""}`}
               onClick={() => onToggleMode?.("plan")}
               title="Modo Plan: El agente genera un plan y pide aprobación antes de escribir"
             >
-              📋 Plan
+              <ScrollText size={10} />
+              <span>Plan</span>
             </button>
           </div>
         </div>
@@ -495,7 +514,8 @@ export default function Chat({
             onClick={triggerAutoTestAndRepair}
             title="Lanza la suite de tests del proyecto y auto-corrige fallos"
           >
-            🧪 Auto-Test
+            <FlaskConical size={11} />
+            <span>Auto-Test</span>
           </button>
           {messages.length > 0 && (
             <>
@@ -504,14 +524,16 @@ export default function Chat({
                 onClick={copyTranscript}
                 title="Copiar toda la conversación"
               >
-                {copiedTranscript ? "Copiado ✓" : "📋 Copiar"}
+                {copiedTranscript ? <Check size={11} /> : <Copy size={11} />}
+                <span>{copiedTranscript ? "Copiado" : "Copiar"}</span>
               </button>
               <button
                 className="chat-header-btn"
                 onClick={exportMarkdown}
                 title="Descargar conversación en formato Markdown"
               >
-                📥 Exportar
+                <Download size={11} />
+                <span>Exportar</span>
               </button>
               <button
                 className="chat-header-btn"
@@ -519,12 +541,14 @@ export default function Chat({
                 disabled={busy}
                 title="Vaciar chat y comenzar un nuevo turno"
               >
-                🗑️ Nuevo Chat
+                <Trash2 size={11} />
+                <span>Limpiar</span>
               </button>
             </>
           )}
         </div>
       </div>
+
 
       <div
         className="chat-messages"
@@ -626,7 +650,7 @@ export default function Chat({
               onClick={() => pickMention(p)}
               onMouseEnter={() => setMentionIndex(idx)}
             >
-              <span className="mention-icon">📄</span>
+              <FileText size={11} className="mention-icon" />
               <span className="mention-text">{p}</span>
             </div>
           ))}
@@ -637,14 +661,15 @@ export default function Chat({
         <div className="attachment-bar">
           {attachments.map((a) => (
             <span key={a.id} className="attachment-chip" title={a.name}>
-              {a.kind === "image" ? "🖼" : "📄"} {a.name}
+              {a.kind === "image" ? <ImageIcon size={11} /> : <FileText size={11} />}
+              <span>{a.name}</span>
               <button
                 className="chip-remove"
                 onClick={() =>
                   setAttachments((x) => x.filter((y) => y.id !== a.id))
                 }
               >
-                ×
+                <X size={10} />
               </button>
             </span>
           ))}
@@ -698,7 +723,8 @@ export default function Chat({
               onClick={() => chatCancel()}
               title="Detener el turno actual"
             >
-              Detener
+              <Square size={11} />
+              <span>Detener</span>
             </button>
           )}
           <button
@@ -707,10 +733,12 @@ export default function Chat({
             disabled={busy || !ready}
             title="Enviar mensaje (Enter)"
           >
-            {busy ? "Pensando…" : "Enviar"}
+            <Send size={11} />
+            <span>{busy ? "Pensando…" : "Enviar"}</span>
           </button>
         </div>
       </form>
+
     </section>
   );
 }

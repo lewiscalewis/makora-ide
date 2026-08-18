@@ -4,10 +4,21 @@ import DataGridViewer from "./viewers/DataGridViewer";
 import ImageViewer from "./viewers/ImageViewer";
 import SvgViewer from "./viewers/SvgViewer";
 import EditorPanel from "./EditorPanel";
+import {
+  Sparkles,
+  MessageSquare,
+  Columns2,
+  FileCode,
+  Maximize2,
+  X,
+  FileText,
+  Image,
+  Table,
+  Code2,
+} from "lucide-react";
 import type { DiffInfo, OpenFile, WorkspaceViewMode } from "../types";
 
 interface UnifiedWorkspaceProps {
-  // Tabs
   openFiles: OpenFile[];
   activePath: string | null;
   onActivateFile: (path: string | null) => void;
@@ -17,54 +28,46 @@ interface UnifiedWorkspaceProps {
   diff: DiffInfo | null;
   onRevertDiff: () => void;
 
-  // Agent State for Master Tab
   agentBusy: boolean;
   runningToolName: string | null;
 
-  // View Mode
   viewMode: WorkspaceViewMode;
   onViewModeChange: (mode: WorkspaceViewMode) => void;
   zenMode: boolean;
   onToggleZenMode: () => void;
 
-  // Chat Element
   chatElement: ReactNode;
 }
 
-function getFileBadge(filename: string): { icon: string; className: string } {
+function getFileIcon(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   switch (ext) {
     case "ts":
     case "tsx":
-      return { icon: "TS", className: "icon-ts" };
     case "js":
     case "jsx":
-      return { icon: "JS", className: "icon-js" };
+      return <FileCode size={13} className="file-icon-ts" />;
     case "rs":
-      return { icon: "🦀", className: "icon-rs" };
+      return <Code2 size={13} className="file-icon-rs" />;
     case "py":
-      return { icon: "🐍", className: "icon-py" };
+      return <Code2 size={13} className="file-icon-py" />;
     case "json":
-      return { icon: "{}", className: "icon-json" };
+      return <Code2 size={13} className="file-icon-json" />;
     case "md":
     case "mdx":
-      return { icon: "📝", className: "icon-md" };
-    case "css":
-    case "scss":
-      return { icon: "🎨", className: "icon-css" };
+      return <FileText size={13} className="file-icon-md" />;
     case "png":
     case "jpg":
     case "jpeg":
     case "webp":
     case "gif":
-      return { icon: "🖼️", className: "icon-img" };
     case "svg":
-      return { icon: "💠", className: "icon-svg" };
+      return <Image size={13} className="file-icon-img" />;
     case "csv":
     case "tsv":
-      return { icon: "📊", className: "icon-csv" };
+      return <Table size={13} className="file-icon-csv" />;
     default:
-      return { icon: "📄", className: "icon-file" };
+      return <FileText size={13} className="file-icon-default" />;
   }
 }
 
@@ -160,7 +163,7 @@ export default function UnifiedWorkspace({
             title="Pestaña maestra del agente Makora"
           >
             <div className="master-tab-content">
-              <span className="master-tab-icon">✨</span>
+              <Sparkles size={13} className="master-tab-icon" />
               <span className="master-tab-title">MAKORA CHAT</span>
               <span
                 className={`master-status-dot ${agentBusy ? "pulse-dot" : "idle-dot"}`}
@@ -173,7 +176,6 @@ export default function UnifiedWorkspace({
           {openFiles.map((file) => {
             const isActive = file.path === activePath;
             const name = file.path.split(/[\\/]/).pop() || file.path;
-            const badge = getFileBadge(name);
 
             return (
               <div
@@ -182,7 +184,7 @@ export default function UnifiedWorkspace({
                 onClick={() => onActivateFile(file.path)}
                 title={file.path}
               >
-                <span className={`tab-file-icon ${badge.className}`}>{badge.icon}</span>
+                <span className="tab-file-icon">{getFileIcon(name)}</span>
                 <span className="tab-title">{name}</span>
                 {file.isDirty && <span className="tab-dirty-dot" title="Cambios no guardados">●</span>}
                 <button
@@ -193,7 +195,7 @@ export default function UnifiedWorkspace({
                   }}
                   title="Cerrar pestaña (Ctrl+W)"
                 >
-                  ×
+                  <X size={11} />
                 </button>
               </div>
             );
@@ -211,14 +213,16 @@ export default function UnifiedWorkspace({
               }}
               title="Mostrar solo el Chat del Agente"
             >
-              💬 Chat
+              <MessageSquare size={11} />
+              <span>Chat</span>
             </button>
             <button
               className={`seg-btn ${viewMode === "split" ? "active" : ""}`}
               onClick={() => onViewModeChange("split")}
               title="Vista dividida: Chat a la izquierda y Editor a la derecha"
             >
-              ◫ Split
+              <Columns2 size={11} />
+              <span>Split</span>
             </button>
             <button
               className={`seg-btn ${viewMode === "editor" ? "active" : ""}`}
@@ -230,7 +234,8 @@ export default function UnifiedWorkspace({
               }}
               title="Mostrar solo el Editor / Visualizador"
             >
-              📝 Editor
+              <FileCode size={11} />
+              <span>Editor</span>
             </button>
           </div>
 
@@ -239,7 +244,8 @@ export default function UnifiedWorkspace({
             onClick={onToggleZenMode}
             title={zenMode ? "Salir de Modo Zen" : "Modo Zen: Ocultar barras laterales para enfoque total"}
           >
-            {zenMode ? "🧘 Salir Zen" : "🧘 Zen"}
+            <Maximize2 size={11} />
+            <span>{zenMode ? "Salir Zen" : "Zen"}</span>
           </button>
         </div>
       </div>

@@ -37,6 +37,13 @@ export const commands = {
 	keyringDelete: (providerId: string) => typedError<null, string>(__TAURI_INVOKE("keyring_delete", { providerId })),
 	detectProjectRules: (folders: string[]) => typedError<string | null, string>(__TAURI_INVOKE("detect_project_rules", { folders })),
 	detectOllama: () => typedError<boolean, string>(__TAURI_INVOKE("detect_ollama")),
+	gitStatus: (folder: string) => typedError<{
+	branch: string,
+	staged: number,
+	modified: number,
+	untracked: number,
+} | null, string>(__TAURI_INVOKE("git_status", { folder })),
+	gitDiff: (folder: string, path: string | null, staged: boolean) => typedError<string, string>(__TAURI_INVOKE("git_diff", { folder, path, staged })),
 };
 
 /** Events */
@@ -86,6 +93,13 @@ export type DirEntry = {
 	name: string,
 	path: string,
 	isDir: boolean,
+};
+
+export type GitStatusInfo = {
+	branch: string,
+	staged: number,
+	modified: number,
+	untracked: number,
 };
 
 export type McpSpec = {

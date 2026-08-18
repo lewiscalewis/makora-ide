@@ -1,4 +1,13 @@
 import { MAKORA_THEMES } from "../themes";
+import {
+  Folder,
+  GitBranch,
+  Zap,
+  BarChart2,
+  Terminal,
+  Palette,
+  Settings,
+} from "lucide-react";
 import type { GitStatusInfo, ThemeId, Usage } from "../types";
 
 interface StatusBarProps {
@@ -44,7 +53,7 @@ export default function StatusBar({
           onClick={onOpenPalette}
           title="Abrir Command Palette (Ctrl+P)"
         >
-          <span className="status-icon">📁</span>
+          <Folder size={12} className="status-icon" />
           <span className="status-text font-semibold">{workspaceName}</span>
           <span className="status-dim">({folderCount})</span>
         </button>
@@ -56,7 +65,7 @@ export default function StatusBar({
               className="status-item git-status-item"
               title={`Rama Git: ${gitInfo.branch} | Staged: ${gitInfo.staged} | Modificados: ${gitInfo.modified} | Sin seguimiento: ${gitInfo.untracked}`}
             >
-              <span className="status-icon">🌿</span>
+              <GitBranch size={12} className="status-icon" />
               <span className="status-text font-mono">{gitInfo.branch}</span>
               {totalGitChanges > 0 && (
                 <span className="git-changes-badge" title={`${totalGitChanges} archivos con cambios`}>
@@ -73,12 +82,12 @@ export default function StatusBar({
           {agentBusy ? (
             <span className="status-badge status-badge-busy">
               <span className="pulse-dot" />
-              {runningToolName ? `⚙ ${runningToolName}` : "🧠 Razonando..."}
+              <span>{runningToolName ? `Ejecutando ${runningToolName}` : "Razonando..."}</span>
             </span>
           ) : (
             <span className="status-badge status-badge-idle">
               <span className="idle-dot" />
-              Makora Listo
+              <span>Makora Listo</span>
             </span>
           )}
         </div>
@@ -87,7 +96,7 @@ export default function StatusBar({
       <div className="status-right">
         {activeModel && (
           <div className="status-item" title="Modelo de IA activo">
-            <span className="status-icon">⚡</span>
+            <Zap size={11} className="status-icon text-cyan" />
             <span className="status-text font-mono">{activeModel}</span>
           </div>
         )}
@@ -98,7 +107,7 @@ export default function StatusBar({
           className="status-item"
           title={`Entrada: ${usage.inputTokens.toLocaleString()} | Salida: ${usage.outputTokens.toLocaleString()} | Caché: ${usage.cachedTokens.toLocaleString()}`}
         >
-          <span className="status-icon">📊</span>
+          <BarChart2 size={11} className="status-icon" />
           <span className="status-text font-mono">
             {totalTokens.toLocaleString()} tok
           </span>
@@ -114,7 +123,7 @@ export default function StatusBar({
           onClick={onToggleTerminal}
           title="Alternar Terminal Integrada (Ctrl+J)"
         >
-          <span className="status-icon">💻</span>
+          <Terminal size={11} className="status-icon" />
           <span className="status-text">Terminal</span>
           <kbd className="status-kbd">Ctrl+J</kbd>
         </button>
@@ -126,7 +135,7 @@ export default function StatusBar({
           onClick={onCycleTheme}
           title={`Tema activo: ${theme.name} (Clic para conmutar)`}
         >
-          <span className="status-icon">🎨</span>
+          <Palette size={11} className="status-icon" />
           <span className="status-text">{theme.name}</span>
         </button>
 
@@ -137,7 +146,7 @@ export default function StatusBar({
           onClick={onOpenSettings}
           title="Configuración (Ctrl+,)"
         >
-          <span className="status-icon">⚙️</span>
+          <Settings size={12} className="status-icon" />
         </button>
       </div>
     </footer>

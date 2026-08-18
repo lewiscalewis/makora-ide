@@ -7,6 +7,24 @@ import {
   renamePath,
   revealInExplorer,
 } from "../api";
+import {
+  Folder,
+  FolderOpen,
+  ChevronRight,
+  ChevronDown,
+  RefreshCw,
+  PanelLeftClose,
+  FilePlus,
+  FolderPlus,
+  Trash2,
+  Edit2,
+  ExternalLink,
+  FileCode,
+  FileText,
+  Image,
+  Code2,
+  X,
+} from "lucide-react";
 import type { DirEntry } from "../types";
 
 function basename(path: string): string {
@@ -27,45 +45,36 @@ function joinPath(dir: string, file: string): string {
   return `${cleanedDir}${sep}${file.replace(/^[\\/]+/, "")}`;
 }
 
-export function getFileIcon(name: string): { icon: string; colorClass: string } {
+export function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
   switch (ext) {
     case "ts":
     case "tsx":
-      return { icon: "TS", colorClass: "icon-ts" };
     case "js":
     case "jsx":
     case "mjs":
     case "cjs":
-      return { icon: "JS", colorClass: "icon-js" };
+      return <FileCode size={13} className="text-cyan" />;
     case "rs":
-      return { icon: "🦀", colorClass: "icon-rs" };
     case "py":
-      return { icon: "🐍", colorClass: "icon-py" };
     case "json":
     case "yaml":
     case "yml":
     case "toml":
-      return { icon: "{}", colorClass: "icon-json" };
+      return <Code2 size={13} className="text-purple" />;
     case "md":
     case "txt":
     case "doc":
-      return { icon: "📝", colorClass: "icon-md" };
-    case "html":
-    case "css":
-    case "scss":
-      return { icon: "🎨", colorClass: "icon-css" };
+      return <FileText size={13} className="text-blue" />;
     case "png":
     case "jpg":
     case "jpeg":
     case "svg":
     case "gif":
     case "webp":
-      return { icon: "🖼️", colorClass: "icon-img" };
-    case "lock":
-      return { icon: "🔒", colorClass: "icon-lock" };
+      return <Image size={13} className="text-green" />;
     default:
-      return { icon: "📄", colorClass: "icon-file" };
+      return <FileText size={13} className="opacity-60" />;
   }
 }
 
@@ -98,12 +107,15 @@ function TreeNode({
     setExpanded(true);
     if (children === null) {
       try {
-        setChildren(await listDir(path));
+        const list = await listDir(path);
+        setChildren(list);
       } catch (e) {
         setError(String(e));
       }
     }
   };
+
+  const name = basename(path);
 
   return (
     <div className="tree-node">
@@ -114,9 +126,17 @@ function TreeNode({
         onContextMenu={(e) => onContext(e, path, true)}
         title={path}
       >
-        <span className="tree-chevron">{expanded ? "▾" : "▸"}</span>
-        <span className="tree-folder-icon">📁</span>
-        <span className="tree-name">{basename(path)}</span>
+        <span className="tree-chevron">
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
+        <span className="tree-folder-icon">
+          {expanded ? (
+            <FolderOpen size={13} className="text-cyan" />
+          ) : (
+            <Folder size={13} className="text-cyan opacity-80" />
+          )}
+        </span>
+        <span className="tree-name">{name}</span>
         {depth === 0 && onRemoveRoot && (
           <button
             className="icon-btn tree-remove"
@@ -126,7 +146,7 @@ function TreeNode({
               onRemoveRoot(path);
             }}
           >
-            ×
+            <X size={10} />
           </button>
         )}
       </div>
@@ -156,12 +176,7 @@ function TreeNode({
                 onContextMenu={(e) => onContext(e, c.path, false)}
                 title={c.path}
               >
-                {(() => {
-                  const { icon, colorClass } = getFileIcon(c.name);
-                  return (
-                    <span className={`file-badge-icon ${colorClass}`}>{icon}</span>
-                  );
-                })()}
+                <span className="file-badge-icon">{getFileIcon(c.name)}</span>
                 <span className="tree-name file">{c.name}</span>
               </div>
             ),
@@ -271,14 +286,14 @@ export default function Explorer({
             title="Refrescar explorador"
             onClick={onChanged}
           >
-            ⟳
+            <RefreshCw size={12} />
           </button>
           <button
             className="icon-btn"
-            title="Colapsar panel (Ctrl+B)"
+            title="Ocultar explorador (Ctrl+B)"
             onClick={onCollapse}
           >
-            ◂
+            <PanelLeftClose size={12} />
           </button>
         </div>
       </div>
@@ -311,40 +326,45 @@ export default function Explorer({
         >
           {!menu.isDir && (
             <button className="ctx-item" onClick={() => onOpenFile(menu.path)}>
-              Abrir en visor
+              <FileText size={12} />
+              <span>Abrir en visor</span>
             </button>
           )}
           <button className="ctx-item" onClick={() => revealInExplorer(menu.path)}>
-            Revelar en explorador del SO
+            <ExternalLink size={12} />
+            <span>Revelar en explorador del SO</span>
           </button>
           <button
             className="ctx-item"
             onClick={() => {
-              setPrompt({ kind: "rename", path: menu.path, isDir: menu.isDir });
               setPromptValue(basename(menu.path));
+              setPrompt({ kind: "rename", path: menu.path, isDir: menu.isDir });
             }}
           >
-            Renombrar
+            <Edit2 size={12} />
+            <span>Renombrar</span>
           </button>
           {menu.isDir && (
             <>
               <button
                 className="ctx-item"
                 onClick={() => {
+                  setPromptValue("");
                   setPrompt({ kind: "newfile", dir: menu.path });
-                  setPromptValue("nuevo_archivo.txt");
                 }}
               >
-                Nuevo archivo
+                <FilePlus size={12} />
+                <span>Nuevo archivo</span>
               </button>
               <button
                 className="ctx-item"
                 onClick={() => {
+                  setPromptValue("");
                   setPrompt({ kind: "newdir", dir: menu.path });
-                  setPromptValue("nueva_carpeta");
                 }}
               >
-                Nueva carpeta
+                <FolderPlus size={12} />
+                <span>Nueva carpeta</span>
               </button>
             </>
           )}
@@ -354,53 +374,61 @@ export default function Explorer({
               setPrompt({ kind: "delete", path: menu.path, isDir: menu.isDir })
             }
           >
-            Eliminar
+            <Trash2 size={12} />
+            <span>Eliminar</span>
           </button>
         </div>
       )}
 
-      {menu && prompt && (
+      {prompt && (
         <div
           className="ctx-menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={{ left: menu?.x ?? 50, top: menu?.y ?? 50 }}
           onClick={(e) => e.stopPropagation()}
         >
           {prompt.kind === "delete" ? (
-            <>
-              <p className="muted small">
-                ¿Eliminar {prompt.isDir ? "la carpeta" : "el archivo"} "
-                {basename(prompt.path)}"?
+            <div>
+              <p className="small">
+                ¿Seguro que deseas eliminar{" "}
+                <strong>{basename(prompt.path)}</strong>?
               </p>
               <div className="ctx-actions">
+                <button className="btn btn-subtle" onClick={() => setPrompt(null)}>
+                  Cancelar
+                </button>
                 <button className="btn btn-danger" onClick={submitPrompt}>
                   Eliminar
                 </button>
-                <button className="btn" onClick={() => setPrompt(null)}>
-                  Cancelar
-                </button>
               </div>
-            </>
+            </div>
           ) : (
-            <>
+            <div>
               <input
+                autoFocus
                 className="ctx-input"
                 value={promptValue}
-                autoFocus
-                onChange={(e) => setPromptValue(e.currentTarget.value)}
+                placeholder={
+                  prompt.kind === "rename"
+                    ? "Nuevo nombre"
+                    : prompt.kind === "newfile"
+                      ? "nombre_archivo.ext"
+                      : "nombre_carpeta"
+                }
+                onChange={(e) => setPromptValue(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") submitPrompt();
                   if (e.key === "Escape") setPrompt(null);
                 }}
               />
               <div className="ctx-actions">
-                <button className="btn btn-primary" onClick={submitPrompt}>
-                  OK
-                </button>
-                <button className="btn" onClick={() => setPrompt(null)}>
+                <button className="btn btn-subtle" onClick={() => setPrompt(null)}>
                   Cancelar
                 </button>
+                <button className="btn btn-primary" onClick={submitPrompt}>
+                  Guardar
+                </button>
               </div>
-            </>
+            </div>
           )}
           {actionError && <p className="error small">{actionError}</p>}
         </div>

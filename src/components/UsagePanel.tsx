@@ -1,5 +1,16 @@
 import { PROVIDERS } from "../providers";
 import { THINKING_LEVELS } from "../defaults";
+import {
+  SlidersHorizontal,
+  ShieldCheck,
+  RefreshCw,
+  Layers,
+  PanelRightClose,
+  Zap,
+  Scale,
+  Brain,
+  Leaf,
+} from "lucide-react";
 import type {
   BalanceInfo,
   ChatUsage,
@@ -31,14 +42,14 @@ interface UsagePanelProps {
 
 const PROFILES: {
   id: string;
-  icon: string;
+  icon: typeof Leaf;
   label: string;
   thinking: ThinkingLevel;
   reasoning: boolean;
 }[] = [
-  { id: "eco", icon: "🍃", label: "Eco", thinking: "none", reasoning: false },
-  { id: "balanced", icon: "⚖️", label: "Balanced", thinking: "medium", reasoning: false },
-  { id: "deep", icon: "🧠", label: "Deep", thinking: "high", reasoning: true },
+  { id: "eco", icon: Leaf, label: "Eco", thinking: "none", reasoning: false },
+  { id: "balanced", icon: Scale, label: "Balanced", thinking: "medium", reasoning: false },
+  { id: "deep", icon: Brain, label: "Deep", thinking: "high", reasoning: true },
 ];
 
 export default function UsagePanel({
@@ -76,12 +87,14 @@ export default function UsagePanel({
   return (
     <aside className="usage">
       <div className="panel-head">
-        <span>Panel</span>
-        <button className="icon-btn" title="Colapsar panel" onClick={onCollapse}>
-          ▸
+        <div className="panel-head-left">
+          <SlidersHorizontal size={13} className="text-cyan" />
+          <span className="panel-title-text">Parámetros</span>
+        </div>
+        <button className="icon-btn" title="Ocultar panel" onClick={onCollapse}>
+          <PanelRightClose size={12} />
         </button>
       </div>
-      <h3 className="panel-title">Parámetros</h3>
 
       <div className="field">
         <label>Proveedor</label>
@@ -115,7 +128,10 @@ export default function UsagePanel({
         <div className="field">
           <div className="field-label-row">
             <label>API key</label>
-            <span className="keyring-badge" title="Tus credenciales están protegidas mediante Windows DPAPI / Keychain del SO">🔒 Keyring SO</span>
+            <span className="keyring-badge" title="Credenciales protegidas mediante Windows DPAPI / SO Keyring">
+              <ShieldCheck size={10} />
+              <span>Keyring SO</span>
+            </span>
           </div>
           <input
             type="password"
@@ -125,7 +141,6 @@ export default function UsagePanel({
           />
         </div>
       )}
-
 
       <div className="field">
         <label>Modelo</label>
@@ -149,11 +164,12 @@ export default function UsagePanel({
       </div>
 
       <button className="btn btn-connect" onClick={onConnect} disabled={connecting}>
-        {connecting ? "Conectando…" : "Conectar"}
+        <Zap size={12} />
+        <span>{connecting ? "Conectando…" : "Conectar"}</span>
       </button>
       {modelsError && <p className="error small">{modelsError}</p>}
 
-      <h3 className="panel-title">Pensamiento</h3>
+      <h3 className="panel-title">Pensamiento & Perfil</h3>
       <div className="field">
         <label>Nivel de razonamiento</label>
         <select
@@ -168,17 +184,20 @@ export default function UsagePanel({
         </select>
       </div>
       <div className="profiles">
-        {PROFILES.map((p) => (
-          <button
-            key={p.id}
-            className="profile-btn"
-            title={p.label}
-            onClick={() => onProfile({ thinking: p.thinking, reasoning: p.reasoning })}
-          >
-            <span>{p.icon}</span>
-            <span>{p.label}</span>
-          </button>
-        ))}
+        {PROFILES.map((p) => {
+          const Icon = p.icon;
+          return (
+            <button
+              key={p.id}
+              className="profile-btn"
+              title={p.label}
+              onClick={() => onProfile({ thinking: p.thinking, reasoning: p.reasoning })}
+            >
+              <Icon size={12} />
+              <span>{p.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <h3 className="panel-title">Contexto (último turno)</h3>
@@ -193,7 +212,7 @@ export default function UsagePanel({
         <span><i className="dot dot-free" /> Libre</span>
       </div>
 
-      <h3 className="panel-title">Consumo</h3>
+      <h3 className="panel-title">Consumo de Sesión</h3>
       <dl className="usage-list">
         <div className="usage-row">
           <dt>Tokens entrada</dt>
@@ -213,10 +232,11 @@ export default function UsagePanel({
         </div>
       </dl>
 
-      <h3 className="panel-title">Crédito</h3>
+      <h3 className="panel-title">Crédito del Proveedor</h3>
       {canBalance && (
         <button className="btn btn-connect" onClick={onRefreshBalance} disabled={balanceLoading}>
-          {balanceLoading ? "Consultando…" : "Consultar saldo"}
+          <RefreshCw size={11} className={balanceLoading ? "animate-spin" : ""} />
+          <span>{balanceLoading ? "Consultando…" : "Consultar saldo"}</span>
         </button>
       )}
       <dl className="usage-list">
@@ -240,12 +260,15 @@ export default function UsagePanel({
         )}
       </dl>
 
-      <h3 className="panel-title">MCP</h3>
+      <h3 className="panel-title">Herramientas MCP</h3>
       {mcpTools.length === 0 ? (
         <p className="muted small">Sin servidores MCP activos.</p>
       ) : (
         <details className="mcp-health">
-          <summary>🟢 {mcpTools.length} herramienta{mcpTools.length === 1 ? "" : "s"} registrada{mcpTools.length === 1 ? "" : "s"}</summary>
+          <summary>
+            <Layers size={11} />
+            <span>{mcpTools.length} herramientas activas</span>
+          </summary>
           <div className="mcp-list">
             {mcpTools.map((t) => (
               <code key={t} className="mcp-tool">{t}</code>

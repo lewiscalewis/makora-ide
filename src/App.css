@@ -562,6 +562,129 @@ body {
   border-right: 1px solid var(--glass-border);
 }
 
+/* ===== Editor Panel & Sub-Bar ===== */
+.editor-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.editor-sub-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  background: rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  height: 28px;
+}
+
+.sub-bar-left,
+.sub-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.breadcrumb-path {
+  font-family: Consolas, "Fira Code", monospace;
+  font-size: 11px;
+  color: var(--text-main);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.action-pill:hover,
+.action-pill.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(0, 200, 214, 0.08);
+}
+
+.editor-metrics {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: Consolas, "Fira Code", monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.metric-sep {
+  opacity: 0.4;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: #090b12;
+}
+
+.editor-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-host .cm-editor {
+  height: 100%;
+  font-size: 12.5px;
+  font-family: "Cascadia Code", Consolas, "Fira Code", monospace;
+  background: transparent;
+}
+
+.editor-host .cm-gutters {
+  background: rgba(0, 0, 0, 0.2);
+  border-right: 1px solid var(--glass-border);
+  color: var(--text-muted);
+}
+
+.editor-host .cm-activeLineGutter {
+  background: rgba(0, 200, 214, 0.1);
+  color: var(--cyan);
+}
+
+/* Utilities */
+.text-cyan { color: var(--cyan); }
+.text-purple { color: var(--purple); }
+.text-blue { color: var(--accent-blue); }
+.text-green { color: var(--accent-green); }
+.opacity-40 { opacity: 0.4; }
+.opacity-60 { opacity: 0.6; }
+.opacity-80 { opacity: 0.8; }
+
+
 /* ===== Multi-Mode Specialized Viewers ===== */
 .multi-mode-viewer {
   flex: 1;

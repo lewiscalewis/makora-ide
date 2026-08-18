@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Table, Search, X, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 
 interface Props {
   content: string;
@@ -109,14 +110,15 @@ export default function DataGridViewer({ content, path }: Props) {
     <div className="multi-mode-viewer data-grid-viewer-wrap">
       <div className="viewer-toolbar">
         <div className="viewer-toolbar-left">
-          <span className="viewer-file-tag">📊 Data Grid</span>
+          <Table size={13} className="text-cyan" />
+          <span className="viewer-file-tag">Data Grid</span>
           <span className="grid-meta-badge">
             {rows.length} filas × {headers.length} col
           </span>
         </div>
         <div className="viewer-toolbar-center">
           <div className="grid-search-wrap">
-            <span className="search-icon">🔍</span>
+            <Search size={11} className="search-icon" />
             <input
               className="grid-search-input"
               value={query}
@@ -125,7 +127,7 @@ export default function DataGridViewer({ content, path }: Props) {
             />
             {query && (
               <button className="clear-filter-btn" onClick={() => setQuery("")}>
-                ×
+                <X size={10} />
               </button>
             )}
           </div>
@@ -152,7 +154,11 @@ export default function DataGridViewer({ content, path }: Props) {
                     <div className="th-content">
                       <span>{h}</span>
                       <span className="sort-indicator">
-                        {sortCol === i ? (sortAsc ? " ▴" : " ▾") : " ⇅"}
+                        {sortCol === i ? (
+                          sortAsc ? <ArrowUp size={11} /> : <ArrowDown size={11} />
+                        ) : (
+                          <ArrowUpDown size={10} className="opacity-40" />
+                        )}
                       </span>
                     </div>
                   </th>

@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLineGutter, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { keymap } from "@codemirror/view";
+import { FileText, Code2, Eye, Columns2, Save } from "lucide-react";
 import Markdown from "../Markdown";
 
 interface Props {
@@ -24,7 +25,6 @@ export default function MarkdownViewer({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 
-  // Initialize CodeMirror editor when in 'code' or 'split' mode
   useEffect(() => {
     if (viewMode === "preview") {
       if (viewRef.current) {
@@ -87,7 +87,8 @@ export default function MarkdownViewer({
       {/* Top control bar */}
       <div className="viewer-toolbar">
         <div className="viewer-toolbar-left">
-          <span className="viewer-file-tag">📑 Markdown / MDX</span>
+          <FileText size={13} className="text-cyan" />
+          <span className="viewer-file-tag">Markdown / MDX</span>
           {isDirty && <span className="dirty-badge">● Modificado</span>}
         </div>
         <div className="viewer-toolbar-center">
@@ -97,28 +98,32 @@ export default function MarkdownViewer({
               onClick={() => setViewMode("code")}
               title="Ver y editar código Markdown fuente"
             >
-              📝 Código
+              <Code2 size={11} />
+              <span>Código</span>
             </button>
             <button
               className={`seg-btn ${viewMode === "preview" ? "active" : ""}`}
               onClick={() => setViewMode("preview")}
               title="Renderizado interactivo (Mermaid, Tablas, Fórmulas)"
             >
-              👁️ Preview
+              <Eye size={11} />
+              <span>Preview</span>
             </button>
             <button
               className={`seg-btn ${viewMode === "split" ? "active" : ""}`}
               onClick={() => setViewMode("split")}
               title="Vista dividida sincronizada"
             >
-              ◫ Split
+              <Columns2 size={11} />
+              <span>Split</span>
             </button>
           </div>
         </div>
         <div className="viewer-toolbar-right">
           {isDirty && (
             <button className="btn btn-save" onClick={onSave} title="Guardar cambios (Ctrl+S)">
-              💾 Guardar
+              <Save size={11} />
+              <span>Guardar</span>
             </button>
           )}
         </div>

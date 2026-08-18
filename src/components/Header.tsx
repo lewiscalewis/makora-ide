@@ -1,4 +1,14 @@
 import { THEME_LIST } from "../themes";
+import {
+  FolderPlus,
+  Trash2,
+  Rocket,
+  Settings,
+  Search,
+  PanelLeft,
+  PanelRight,
+  Palette,
+} from "lucide-react";
 import type { ThemeId } from "../types";
 
 interface HeaderProps {
@@ -44,7 +54,7 @@ export default function Header({
             onClick={onToggleExplorer}
             title={`${explorerOpen ? "Ocultar" : "Mostrar"} Explorador de Archivos (Ctrl+B)`}
           >
-            📁
+            <PanelLeft size={14} />
           </button>
         )}
 
@@ -64,7 +74,7 @@ export default function Header({
           onClick={onOpenPalette}
           title="Buscar archivos y comandos (Ctrl+P / Ctrl+K)"
         >
-          <span className="search-icon">🔍</span>
+          <Search size={13} className="search-icon" />
           <span className="search-placeholder">
             Buscar archivo o comando...
           </span>
@@ -91,7 +101,8 @@ export default function Header({
           onClick={onAddFolder}
           title="Añadir carpeta de proyecto al workspace"
         >
-          + Carpeta
+          <FolderPlus size={12} />
+          <span>+ Carpeta</span>
         </button>
 
         <button
@@ -99,7 +110,8 @@ export default function Header({
           onClick={onNewWorkspace}
           title="Reiniciar espacio de trabajo"
         >
-          Limpiar
+          <Trash2 size={12} />
+          <span>Limpiar</span>
         </button>
 
         {onOpenOnboarding && (
@@ -108,11 +120,13 @@ export default function Header({
             onClick={onOpenOnboarding}
             title="Asistente de configuración inicial y bienvenida"
           >
-            🚀 Asistente
+            <Rocket size={12} />
+            <span>Asistente</span>
           </button>
         )}
 
         <div className="theme-picker-wrap">
+          <Palette size={12} className="theme-icon-indicator" />
           <select
             className="theme-select"
             value={currentTheme}
@@ -133,7 +147,7 @@ export default function Header({
             onClick={onTogglePanel}
             title={`${panelOpen ? "Ocultar" : "Mostrar"} Panel de Parámetros y Consumo`}
           >
-            📊
+            <PanelRight size={14} />
           </button>
         )}
 
@@ -142,7 +156,7 @@ export default function Header({
           title="Configuración de Modelos, Tokens, Skills y MCPs (Ctrl+,)"
           onClick={onOpenSettings}
         >
-          ⚙
+          <Settings size={14} />
         </button>
       </div>
     </header>
