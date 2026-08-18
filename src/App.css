@@ -1280,10 +1280,14 @@ svg {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 16px clamp(12px, 3vw, 24px);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .chat-empty {
@@ -1317,34 +1321,281 @@ svg {
 }
 
 .msg {
-  max-width: 88%;
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  line-height: 1.5;
+  max-width: 90%;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
   word-break: break-word;
+  padding: 12px 16px;
+  box-sizing: border-box;
+  animation: fadeIn 0.18s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .msg-user {
   align-self: flex-end;
-  background: linear-gradient(135deg, var(--accent-blue), var(--purple));
+  background: linear-gradient(135deg, rgba(28, 40, 68, 0.95) 0%, rgba(18, 24, 42, 0.98) 100%);
+  border: 1px solid rgba(0, 200, 214, 0.35);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 14px rgba(0, 200, 214, 0.1);
   color: #ffffff;
+  min-width: 160px;
+}
+
+.msg-user .msg-text {
+  font-size: 13.5px;
+  color: #ffffff;
+  font-weight: 500;
+  white-space: pre-wrap;
 }
 
 .msg-assistant {
   align-self: flex-start;
-  background: var(--glass-bg);
+  background: rgba(14, 18, 30, 0.85);
   border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  width: 100%;
+  max-width: 96%;
 }
 
-.msg-role {
-  font-size: 9.5px;
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.msg-role-badge {
+  font-size: 10px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
-  opacity: 0.75;
-  font-weight: 600;
-  margin-bottom: 3px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
+
+.user-badge {
+  background: rgba(0, 200, 214, 0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 200, 214, 0.3);
+}
+
+.makora-badge {
+  background: rgba(130, 80, 255, 0.15);
+  color: #b388ff;
+  border: 1px solid rgba(130, 80, 255, 0.3);
+}
+
+.msg-content {
+  color: #e2e8f0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* Thinking Accordion */
+.thinking {
+  margin: 6px 0 12px 0;
+  border: 1px solid rgba(179, 136, 255, 0.2);
+  background: rgba(179, 136, 255, 0.04);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.thinking summary {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--purple);
+  cursor: pointer;
+  background: rgba(179, 136, 255, 0.08);
+  user-select: none;
+}
+
+.thinking-body {
+  padding: 8px 12px;
+  font-size: 11.5px;
+  font-family: Consolas, "Fira Code", monospace;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(179, 136, 255, 0.1);
+}
+
+/* Agent Activity & Tool Execution Cards */
+.agent-activity {
+  width: 100%;
+  max-width: 96%;
+  margin: 6px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(10, 13, 22, 0.9);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.activity-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  user-select: none;
+  font-size: 11.5px;
+  transition: background 0.15s ease;
+}
+
+.activity-summary:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.activity-summary-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.activity-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.activity-status-dot.running {
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  animation: pulse 1.2s infinite;
+}
+
+.activity-status-dot.done {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+}
+
+.activity-icon-wrap {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.activity-title {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.activity-args {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.activity-item {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 7px;
+  padding: 6px 10px;
+  transition: all 0.15s ease;
+}
+
+.activity-item.running {
+  border-color: rgba(0, 200, 214, 0.3);
+  background: rgba(0, 200, 214, 0.04);
+}
+
+.activity-item.success {
+  border-left: 3px solid var(--accent-green);
+}
+
+.activity-item.failed {
+  border-left: 3px solid var(--accent-red);
+  background: rgba(255, 61, 0, 0.04);
+}
+
+.activity-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.activity-item-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.activity-item-icon.run {
+  background: rgba(0, 200, 214, 0.15);
+  color: var(--cyan);
+}
+
+.activity-item-icon.ok {
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--accent-green);
+}
+
+.activity-item-icon.err {
+  background: rgba(255, 61, 0, 0.18);
+  color: var(--accent-red);
+}
+
+.activity-item-name {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 10.5px;
+}
+
+.activity-item-args {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.activity-log-wrap {
+  margin-top: 6px;
+  border-radius: 6px;
+  background: #06080f;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.activity-log {
+  margin: 0;
+  font-family: Consolas, "Fira Code", monospace;
+  font-size: 10.5px;
+  color: #94a3b8;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 
 .chat-input {
   display: flex;

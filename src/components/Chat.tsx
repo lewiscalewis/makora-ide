@@ -645,16 +645,24 @@ export default function Chat({
         )}
         {messages.map((m) => (
           <div key={m.id} className={"msg msg-" + m.role}>
-            <div className="msg-role">{m.role === "user" ? "Tú" : "Makora"}</div>
+            <div className="msg-header">
+              <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
+                {m.role === "user" ? "👤 Tú" : "⚔️ Makora"}
+              </span>
+            </div>
             {m.role === "assistant" && m.text ? (
               <>
                 {thinking && thinking.id === m.id && (
                   <details className="thinking">
-                    <summary>🧠 Pensamiento del modelo</summary>
+                    <summary>
+                      <span>🧠 Razonamiento del modelo</span>
+                    </summary>
                     <div className="thinking-body">{thinking.text}</div>
                   </details>
                 )}
-                <Markdown text={m.text} onApplyArtifact={applyArtifact} />
+                <div className="msg-content">
+                  <Markdown text={m.text} onApplyArtifact={applyArtifact} />
+                </div>
               </>
             ) : (
               <div className="msg-text">
@@ -668,22 +676,25 @@ export default function Chat({
             className="agent-activity"
             open={busy && runningTool !== undefined}
           >
-            <summary>
-              <span className="activity-icon">{runningTool ? "⚙" : "✓"}</span>
-              <span className="activity-title">
-                {runningTool
-                  ? `Ejecutando ${runningTool.name}…`
-                  : `${activities.length} herramienta${activities.length === 1 ? "" : "s"} usada${activities.length === 1 ? "" : "s"}`}
-              </span>
+            <summary className="activity-summary">
+              <div className="activity-summary-left">
+                <span className={`activity-status-dot ${runningTool ? "running" : "done"}`} />
+                <span className="activity-icon-wrap">{runningTool ? "⚙" : "✓"}</span>
+                <span className="activity-title">
+                  {runningTool
+                    ? `Ejecutando: ${runningTool.name}`
+                    : `${activities.length} herramienta${activities.length === 1 ? "" : "s"} usada${activities.length === 1 ? "" : "s"}`}
+                </span>
+              </div>
               {runningTool && (
-                <span className="activity-args">
-                  {runningTool.arguments.slice(0, 80)}
+                <span className="activity-args font-mono">
+                  {runningTool.arguments.slice(0, 65)}
                 </span>
               )}
             </summary>
             <div className="activity-list">
               {activities.map((a) => (
-                <div key={a.id} className="activity-item">
+                <div key={a.id} className={`activity-item ${a.ok === null ? "running" : a.ok ? "success" : "failed"}`}>
                   <div className="activity-item-header">
                     <span
                       className={
@@ -694,8 +705,8 @@ export default function Chat({
                       {a.ok === null ? "⚙" : a.ok ? "✓" : "✗"}
                     </span>
                     <code className="activity-item-name">{a.name}</code>
-                    <span className="activity-item-args">
-                      {a.arguments.slice(0, 100)}
+                    <span className="activity-item-args font-mono">
+                      {a.arguments.slice(0, 80)}
                     </span>
                   </div>
                   {a.log && (
@@ -709,6 +720,7 @@ export default function Chat({
           </details>
         )}
       </div>
+
 
       {mention && (
         <div className="mention-pop">

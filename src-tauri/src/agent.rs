@@ -193,29 +193,75 @@ fn find_by_name(dir: &str, name: &str, depth: u32) -> Option<std::path::PathBuf>
 }
 
 fn resolve_path(folders: &[String], path: &str, allow_missing: bool) -> Result<String, String> {
+    let clean = path.trim().replace('\\', "/");
+    let clean = clean.trim_start_matches("./").to_string();
     let usable = |c: &std::path::Path| {
         allow_missing
             || c.exists()
             || c.parent().map(|x| x.exists()).unwrap_or(false)
     };
-    let p = std::path::Path::new(path);
-    let direct = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        let root = folders.first().ok_or("no hay workspace activo")?;
-        std::path::Path::new(root).join(path)
-    };
-    if usable(&direct) && within(folders, &direct) {
-        return Ok(direct.to_string_lossy().to_string());
+
+    if folders.is_empty() {
+        return Err("no hay workspace activo".into());
     }
-    let comps: Vec<String> = path
-        .split(['/', '\\'])
+
+    // 1. If path is empty or root reference (".", "", "/")
+    if clean.is_empty() || clean == "." || clean == "/" {
+        if let Some(first_root) = folders.first() {
+            return Ok(first_root.clone());
+        }
+    }
+
+    // 2. Check if clean matches any workspace root directory name or path directly
+    for root in folders {
+        let root_p = std::path::Path::new(root);
+        let root_name = root_p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Exact match with root name (e.g. path == "makora-ide" and root is ".../makora-ide")
+        if !root_name.is_empty() && clean.eq_ignore_ascii_case(&root_name) {
+            return Ok(root.clone());
+        }
+
+        // Prefix match with root name (e.g. path == "makora-ide/src/App.tsx")
+        if !root_name.is_empty() {
+            let prefix_slash = format!("{root_name}/");
+            if clean.to_lowercase().starts_with(&prefix_slash.to_lowercase()) {
+                let stripped = &clean[prefix_slash.len()..];
+                let direct = root_p.join(stripped);
+                if usable(&direct) && within(folders, &direct) {
+                    return Ok(direct.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        if usable(p) && within(folders, p) {
+            return Ok(p.to_string_lossy().to_string());
+        }
+    }
+
+    // 3. Try relative to each workspace folder
+    for root in folders {
+        let direct = std::path::Path::new(root).join(&clean);
+        if usable(&direct) && within(folders, &direct) {
+            return Ok(direct.to_string_lossy().to_string());
+        }
+    }
+
+    // 4. Fuzzy search by first directory component
+    let comps: Vec<String> = clean
+        .split('/')
         .filter(|c| !c.is_empty())
         .map(String::from)
         .collect();
     if let Some(first) = comps.first() {
         for root in folders {
-            if let Some(found) = find_by_name(root, first, 2) {
+            if let Some(found) = find_by_name(root, first, 3) {
                 let mut joined = found;
                 for c in comps.iter().skip(1) {
                     joined = joined.join(c);
@@ -226,8 +272,10 @@ fn resolve_path(folders: &[String], path: &str, allow_missing: bool) -> Result<S
             }
         }
     }
+
     Err(format!("la ruta no existe dentro del workspace: {path}"))
 }
+
 
 fn grep_dir(dir: &str, pattern: &str, out: &mut String, count: &mut u32, max: u32) {
     if *count >= max {
@@ -892,3 +940,53 @@ pub async fn run(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_path_root_and_dot() {
+        let temp_dir = std::env::temp_dir();
+        let folder = temp_dir.to_string_lossy().to_string();
+        let folders = vec![folder.clone()];
+
+        // Dot or empty should return root
+        assert_eq!(resolve_path(&folders, ".", false).unwrap(), folder);
+        assert_eq!(resolve_path(&folders, "", false).unwrap(), folder);
+        assert_eq!(resolve_path(&folders, "./", false).unwrap(), folder);
+    }
+
+    #[test]
+    fn test_check_file_syntax_json() {
+        let valid_json = r#"{"name": "makora", "version": 1}"#;
+        assert!(check_file_syntax("config.json", valid_json).is_none());
+
+        let invalid_json = r#"{"name": "makora", version: 1}"#;
+        assert!(check_file_syntax("config.json", invalid_json).is_some());
+    }
+
+    #[test]
+    fn test_check_file_syntax_curly_balance() {
+        let valid_ts = "function test() { if (true) { return 1; } }";
+        assert!(check_file_syntax("test.ts", valid_ts).is_none());
+
+        let broken_ts = "function test() { if (true) { return 1; }";
+        let err = check_file_syntax("test.ts", broken_ts);
+        assert!(err.is_some());
+        assert!(err.unwrap().contains("Desbalance en llaves"));
+    }
+
+    #[test]
+    fn test_summarize_old_tool_result() {
+        let patch_res = "parche aplicado: 2 bloque(s) modificados en src/App.tsx";
+        assert_eq!(
+            summarize_old_tool_result(patch_res),
+            "[parche aplicado: 2 bloque(s) modificados en src/App.tsx]"
+        );
+
+        let err_res = "ERROR: la ruta no existe dentro del workspace: test.txt";
+        assert!(summarize_old_tool_result(err_res).contains("Resultado previo con error"));
+    }
+}
+
