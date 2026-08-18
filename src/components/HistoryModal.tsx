@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useI18n } from "../i18n";
 import {
   Clock,
   Cpu,
@@ -25,21 +26,6 @@ interface HistoryModalProps {
   onClose: () => void;
 }
 
-function formatRelative(ts: number): string {
-  const diff = Date.now() - ts;
-  const min = Math.floor(diff / 60_000);
-  if (min < 1) return "ahora";
-  if (min < 60) return `hace ${min} min`;
-  const hours = Math.floor(min / 60);
-  if (hours < 24) return `hace ${hours} h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `hace ${days} d`;
-  return new Date(ts).toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-  });
-}
-
 function HistoryRow({
   session,
   active,
@@ -53,96 +39,100 @@ function HistoryRow({
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
 }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title);
 
   const commit = () => {
     const next = draft.trim();
-    if (next) onRename(session.id, next);
-    else setDraft(session.title);
+    if (next && next !== session.title) {
+      onRename(session.id, next);
+    } else {
+      setDraft(session.title);
+    }
     setEditing(false);
   };
 
-  const totalTok =
-    session.totalTokens ||
-    (session.inputTokens ?? 0) + (session.outputTokens ?? 0);
+  const totalTokens = session.totalTokens || ((session.inputTokens ?? 0) + (session.outputTokens ?? 0));
+  const diff = Date.now() - session.updatedAt;
+  const min = Math.floor(diff / 60_000);
+  let timeStr = t.history.now;
+  if (min >= 1 && min < 60) timeStr = t.history.minsAgo.replace("{m}", String(min));
+  else if (min >= 60 && min < 1440) timeStr = t.history.hoursAgo.replace("{h}", String(Math.floor(min / 60)));
+  else if (min >= 1440) timeStr = t.history.daysAgo.replace("{d}", String(Math.floor(min / 1440)));
 
   return (
     <div
-      className={`history-item${active ? " active" : ""}`}
-      onClick={() => onOpen(session.id)}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onOpen(session.id);
-      }}
+      className={`history-row ${active ? "active" : ""}`}
+      onClick={() => !editing && onOpen(session.id)}
     >
-      <div className="history-item-main">
-        {editing ? (
-          <input
-            className="history-rename-input"
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commit();
-              if (e.key === "Escape") {
-                setDraft(session.title);
-                setEditing(false);
-              }
-            }}
-          />
-        ) : (
-          <div className="history-item-title" title={session.title}>
-            {session.title || "Sin título"}
-          </div>
-        )}
-        <div className="history-item-meta">
-          <span title={new Date(session.updatedAt).toLocaleString()}>
-            <Clock size={10} />
-            {formatRelative(session.updatedAt)}
-          </span>
-          <span>
-            <MessageSquare size={10} />
-            {session.messageCount} msgs
-          </span>
-          {session.model && (
-            <span className="history-model" title={session.model}>
-              <Cpu size={10} />
-              {session.model}
-            </span>
+      <div className="history-row-left">
+        <MessageSquare size={13} className={active ? "text-cyan" : "text-muted"} />
+        <div className="history-row-main">
+          {editing ? (
+            <input
+              autoFocus
+              className="history-rename-input font-mono"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commit();
+                if (e.key === "Escape") {
+                  setDraft(session.title);
+                  setEditing(false);
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="history-row-title" title={session.title}>
+              {session.title || "Conversación sin título"}
+            </div>
           )}
-          <span
-            title={`Consumo de tokens:\nEntrada: ${(session.inputTokens ?? 0).toLocaleString()}\nSalida: ${(session.outputTokens ?? 0).toLocaleString()}\nCaché: ${(session.cachedTokens ?? 0).toLocaleString()}`}
-          >
-            <Zap size={10} className="text-cyan" />
-            {totalTok > 0
-              ? `${totalTok >= 1000 ? (totalTok / 1000).toFixed(1) + "k" : totalTok} tok`
-              : "0 tok"}
-          </span>
-          <span>
-            <DollarSign size={10} />
-            {(session.totalCostUsd ?? 0).toFixed(4)}
-          </span>
+
+          <div className="history-row-meta">
+            <span className="meta-pill font-mono">
+              <Clock size={10} />
+              {timeStr}
+            </span>
+            {session.model && (
+              <span className="meta-pill font-mono model-pill">
+                <Zap size={10} className="text-cyan" />
+                {session.model}
+              </span>
+            )}
+            {totalTokens > 0 && (
+              <span className="meta-pill font-mono">
+                <Cpu size={10} />
+                {totalTokens.toLocaleString()} tok
+              </span>
+            )}
+            {(session.totalCostUsd ?? 0) > 0 && (
+              <span className="meta-pill font-mono cost-pill accent-green">
+                <DollarSign size={10} />
+                {(session.totalCostUsd ?? 0).toFixed(4)}
+              </span>
+            )}
+            <span className="meta-pill messages-pill">
+              {session.messages.length} msgs
+            </span>
+          </div>
         </div>
       </div>
-      <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
+
+      <div className="history-row-actions" onClick={(e) => e.stopPropagation()}>
         <button
           className="icon-btn-micro"
-          title="Renombrar"
-          onClick={() => {
-            setDraft(session.title);
-            setEditing((v) => !v);
-          }}
+          onClick={() => setEditing((v) => !v)}
+          title={t.common.rename}
         >
           <Pencil size={11} />
         </button>
         <button
           className="icon-btn-micro danger"
-          title="Eliminar"
           onClick={() => onDelete(session.id)}
+          title={t.common.delete}
         >
           <Trash2 size={11} />
         </button>
@@ -162,16 +152,16 @@ export default function HistoryModal({
   onClearAll,
   onClose,
 }: HistoryModalProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return sessions;
     return sessions.filter((s) => {
-      if (s.title.toLowerCase().includes(q) || s.model.toLowerCase().includes(q)) return true;
-      return s.messages.some(
-        (m) => m.content && m.content.toLowerCase().includes(q)
-      );
+      if (s.title.toLowerCase().includes(q)) return true;
+      if (s.model.toLowerCase().includes(q)) return true;
+      return s.messages.some((m) => m.content.toLowerCase().includes(q));
     });
   }, [sessions, query]);
 
@@ -184,12 +174,12 @@ export default function HistoryModal({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Historial de Chats"
+        aria-label={t.history.title}
       >
         <div className="modal-header">
           <div className="settings-header-left">
             <MessageSquare size={14} className="text-cyan" />
-            <h3>Historial de Chats</h3>
+            <h3>{t.history.title}</h3>
             <span className="badge-pill">{sessions.length}</span>
           </div>
           <div className="git-header-actions">
@@ -201,9 +191,9 @@ export default function HistoryModal({
               }}
             >
               <Plus size={12} />
-              Nueva conversación
+              {t.history.newChat}
             </button>
-            <button className="icon-btn" onClick={onClose} title="Cerrar">
+            <button className="icon-btn" onClick={onClose} title={t.common.close}>
               <X size={13} />
             </button>
           </div>
@@ -214,12 +204,12 @@ export default function HistoryModal({
             <Search size={12} className="model-search-icon" />
             <input
               className="model-search-input"
-              placeholder="Buscar por título, modelo o contenido..."
+              placeholder={t.history.searchPlaceholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
             {query && (
-              <button className="clear-filter-btn" onClick={() => setQuery("")} title="Limpiar">
+              <button className="clear-filter-btn" onClick={() => setQuery("")} title={t.common.clean}>
                 <X size={11} />
               </button>
             )}
@@ -230,7 +220,7 @@ export default function HistoryModal({
           {filtered.length === 0 ? (
             <div className="history-empty">
               <MessageSquare size={24} className="text-cyan" />
-              <p>{query ? "No hay chats que coincidan con la búsqueda." : "Todavía no hay chats guardados."}</p>
+              <p>{query ? t.history.emptyQuery : t.history.emptyNoChats}</p>
             </div>
           ) : (
             filtered.map((s) => (
@@ -247,17 +237,17 @@ export default function HistoryModal({
         </div>
 
         <div className="history-footer">
-          <span className="muted small">Se guarda localmente en este dispositivo.</span>
+          <span className="muted small">{t.history.savedLocally}</span>
           <button
             className="btn btn-danger btn-subtle"
             onClick={() => {
-              if (window.confirm("¿Borrar todo el historial de chats? Esta acción no se puede deshacer.")) {
+              if (window.confirm(t.history.clearConfirm)) {
                 onClearAll();
               }
             }}
           >
             <Trash2 size={11} />
-            Vaciar historial
+            {t.history.clearAll}
           </button>
         </div>
       </div>

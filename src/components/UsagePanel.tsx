@@ -1,5 +1,6 @@
 import { PROVIDERS } from "../providers";
 import { THINKING_LEVELS } from "../defaults";
+import { useI18n } from "../i18n";
 import {
   SlidersHorizontal,
   ShieldCheck,
@@ -72,6 +73,7 @@ export default function UsagePanel({
   mcpTools,
   onProfile,
 }: UsagePanelProps) {
+  const { t } = useI18n();
   const preset = PROVIDERS.find((p) => p.id === settings.providerId) ?? PROVIDERS[0];
   const showBaseUrl = preset.id === "custom";
   const canBalance = settings.providerId === "deepseek" || settings.providerId === "openrouter";
@@ -89,15 +91,15 @@ export default function UsagePanel({
       <div className="panel-head">
         <div className="panel-head-left">
           <SlidersHorizontal size={13} className="text-cyan" />
-          <span className="panel-title-text">Parámetros</span>
+          <span className="panel-title-text">{t.usagePanel.title}</span>
         </div>
-        <button className="icon-btn" title="Ocultar panel" onClick={onCollapse}>
+        <button className="icon-btn" title={t.usagePanel.hide} onClick={onCollapse}>
           <PanelRightClose size={12} />
         </button>
       </div>
 
       <div className="field">
-        <label>Proveedor</label>
+        <label>{t.usagePanel.provider}</label>
         <select
           value={settings.providerId}
           onChange={(e) => {
@@ -132,7 +134,7 @@ export default function UsagePanel({
 
       {showBaseUrl && (
         <div className="field">
-          <label>Base URL</label>
+          <label>{t.usagePanel.baseUrl}</label>
           <input
             type="text"
             value={settings.baseUrl}
@@ -145,7 +147,7 @@ export default function UsagePanel({
       {preset.needsKey && (
         <div className="field">
           <div className="field-label-row">
-            <label>API key</label>
+            <label>{t.usagePanel.apiKey}</label>
             <span className="keyring-badge" title="Credenciales protegidas mediante Windows DPAPI / SO Keyring">
               <ShieldCheck size={10} />
               <span>Keyring SO</span>
@@ -161,7 +163,7 @@ export default function UsagePanel({
       )}
 
       <div className="field">
-        <label>Modelo</label>
+        <label>{t.usagePanel.model}</label>
         <select
           value={settings.model}
           disabled={models.length === 0}
@@ -169,7 +171,7 @@ export default function UsagePanel({
         >
           {models.length === 0 ? (
             <option value="">
-              {connecting ? "Conectando…" : "Conecta para listar modelos"}
+              {connecting ? t.common.connecting : t.chat.noModels}
             </option>
           ) : (
             models.map((m) => (
@@ -183,20 +185,20 @@ export default function UsagePanel({
 
       <button className="btn btn-connect" onClick={onConnect} disabled={connecting}>
         <Zap size={12} />
-        <span>{connecting ? "Conectando…" : "Conectar"}</span>
+        <span>{connecting ? t.common.connecting : t.common.connect}</span>
       </button>
       {modelsError && <p className="error small">{modelsError}</p>}
 
-      <h3 className="panel-title">Pensamiento & Perfil</h3>
+      <h3 className="panel-title">{t.usagePanel.thinkingLevel}</h3>
       <div className="field">
-        <label>Nivel de razonamiento</label>
+        <label>{t.usagePanel.reasoningMode}</label>
         <select
           value={thinkingLevel}
           onChange={(e) => onThinkingLevel(e.target.value as ThinkingLevel)}
         >
-          {THINKING_LEVELS.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
+          {THINKING_LEVELS.map((th) => (
+            <option key={th.value} value={th.value}>
+              {th.label}
             </option>
           ))}
         </select>
@@ -218,7 +220,7 @@ export default function UsagePanel({
         })}
       </div>
 
-      <h3 className="panel-title">Contexto (último turno)</h3>
+      <h3 className="panel-title">{t.usagePanel.contextUsage}</h3>
       <div className="gauge">
         <div className="gauge-seg gauge-cache" style={{ width: `${cachePct}%` }} />
         <div className="gauge-seg gauge-code" style={{ width: `${codePct}%` }} />
@@ -230,44 +232,44 @@ export default function UsagePanel({
         <span><i className="dot dot-free" /> Libre</span>
       </div>
 
-      <h3 className="panel-title">Consumo de Sesión</h3>
+      <h3 className="panel-title">{t.analytics.tabOverview}</h3>
       <dl className="usage-list">
         <div className="usage-row">
-          <dt>Tokens entrada</dt>
+          <dt>{t.analytics.totalInput}</dt>
           <dd>{usage.inputTokens.toLocaleString()}</dd>
         </div>
         <div className="usage-row">
-          <dt>Tokens salida</dt>
+          <dt>{t.analytics.totalOutput}</dt>
           <dd>{usage.outputTokens.toLocaleString()}</dd>
         </div>
         <div className="usage-row">
-          <dt>Tokens en caché</dt>
+          <dt>{t.analytics.totalCached}</dt>
           <dd>{usage.cachedTokens.toLocaleString()}</dd>
         </div>
         <div className="usage-row">
-          <dt>Coste sesión (est.)</dt>
+          <dt>{t.analytics.estimatedCost}</dt>
           <dd className="accent-green">${costUsd.toFixed(4)}</dd>
         </div>
       </dl>
 
-      <h3 className="panel-title">Crédito del Proveedor</h3>
+      <h3 className="panel-title">{t.usagePanel.balance}</h3>
       {canBalance && (
         <button className="btn btn-connect" onClick={onRefreshBalance} disabled={balanceLoading}>
           <RefreshCw size={11} className={balanceLoading ? "animate-spin" : ""} />
-          <span>{balanceLoading ? "Consultando…" : "Consultar saldo"}</span>
+          <span>{balanceLoading ? t.common.loading : t.usagePanel.refreshBalance}</span>
         </button>
       )}
       <dl className="usage-list">
         <div className="usage-row">
-          <dt>Saldo</dt>
+          <dt>{t.usagePanel.balance}</dt>
           <dd>
             {balance
               ? `${balance.amount.toFixed(2)} ${balance.currency}`
               : canBalance
                 ? balanceLoading
-                  ? "consultando…"
-                  : "no consultado"
-                : "no disponible"}
+                  ? t.common.loading
+                  : "--"
+                : t.analytics.balanceUnlimited}
           </dd>
         </div>
         {remaining !== null && (
@@ -278,18 +280,18 @@ export default function UsagePanel({
         )}
       </dl>
 
-      <h3 className="panel-title">Herramientas MCP</h3>
+      <h3 className="panel-title">{t.usagePanel.mcpTools}</h3>
       {mcpTools.length === 0 ? (
         <p className="muted small">Sin servidores MCP activos.</p>
       ) : (
         <details className="mcp-health">
           <summary>
             <Layers size={11} />
-            <span>{mcpTools.length} herramientas activas</span>
+            <span>{mcpTools.length} {t.usagePanel.mcpTools}</span>
           </summary>
           <div className="mcp-list">
-            {mcpTools.map((t) => (
-              <code key={t} className="mcp-tool">{t}</code>
+            {mcpTools.map((mcp) => (
+              <code key={mcp} className="mcp-tool">{mcp}</code>
             ))}
           </div>
         </details>

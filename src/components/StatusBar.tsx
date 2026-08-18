@@ -1,4 +1,5 @@
 import { MAKORA_THEMES } from "../themes";
+import { useI18n } from "../i18n";
 import {
   Folder,
   GitBranch,
@@ -46,6 +47,7 @@ export default function StatusBar({
   onOpenGit,
   onOpenAnalytics,
 }: StatusBarProps) {
+  const { t } = useI18n();
   const theme = MAKORA_THEMES[currentTheme] || MAKORA_THEMES.void;
   const totalTokens = usage.inputTokens + usage.outputTokens;
   const totalGitChanges = (gitInfo?.staged ?? 0) + (gitInfo?.modified ?? 0) + (gitInfo?.untracked ?? 0);
@@ -56,7 +58,7 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onOpenPalette}
-          title="Abrir Command Palette (Ctrl+P)"
+          title={t.statusbar.openPalette}
         >
           <Folder size={12} className="status-icon" />
           <span className="status-text font-semibold">{workspaceName}</span>
@@ -69,12 +71,12 @@ export default function StatusBar({
             <button
               className="status-item status-clickable git-status-item"
               onClick={onOpenGit}
-              title={`Git Studio: Rama ${gitInfo.branch} | ${totalGitChanges} cambios pendientes (Clic para abrir)`}
+              title={`Git: ${t.statusbar.branch} ${gitInfo.branch} | ${totalGitChanges} ${t.statusbar.changesPending}`}
             >
               <GitBranch size={12} className="status-icon" />
               <span className="status-text font-mono">{gitInfo.branch}</span>
               {totalGitChanges > 0 && (
-                <span className="git-changes-badge" title={`${totalGitChanges} archivos con cambios`}>
+                <span className="git-changes-badge" title={`${totalGitChanges} ${t.statusbar.changesPending}`}>
                   ● {totalGitChanges}
                 </span>
               )}
@@ -88,12 +90,12 @@ export default function StatusBar({
           {agentBusy ? (
             <span className="status-badge status-badge-busy">
               <span className="pulse-dot" />
-              <span>{runningToolName ? `Ejecutando ${runningToolName}` : "Razonando..."}</span>
+              <span>{runningToolName ? `${t.statusbar.executingTool} ${runningToolName}` : t.statusbar.reasoning}</span>
             </span>
           ) : (
             <span className="status-badge status-badge-idle">
               <span className="idle-dot" />
-              <span>Makora Listo</span>
+              <span>{t.statusbar.ready}</span>
             </span>
           )}
         </div>
@@ -101,7 +103,7 @@ export default function StatusBar({
 
       <div className="status-right">
         {activeModel && (
-          <div className="status-item" title="Modelo de IA activo">
+          <div className="status-item" title={t.chat.selectModel}>
             <Zap size={11} className="status-icon text-cyan" />
             <span className="status-text font-mono">{activeModel}</span>
           </div>
@@ -112,7 +114,7 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onOpenAnalytics}
-          title="Abrir Telemetría de Tokens & Crédito Universal (Clic para ver detalles)"
+          title={t.statusbar.openAnalytics}
         >
           <BarChart2 size={11} className="status-icon text-gold" />
           <span className="status-text font-mono">
@@ -128,10 +130,10 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onToggleTerminal}
-          title="Alternar Terminal Integrada (Ctrl+J)"
+          title={`${t.statusbar.toggleTerminal} (Ctrl+J)`}
         >
           <Terminal size={11} className="status-icon" />
-          <span className="status-text">Terminal</span>
+          <span className="status-text">{t.statusbar.toggleTerminal}</span>
           <kbd className="status-kbd">Ctrl+J</kbd>
         </button>
 
@@ -140,7 +142,7 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onCycleTheme}
-          title={`Tema activo: ${theme.name} (Clic para conmutar)`}
+          title={t.statusbar.cycleTheme}
         >
           <Palette size={11} className="status-icon" />
           <span className="status-text">{theme.name}</span>
@@ -151,7 +153,7 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onOpenSettings}
-          title="Configuración (Ctrl+,)"
+          title={t.statusbar.openSettings}
         >
           <Settings size={12} className="status-icon" />
         </button>

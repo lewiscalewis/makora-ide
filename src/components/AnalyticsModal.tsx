@@ -86,13 +86,13 @@ export default function AnalyticsModal({
             <Coins size={16} className="text-gold" />
             <div>
               <h3>{t.analytics.title}</h3>
-              <span className="analytics-sub">Métricas de consumo, eficiencia de caché y presupuesto</span>
+              <span className="analytics-sub">{t.analytics.subtitle}</span>
             </div>
           </div>
           <div className="analytics-header-right">
-            <button className="btn btn-subtle" onClick={exportReport} title="Exportar informe de telemetría">
+            <button className="btn btn-subtle" onClick={exportReport} title={t.common.exportJson}>
               <Download size={12} />
-              <span>Exportar JSON</span>
+              <span>{t.common.exportJson}</span>
             </button>
             <button className="icon-btn" onClick={onClose} title={`${t.common.close} (Esc)`}>
               <X size={13} />
@@ -107,21 +107,21 @@ export default function AnalyticsModal({
             onClick={() => setActiveTab("overview")}
           >
             <PieChart size={12} />
-            <span>Resumen Global</span>
+            <span>{t.analytics.tabOverview}</span>
           </button>
           <button
             className={`tab ${activeTab === "breakdown" ? "active" : ""}`}
             onClick={() => setActiveTab("breakdown")}
           >
             <Layers size={12} />
-            <span>Eficiencia de Caché</span>
+            <span>{t.analytics.tabCache}</span>
           </button>
           <button
             className={`tab ${activeTab === "limits" ? "active" : ""}`}
             onClick={() => setActiveTab("limits")}
           >
             <ShieldAlert size={12} />
-            <span>Presupuesto & Alertas</span>
+            <span>{t.analytics.tabBudget}</span>
           </button>
         </div>
 
@@ -132,56 +132,56 @@ export default function AnalyticsModal({
               {/* Stat Cards */}
               <div className="analytics-card card-cost">
                 <div className="card-top">
-                  <span className="card-label">Coste Estimado Sesión</span>
+                  <span className="card-label">{t.analytics.estimatedCost}</span>
                   <Coins size={15} className="text-gold" />
                 </div>
                 <div className="card-main-val text-gold">${costUsd.toFixed(4)}</div>
-                <div className="card-sub-val muted small">Basado en precios de entrada/salida de {currentModel}</div>
+                <div className="card-sub-val muted small">{t.analytics.costSub} {currentModel}</div>
               </div>
 
               <div className="analytics-card card-balance">
                 <div className="card-top">
-                  <span className="card-label">Saldo Disponible ({provider})</span>
+                  <span className="card-label">{t.analytics.availableBalance} ({provider})</span>
                   <button
                     className="icon-btn-micro"
                     onClick={onRefreshBalance}
                     disabled={balanceLoading}
-                    title="Actualizar saldo del proveedor"
+                    title={t.usagePanel.refreshBalance}
                   >
                     <RefreshCw size={11} className={balanceLoading ? "animate-spin" : ""} />
                   </button>
                 </div>
                 <div className="card-main-val accent-green">
-                  {balance ? `${balance.amount.toFixed(2)} ${balance.currency}` : "Ilimitado / Local"}
+                  {balance ? `${balance.amount.toFixed(2)} ${balance.currency}` : t.analytics.balanceUnlimited}
                 </div>
                 <div className="card-sub-val muted small">
-                  {balance ? "Consultado en tiempo real desde la API" : "Sin restricción de saldo API"}
+                  {balance ? t.analytics.balanceLive : t.analytics.balanceUnlimited}
                 </div>
               </div>
 
               <div className="analytics-card card-cache">
                 <div className="card-top">
-                  <span className="card-label">Eficiencia de Caché</span>
+                  <span className="card-label">{t.analytics.cacheEfficiency}</span>
                   <Percent size={15} className="text-cyan" />
                 </div>
                 <div className="card-main-val text-cyan">{cacheHitRate.toFixed(1)}%</div>
                 <div className="card-sub-val muted small">
-                  Ahorro estimado: <span className="accent-green">${estimatedSavings.toFixed(4)}</span>
+                  {t.analytics.estimatedSavings} <span className="accent-green">${estimatedSavings.toFixed(4)}</span>
                 </div>
               </div>
 
               <div className="analytics-card card-total">
                 <div className="card-top">
-                  <span className="card-label">Volumen Total Tokens</span>
+                  <span className="card-label">{t.analytics.totalTokenVolume}</span>
                   <Cpu size={15} className="text-purple" />
                 </div>
                 <div className="card-main-val text-purple">{totalTokens.toLocaleString()}</div>
-                <div className="card-sub-val muted small">Input + Output generados</div>
+                <div className="card-sub-val muted small">{t.analytics.totalTokenVolumeSub}</div>
               </div>
 
               {/* Detailed Breakdown Box */}
               <div className="analytics-full-card">
-                <h4 className="section-title">Desglose de Tokens por Tipo</h4>
+                <h4 className="section-title">{t.analytics.breakdownTitle}</h4>
                 <div className="token-breakdown-bar">
                   <div
                     className="token-bar-seg seg-input"
@@ -197,15 +197,15 @@ export default function AnalyticsModal({
                 <div className="token-legend-row">
                   <div className="legend-item">
                     <span className="legend-dot dot-input" />
-                    <span>Tokens Entrada (Prompt): <strong>{usage.inputTokens.toLocaleString()}</strong></span>
+                    <span>{t.analytics.inputLegend}: <strong>{usage.inputTokens.toLocaleString()}</strong></span>
                   </div>
                   <div className="legend-item">
                     <span className="legend-dot dot-output" />
-                    <span>Tokens Salida (Completado): <strong>{usage.outputTokens.toLocaleString()}</strong></span>
+                    <span>{t.analytics.outputLegend}: <strong>{usage.outputTokens.toLocaleString()}</strong></span>
                   </div>
                   <div className="legend-item">
                     <span className="legend-dot dot-cache" />
-                    <span>Tokens en Caché Reutilizados: <strong>{usage.cachedTokens.toLocaleString()}</strong></span>
+                    <span>{t.analytics.cachedLegend}: <strong>{usage.cachedTokens.toLocaleString()}</strong></span>
                   </div>
                 </div>
               </div>
@@ -217,9 +217,9 @@ export default function AnalyticsModal({
               <div className="analytics-info-box">
                 <Sparkles size={14} className="text-cyan" />
                 <div>
-                  <strong>Prompt Caching Inteligente de Makora</strong>
+                  <strong>{t.analytics.smartCachingTitle}</strong>
                   <p className="small muted">
-                    MakoraIDE almacena en caché el árbol del repositorio y las reglas del sistema. En cada turno sucesivo, los tokens reutilizados no pagan la tarifa de cómputo completa.
+                    {t.analytics.smartCachingDesc}
                   </p>
                 </div>
               </div>
@@ -228,29 +228,29 @@ export default function AnalyticsModal({
                 <table className="analytics-table">
                   <thead>
                     <tr>
-                      <th>Métrica de Eficiencia</th>
-                      <th>Último Turno</th>
-                      <th>Total Acumulado</th>
+                      <th>{t.analytics.metricCol}</th>
+                      <th>{t.analytics.lastTurnCol}</th>
+                      <th>{t.analytics.totalAccumCol}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td><ArrowDownLeft size={11} className="inline-icon text-cyan" /> Tokens de Entrada</td>
+                      <td><ArrowDownLeft size={11} className="inline-icon text-cyan" /> {t.analytics.totalInput}</td>
                       <td>{(lastUsage?.inputTokens ?? 0).toLocaleString()}</td>
                       <td>{usage.inputTokens.toLocaleString()}</td>
                     </tr>
                     <tr>
-                      <td><ArrowUpRight size={11} className="inline-icon text-purple" /> Tokens de Salida</td>
+                      <td><ArrowUpRight size={11} className="inline-icon text-purple" /> {t.analytics.totalOutput}</td>
                       <td>{(lastUsage?.outputTokens ?? 0).toLocaleString()}</td>
                       <td>{usage.outputTokens.toLocaleString()}</td>
                     </tr>
                     <tr>
-                      <td><Sparkles size={11} className="inline-icon text-green" /> Tokens en Caché (KV-Cache)</td>
+                      <td><Sparkles size={11} className="inline-icon text-green" /> {t.analytics.totalCached}</td>
                       <td>{(lastUsage?.cachedTokens ?? 0).toLocaleString()}</td>
                       <td>{usage.cachedTokens.toLocaleString()}</td>
                     </tr>
                     <tr>
-                      <td><Percent size={11} className="inline-icon text-gold" /> Tasa de Acierto de Caché (KV-Cache)</td>
+                      <td><Percent size={11} className="inline-icon text-gold" /> {t.analytics.cacheHitRatio}</td>
                       <td>
                         {lastUsage && lastUsage.inputTokens > 0
                           ? `${((lastUsage.cachedTokens / lastUsage.inputTokens) * 100).toFixed(1)}%`
@@ -258,19 +258,19 @@ export default function AnalyticsModal({
                       </td>
                       <td>
                         <span className={cacheHitRate >= 60 ? "accent-green" : "text-gold"}>
-                          {cacheHitRate.toFixed(1)}% {cacheHitRate >= 60 ? "⚡ Óptimo" : ""}
+                          {cacheHitRate.toFixed(1)}% {cacheHitRate >= 60 ? "⚡" : ""}
                         </span>
                       </td>
                     </tr>
                     <tr>
-                      <td><Sparkles size={11} className="inline-icon text-cyan" /> Eficiencia de Salida Quirúrgica (apply_patch)</td>
+                      <td><Sparkles size={11} className="inline-icon text-cyan" /> {t.analytics.surgicalEfficiency}</td>
                       <td>≥ 0.88</td>
-                      <td><span className="accent-green">0.92 (Ahorro ~85% vs reescritura)</span></td>
+                      <td><span className="accent-green">0.92</span></td>
                     </tr>
                     <tr>
-                      <td><Layers size={11} className="inline-icon text-purple" /> Ratio de Compactación de Historial</td>
+                      <td><Layers size={11} className="inline-icon text-purple" /> {t.analytics.compactionRatio}</td>
                       <td>4.2x</td>
-                      <td><span className="accent-green">4.5x (Poda Inteligente Activa)</span></td>
+                      <td><span className="accent-green">4.5x</span></td>
                     </tr>
                   </tbody>
                 </table>
@@ -282,8 +282,8 @@ export default function AnalyticsModal({
             <div className="analytics-limits-section">
               <div className="cfg-card">
                 <div className="cfg-head">
-                  <strong>Control Universal de Gastos</strong>
-                  <span className="badge-pill active">Activo</span>
+                  <strong>{t.analytics.tabBudget}</strong>
+                  <span className="badge-pill active">{t.common.active}</span>
                 </div>
                 <p className="small muted">
                   Configura límites automáticos para proteger tus claves API de sobrecostes inesperados.

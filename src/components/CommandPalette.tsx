@@ -54,7 +54,7 @@ export default function CommandPalette({
   const staticActions: CommandItem[] = [
     {
       id: "action-onboarding",
-      title: "Abrir Asistente de Inicio / Bienvenida",
+      title: t.palette.actionOnboarding,
       subtitle: "Configurar proveedores, API Keys seguras, workspace y temas",
       icon: "🚀",
       category: "action",
@@ -65,7 +65,7 @@ export default function CommandPalette({
     },
     {
       id: "action-auto-test",
-      title: "Ejecutar Auto-Tests y Reparar Código",
+      title: t.palette.actionAutoTest,
       subtitle: "Lanza la suite de pruebas del proyecto y corrige fallos automáticamente",
       icon: "🧪",
       category: "action",
@@ -76,7 +76,7 @@ export default function CommandPalette({
     },
     {
       id: "action-toggle-mode",
-      title: "Alternar Modo Planificación / Acción",
+      title: t.palette.actionToggleMode,
       subtitle: "Cambiar entre Modo Plan (diseña primero) y Modo Acción (aplica directo)",
       icon: "📋",
       category: "action",
@@ -87,7 +87,7 @@ export default function CommandPalette({
     },
     {
       id: "action-terminal",
-      title: "Alternar Terminal Integrada",
+      title: t.palette.actionTerminal,
       subtitle: "Abrir o cerrar la terminal PTY interactiva",
       icon: "💻",
       shortcut: "Ctrl+J",
@@ -99,7 +99,7 @@ export default function CommandPalette({
     },
     {
       id: "action-explorer",
-      title: "Alternar Explorador de Archivos",
+      title: t.palette.actionExplorer,
       subtitle: "Mostrar u ocultar el árbol de directorios",
       icon: "📁",
       shortcut: "Ctrl+B",
@@ -111,7 +111,7 @@ export default function CommandPalette({
     },
     {
       id: "action-git",
-      title: "Control de Versiones Git",
+      title: t.palette.actionGit,
       subtitle: "Inspeccionar cambios, commits, ramas y repositorios remotos",
       icon: "🌿",
       shortcut: "Ctrl+G",
@@ -123,7 +123,7 @@ export default function CommandPalette({
     },
     {
       id: "action-analytics",
-      title: "Telemetría de Tokens y Eficiencia de Caché",
+      title: t.palette.actionAnalytics,
       subtitle: "Consultar hit rate de KV-Cache, saldo y costes de inferencia",
       icon: "📊",
       category: "action",
@@ -134,7 +134,7 @@ export default function CommandPalette({
     },
     {
       id: "action-settings",
-      title: "Abrir Configuración",
+      title: t.palette.actionSettings,
       subtitle: "Gestionar modelos, tokens, skills y MCPs",
       icon: "⚙️",
       shortcut: "Ctrl+,",
@@ -146,7 +146,7 @@ export default function CommandPalette({
     },
     {
       id: "action-add-folder",
-      title: "Añadir Carpeta al Workspace",
+      title: t.palette.actionAddFolder,
       subtitle: "Seleccionar un nuevo directorio para el espacio de trabajo",
       icon: "➕",
       category: "action",
@@ -157,7 +157,7 @@ export default function CommandPalette({
     },
     {
       id: "action-new-ws",
-      title: "Nuevo Workspace Limpio",
+      title: t.palette.actionNewWs,
       subtitle: "Reiniciar el espacio de trabajo actual",
       icon: "🔄",
       category: "action",
@@ -168,7 +168,7 @@ export default function CommandPalette({
     },
     {
       id: "action-clear-chat",
-      title: "Limpiar Conversación / Nuevo Chat",
+      title: t.palette.actionClearChat,
       subtitle: "Vaciar el transcript y comenzar un turno limpio",
       icon: "🗑️",
       category: "action",
@@ -179,7 +179,7 @@ export default function CommandPalette({
     },
     {
       id: "action-history",
-      title: "Historial de Chats",
+      title: t.palette.actionHistory,
       subtitle: "Abrir conversaciones guardadas y continuar donde lo dejaste",
       icon: "🕘",
       shortcut: "Ctrl+H",

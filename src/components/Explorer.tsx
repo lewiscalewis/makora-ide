@@ -25,6 +25,7 @@ import {
   Code2,
   X,
 } from "lucide-react";
+import { useI18n } from "../i18n";
 import type { DirEntry } from "../types";
 
 function basename(path: string): string {
@@ -218,6 +219,7 @@ export default function Explorer({
   onChanged,
   refreshTick,
 }: ExplorerProps) {
+  const { t } = useI18n();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [promptValue, setPromptValue] = useState("");
@@ -279,18 +281,18 @@ export default function Explorer({
   return (
     <aside className="explorer">
       <div className="panel-head">
-        <span className="panel-title-text">Explorador</span>
+        <span className="panel-title-text">{t.explorer.title}</span>
         <div className="panel-head-actions">
           <button
             className="icon-btn"
-            title="Refrescar explorador"
+            title={t.explorer.refresh}
             onClick={onChanged}
           >
             <RefreshCw size={12} />
           </button>
           <button
             className="icon-btn"
-            title="Ocultar explorador (Ctrl+B)"
+            title={t.explorer.hide}
             onClick={onCollapse}
           >
             <PanelLeftClose size={12} />
@@ -299,8 +301,8 @@ export default function Explorer({
       </div>
       {folders.length === 0 ? (
         <div className="explorer-empty muted">
-          <p>Añade carpetas para construir tu workspace.</p>
-          <p className="muted small">Usa "+ Carpeta" en el encabezado.</p>
+          <p>{t.explorer.emptyWorkspace}</p>
+          <p className="muted small">{t.explorer.emptyWorkspaceHint}</p>
         </div>
       ) : (
         <div key={refreshTick} className="explorer-tree">
@@ -327,7 +329,7 @@ export default function Explorer({
           {!menu.isDir && (
             <button className="ctx-item" onClick={() => onOpenFile(menu.path)}>
               <FileText size={12} />
-              <span>Abrir en visor</span>
+              <span>{t.explorer.openInViewer}</span>
             </button>
           )}
           <button className="ctx-item" onClick={() => revealInExplorer(menu.path)}>
@@ -342,7 +344,7 @@ export default function Explorer({
             }}
           >
             <Edit2 size={12} />
-            <span>Renombrar</span>
+            <span>{t.explorer.rename}</span>
           </button>
           {menu.isDir && (
             <>
@@ -354,7 +356,7 @@ export default function Explorer({
                 }}
               >
                 <FilePlus size={12} />
-                <span>Nuevo archivo</span>
+                <span>{t.explorer.newFile}</span>
               </button>
               <button
                 className="ctx-item"
@@ -364,7 +366,7 @@ export default function Explorer({
                 }}
               >
                 <FolderPlus size={12} />
-                <span>Nueva carpeta</span>
+                <span>{t.explorer.newFolder}</span>
               </button>
             </>
           )}
@@ -375,7 +377,7 @@ export default function Explorer({
             }
           >
             <Trash2 size={12} />
-            <span>Eliminar</span>
+            <span>{t.explorer.deleteItem}</span>
           </button>
         </div>
       )}
@@ -389,15 +391,15 @@ export default function Explorer({
           {prompt.kind === "delete" ? (
             <div>
               <p className="small">
-                ¿Seguro que deseas eliminar{" "}
+                {t.explorer.deleteConfirm}{" "}
                 <strong>{basename(prompt.path)}</strong>?
               </p>
               <div className="ctx-actions">
                 <button className="btn btn-subtle" onClick={() => setPrompt(null)}>
-                  Cancelar
+                  {t.common.cancel}
                 </button>
                 <button className="btn btn-danger" onClick={submitPrompt}>
-                  Eliminar
+                  {t.explorer.deleteItem}
                 </button>
               </div>
             </div>
@@ -409,10 +411,10 @@ export default function Explorer({
                 value={promptValue}
                 placeholder={
                   prompt.kind === "rename"
-                    ? "Nuevo nombre"
+                    ? t.explorer.newNamePlaceholder
                     : prompt.kind === "newfile"
-                      ? "nombre_archivo.ext"
-                      : "nombre_carpeta"
+                      ? t.explorer.newFilePlaceholder
+                      : t.explorer.newFolderPlaceholder
                 }
                 onChange={(e) => setPromptValue(e.target.value)}
                 onKeyDown={(e) => {
@@ -422,10 +424,10 @@ export default function Explorer({
               />
               <div className="ctx-actions">
                 <button className="btn btn-subtle" onClick={() => setPrompt(null)}>
-                  Cancelar
+                  {t.common.cancel}
                 </button>
                 <button className="btn btn-primary" onClick={submitPrompt}>
-                  Guardar
+                  {t.common.confirm}
                 </button>
               </div>
             </div>

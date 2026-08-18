@@ -881,9 +881,9 @@ export default function Chat({
           )}
 
           {projectRules && (
-            <span className="rules-active-badge" title="Reglas del repositorio detectadas e inyectadas">
+            <span className="rules-active-badge" title={t.chat.rulesTooltip}>
               <ScrollText size={10} />
-              <span>Reglas Activas</span>
+              <span>{t.chat.rulesActive}</span>
             </span>
           )}
 
@@ -895,7 +895,7 @@ export default function Chat({
               title="Modo Acción: El agente analiza y aplica ediciones directamente"
             >
               <Zap size={10} />
-              <span>Acción</span>
+              <span>{t.chat.actMode}</span>
             </button>
             <button
               className={`mode-pill ${agentMode === "plan" ? "active" : ""}`}
@@ -903,7 +903,7 @@ export default function Chat({
               title="Modo Plan: El agente genera un plan y pide aprobación antes de escribir"
             >
               <ScrollText size={10} />
-              <span>Plan</span>
+              <span>{t.chat.planMode}</span>
             </button>
           </div>
         </div>
@@ -912,37 +912,37 @@ export default function Chat({
           <button
             className="chat-header-btn"
             onClick={triggerAutoTestAndRepair}
-            title="Lanza la suite de tests del proyecto y auto-corrige fallos"
+            title={t.palette.actionAutoTest}
           >
             <FlaskConical size={11} />
-            <span>Auto-Test</span>
+            <span>{t.chat.autoTest}</span>
           </button>
           {messages.length > 0 && (
             <>
               <button
                 className="chat-header-btn"
                 onClick={copyTranscript}
-                title="Copiar toda la conversación"
+                title={t.chat.copyChat}
               >
                 {copiedTranscript ? <Check size={11} /> : <Copy size={11} />}
-                <span>{copiedTranscript ? "Copiado" : "Copiar"}</span>
+                <span>{copiedTranscript ? t.common.copied : t.common.copy}</span>
               </button>
               <button
                 className="chat-header-btn"
                 onClick={exportMarkdown}
-                title="Descargar conversación en formato Markdown"
+                title={t.chat.exportChat}
               >
                 <Download size={11} />
-                <span>Exportar</span>
+                <span>{t.chat.exportChat}</span>
               </button>
               <button
                 className="chat-header-btn"
                 onClick={clearChat}
                 disabled={busy}
-                title="Vaciar chat y comenzar un nuevo turno"
+                title={t.chat.clearChat}
               >
                 <Trash2 size={11} />
-                <span>Limpiar</span>
+                <span>{t.chat.clearChat}</span>
               </button>
             </>
           )}
@@ -990,12 +990,12 @@ export default function Chat({
               <div className="msg-header">
                 <div className="msg-header-left">
                   <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
-                    {m.role === "user" ? "👤 Tú" : "⚔️ Makora"}
+                    {m.role === "user" ? `👤 ${t.chat.you}` : `⚔️ ${t.chat.assistant}`}
                   </span>
                   {isBusyCurrent && (
                     <span className="msg-streaming-indicator">
                       <span className="pulse-dot" />
-                      <span>{runningToolInMsg ? `Ejecutando ${runningToolInMsg.name}...` : hasThinking ? "Razonando..." : "Generando respuesta..."}</span>
+                      <span>{runningToolInMsg ? `${t.statusbar.executingTool} ${runningToolInMsg.name}...` : hasThinking ? t.chat.thinkingStreaming : t.chat.generating}</span>
                     </span>
                   )}
                 </div>
@@ -1003,17 +1003,17 @@ export default function Chat({
                   <button
                     className="msg-copy-btn"
                     onClick={() => copyMessage(m.id, m.text)}
-                    title="Copiar texto de este mensaje"
+                    title={t.chat.copyMessage}
                   >
                     {copiedMsgId === m.id ? (
                       <>
                         <Check size={11} className="text-green" />
-                        <span>Copiado</span>
+                        <span>{t.common.copied}</span>
                       </>
                     ) : (
                       <>
                         <Copy size={11} />
-                        <span>Copiar</span>
+                        <span>{t.common.copy}</span>
                       </>
                     )}
                   </button>
@@ -1162,8 +1162,8 @@ export default function Chat({
           }}
           placeholder={
             ready
-              ? `[Modo ${agentMode === "plan" ? "Plan" : "Acción"}] Instrucción para Makora… (@ para archivos)`
-              : "Selecciona o conecta un modelo abajo primero"
+              ? (agentMode === "plan" ? t.chat.inputPlaceholderPlan : t.chat.inputPlaceholderAct)
+              : t.chat.selectModelFirst
           }
           rows={3}
           disabled={!ready}
@@ -1179,11 +1179,11 @@ export default function Chat({
                 type="button"
                 className={`model-picker-trigger ${modelMenuOpen ? "active" : ""}`}
                 onClick={() => setModelMenuOpen((v) => !v)}
-                title="Seleccionar modelo de IA (Clic para desplegar)"
+                title={`${t.chat.selectModel} (Click)`}
               >
                 <Zap size={11} className="model-picker-icon text-cyan" />
                 <span className="model-picker-name font-mono">
-                  {activeModel || config.model || "Seleccionar modelo"}
+                  {activeModel || config.model || t.chat.selectModel}
                 </span>
                 <ChevronDown size={11} className={`model-chevron ${modelMenuOpen ? "rotated" : ""}`} />
               </button>
@@ -1196,7 +1196,7 @@ export default function Chat({
                       <input
                         type="text"
                         className="model-search-input"
-                        placeholder="Filtrar modelos..."
+                        placeholder={t.chat.filterModels}
                         value={modelSearch}
                         onChange={(e) => setModelSearch(e.target.value)}
                         autoFocus
@@ -1208,7 +1208,7 @@ export default function Chat({
                   <div className="model-options-list">
                     {filteredModels.length === 0 ? (
                       <div className="model-option-empty">
-                        <span>{models.length === 0 ? "Sin modelos cargados (usa Conectar en Config)" : "Sin coincidencias"}</span>
+                        <span>{models.length === 0 ? t.chat.noModels : t.chat.noMatches}</span>
                       </div>
                     ) : (
                       filteredModels.map((m) => {
