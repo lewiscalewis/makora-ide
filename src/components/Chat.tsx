@@ -643,38 +643,91 @@ export default function Chat({
             </div>
           </div>
         )}
-        {messages.map((m) => (
-          <div key={m.id} className={"msg msg-" + m.role}>
-            <div className="msg-header">
-              <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
-                {m.role === "user" ? "👤 Tú" : "⚔️ Makora"}
-              </span>
-            </div>
-            {m.role === "assistant" && m.text ? (
-              <>
-                {thinking && thinking.id === m.id && (
-                  <details className="thinking">
-                    <summary>
-                      <span>🧠 Razonamiento del modelo</span>
-                    </summary>
-                    <div className="thinking-body">{thinking.text}</div>
-                  </details>
+        {messages.map((m) => {
+          const isCurrentAssistant = m.role === "assistant" && m.id === currentAssistantId.current;
+          const isBusyCurrent = isCurrentAssistant && busy;
+          const hasThinking = thinking && thinking.id === m.id && thinking.text.trim().length > 0;
+
+          return (
+            <div key={m.id} className={"msg msg-" + m.role}>
+              <div className="msg-header">
+                <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
+                  {m.role === "user" ? "👤 Tú" : "⚔️ Makora"}
+                </span>
+                {isBusyCurrent && (
+                  <span className="msg-streaming-indicator">
+                    <span className="pulse-dot" />
+                    <span>{runningTool ? `Ejecutando ${runningTool.name}...` : hasThinking ? "Razonando..." : "Generando respuesta..."}</span>
+                  </span>
                 )}
-                <div className="msg-content">
-                  <Markdown text={m.text} onApplyArtifact={applyArtifact} />
-                </div>
-              </>
-            ) : (
-              <div className="msg-text">
-                {m.text || (m.role === "assistant" ? "…" : "")}
               </div>
-            )}
-          </div>
-        ))}
+
+              {/* Discreet VS Code-style Thinking Collapsible Drawer */}
+              {hasThinking && (
+                <details className="thinking-discrete" open={isBusyCurrent && !m.text}>
+                  <summary className="thinking-discrete-summary">
+                    <span className="thinking-icon-dot" />
+                    <span className="thinking-discrete-title">
+                      Razonamiento interno ({thinking!.text.trim().split(/\s+/).length} palabras)
+                    </span>
+                  </summary>
+                  <div className="thinking-discrete-body font-mono">
+                    {thinking!.text}
+                  </div>
+                </details>
+              )}
+
+              {/* Assistant Content or Reassuring Working State */}
+              {m.role === "assistant" ? (
+                m.text ? (
+                  <div className="msg-content">
+                    <Markdown text={m.text} onApplyArtifact={applyArtifact} />
+                  </div>
+                ) : isBusyCurrent ? (
+                  <div className="ai-working-indicator">
+                    <div className="ai-working-top">
+                      <div className="ai-working-spinner-wrap">
+                        <div className="ai-working-spinner" />
+                        <Zap size={11} className="ai-working-icon text-cyan" />
+                      </div>
+                      <div className="ai-working-text-col">
+                        <span className="ai-working-title">
+                          {runningTool
+                            ? `Ejecutando herramienta: ${runningTool.name}`
+                            : hasThinking
+                              ? "Razonando solución técnica..."
+                              : "Analizando proyecto y preparando respuesta..."}
+                        </span>
+                        <span className="ai-working-detail font-mono">
+                          {runningTool
+                            ? runningTool.arguments.slice(0, 75)
+                            : `${activities.length} operaciones realizadas`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="ai-working-shimmer-track">
+                      <div className="ai-working-shimmer-bar" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="msg-text muted font-mono">(sin contenido)</div>
+                )
+              ) : (
+                <div className="msg-text">{m.text}</div>
+              )}
+            </div>
+          );
+        })}
         {activities.length > 0 && (
           <details
             className="agent-activity"
             open={busy && runningTool !== undefined}
+            onMouseEnter={() => {
+              isAutoScrollEnabled.current = false;
+            }}
+            onMouseLeave={() => {
+              isAutoScrollEnabled.current = true;
+            }}
           >
             <summary className="activity-summary">
               <div className="activity-summary-left">
@@ -682,19 +735,30 @@ export default function Chat({
                 <span className="activity-icon-wrap">{runningTool ? "⚙" : "✓"}</span>
                 <span className="activity-title">
                   {runningTool
-                    ? `Ejecutando: ${runningTool.name}`
-                    : `${activities.length} herramienta${activities.length === 1 ? "" : "s"} usada${activities.length === 1 ? "" : "s"}`}
+                    ? `Ejecutando herramienta: ${runningTool.name}`
+                    : `${activities.length} operaciones ejecutadas`}
                 </span>
               </div>
-              {runningTool && (
-                <span className="activity-args font-mono">
-                  {runningTool.arguments.slice(0, 65)}
-                </span>
-              )}
+              <div className="activity-summary-right">
+                {runningTool ? (
+                  <span className="activity-args font-mono">
+                    {runningTool.arguments.slice(0, 65)}
+                  </span>
+                ) : (
+                  <span className="activity-counter-pill">
+                    {activities.filter((a) => a.ok === true).length} exitosas
+                    {activities.some((a) => a.ok === false) &&
+                      ` · ${activities.filter((a) => a.ok === false).length} fallidas`}
+                  </span>
+                )}
+              </div>
             </summary>
             <div className="activity-list">
               {activities.map((a) => (
-                <div key={a.id} className={`activity-item ${a.ok === null ? "running" : a.ok ? "success" : "failed"}`}>
+                <div
+                  key={a.id}
+                  className={`activity-item ${a.ok === null ? "running" : a.ok ? "success" : "failed"}`}
+                >
                   <div className="activity-item-header">
                     <span
                       className={
@@ -705,7 +769,7 @@ export default function Chat({
                       {a.ok === null ? "⚙" : a.ok ? "✓" : "✗"}
                     </span>
                     <code className="activity-item-name">{a.name}</code>
-                    <span className="activity-item-args font-mono">
+                    <span className="activity-item-args font-mono" title={a.arguments}>
                       {a.arguments.slice(0, 80)}
                     </span>
                   </div>
@@ -720,6 +784,7 @@ export default function Chat({
           </details>
         )}
       </div>
+
 
 
       {mention && (
