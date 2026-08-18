@@ -113,7 +113,10 @@ export default function UsagePanel({
 
       {preset.needsKey && (
         <div className="field">
-          <label>API key</label>
+          <div className="field-label-row">
+            <label>API key</label>
+            <span className="keyring-badge" title="Tus credenciales están protegidas mediante Windows DPAPI / Keychain del SO">🔒 Keyring SO</span>
+          </div>
           <input
             type="password"
             value={settings.apiKey}
@@ -122,6 +125,7 @@ export default function UsagePanel({
           />
         </div>
       )}
+
 
       <div className="field">
         <label>Modelo</label>

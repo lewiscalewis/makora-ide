@@ -3,11 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import {
   chat,
   chatCancel,
+  detectProjectRules,
   searchPaths,
   workspaceSummary,
 } from "../api";
 import Markdown from "./Markdown";
 import type {
+  AgentMode,
   Attachment,
   ChatConfig,
   ChatMessage,
@@ -45,6 +47,8 @@ interface ChatProps {
   visionEnabled: boolean;
   blocked: boolean;
   blockReason: string;
+  agentMode?: AgentMode;
+  onToggleMode?: (mode: AgentMode) => void;
   onUsage: (usage: ChatUsage) => void;
   onApplyArtifact: (path: string, content: string) => void;
   onStatusChange?: (busy: boolean, runningToolName: string | null) => void;
@@ -61,6 +65,8 @@ export default function Chat({
   visionEnabled,
   blocked,
   blockReason,
+  agentMode = "act",
+  onToggleMode,
   onUsage,
   onApplyArtifact,
   onStatusChange,
@@ -79,6 +85,7 @@ export default function Chat({
   } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [copiedTranscript, setCopiedTranscript] = useState(false);
+  const [projectRules, setProjectRules] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -93,6 +100,17 @@ export default function Chat({
     onStatusChange?.(busy, runningTool ? runningTool.name : null);
   }, [busy, runningTool, onStatusChange]);
 
+  // Detect project rules in workspace
+  useEffect(() => {
+    if (folders.length > 0) {
+      detectProjectRules(folders)
+        .then(setProjectRules)
+        .catch(() => setProjectRules(null));
+    } else {
+      setProjectRules(null);
+    }
+  }, [folders]);
+
   const scrollToBottom = (smooth = true) => {
     if (!messagesContainerRef.current) return;
     const el = messagesContainerRef.current;
@@ -106,23 +124,22 @@ export default function Chat({
   const handleScroll = () => {
     if (!messagesContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-    const distanceToBottom = scrollHeight - scrollTop - clientHeight;
-    isAutoScrollEnabled.current = distanceToBottom < 120;
+    isAutoScrollEnabled.current = scrollHeight - (scrollTop + clientHeight) < 60;
   };
 
   useEffect(() => {
     if (isAutoScrollEnabled.current) {
-      scrollToBottom();
+      scrollToBottom(false);
     }
-  }, [messages, thinking, activities]);
+  }, [messages, activities, thinking]);
 
   useEffect(() => {
-    const fns: (() => void)[] = [];
+    const fns: Array<() => void> = [];
     listen<ToolStart>("tool-start", (e) => {
       const t = e.payload;
       setActivities((a) => [
         ...a,
-        { id: t.id, name: t.name, arguments: t.arguments, ok: null, log: "" },
+        { id: t.id, name: t.name, arguments: t.arguments, log: "", ok: null },
       ]);
     }).then((f) => fns.push(f));
     listen<ToolOutputEvent>("tool-output", (e) => {
@@ -158,9 +175,24 @@ export default function Chat({
       "Cuando generes archivos de código completos, usa bloques con el formato ```lenguaje:ruta/del/archivo " +
       "para que el usuario pueda aplicarlos al workspace con un clic. " +
       thinkingNudge(thinkingLevel);
+
+    if (agentMode === "plan") {
+      sys +=
+        "\n\n## MODO DE PLANIFICACIÓN ACTIVO (PLAN MODE):\n" +
+        "El usuario ha activado el MODO PLAN. En este modo está ESTRICTAMENTE PROHIBIDO crear, editar o borrar archivos directamente con write_file o apply_patch, o ejecutar comandos bash destructivos. Tu objetivo es:\n" +
+        "1. Inspeccionar y analizar el código relevante usando read_file, read_file_range o grep.\n" +
+        "2. Formular un Plan de Implementación estructurado con el desglose de cambios, archivos a crear o modificar, y posibles riesgos.\n" +
+        "3. Pedir la aprobación explícita del usuario antes de proceder a la ejecución.";
+    }
+
+    if (projectRules) {
+      sys += "\n\n" + projectRules;
+    }
+
     if (skillsContent.trim()) {
       sys += "\n\n## Skills (instrucciones del usuario)\n" + skillsContent;
     }
+
     if (includeWorkspace && folders.length > 0) {
       sys += "\n\n## Workspace activo (rutas raíz)\n" + folders.join("\n");
       try {
@@ -178,23 +210,13 @@ export default function Chat({
     files.forEach((f) => {
       const id = ++lastAttachmentId.current + Date.now();
       if (f.type.startsWith("image/")) {
-        if (f.size > 4_000_000) {
-          setMessages((m) => [
-            ...m,
-            {
-              id: Date.now(),
-              role: "assistant",
-              text: `⚠️ La imagen "${f.name}" supera 4 MB y se omitió.`,
-            },
-          ]);
-          return;
-        }
         const reader = new FileReader();
-        reader.onload = () =>
+        reader.onload = () => {
           setAttachments((a) => [
             ...a,
-            { id, name: f.name, kind: "image", dataUrl: String(reader.result) },
+            { id, name: f.name, kind: "image", dataUrl: String(reader.result ?? "") },
           ]);
+        };
         reader.readAsDataURL(f);
       } else if (
         f.type.startsWith("text/") ||
@@ -279,6 +301,15 @@ export default function Chat({
     a.download = `makora_chat_${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const triggerAutoTestAndRepair = () => {
+    setInput(
+      "Ejecuta la suite de pruebas del proyecto (cargo test, npm test, pytest o equivalente según el lenguaje del workspace), analiza cualquier fallo o error en los logs, y aplica las correcciones quirúrgicas necesarias hasta que todos los tests pasen exitosamente.",
+    );
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 50);
   };
 
   const send = async () => {
@@ -432,9 +463,40 @@ export default function Chat({
               {ready ? "Sesión activa" : "Sin conexión"}
             </span>
           )}
+
+          {projectRules && (
+            <span className="rules-active-badge" title="Reglas del repositorio detectadas e inyectadas">
+              📜 Reglas Activas
+            </span>
+          )}
+
+          {/* Mode Switcher */}
+          <div className="agent-mode-selector">
+            <button
+              className={`mode-pill ${agentMode === "act" ? "active" : ""}`}
+              onClick={() => onToggleMode?.("act")}
+              title="Modo Acción: El agente analiza y aplica ediciones directamente"
+            >
+              ⚡ Acción
+            </button>
+            <button
+              className={`mode-pill ${agentMode === "plan" ? "active" : ""}`}
+              onClick={() => onToggleMode?.("plan")}
+              title="Modo Plan: El agente genera un plan y pide aprobación antes de escribir"
+            >
+              📋 Plan
+            </button>
+          </div>
         </div>
 
         <div className="chat-top-actions">
+          <button
+            className="chat-header-btn"
+            onClick={triggerAutoTestAndRepair}
+            title="Lanza la suite de tests del proyecto y auto-corrige fallos"
+          >
+            🧪 Auto-Test
+          </button>
           {messages.length > 0 && (
             <>
               <button
@@ -475,9 +537,14 @@ export default function Chat({
             <p className="chat-empty-title">MakoraIDE · Desarrollo Agéntico</p>
             <p className="chat-empty-sub">
               {ready
-                ? "Escribe tu instrucción, menciona archivos con @ o presiona Ctrl+P para buscar."
-                : "Conecta un proveedor en el panel derecho para comenzar."}
+                ? `Modo actual: ${agentMode === "plan" ? "📋 Planificación (Pide aprobación)" : "⚡ Acción directa"}. Usa @ para archivos o Ctrl+P para comandos.`
+                : "Conecta un proveedor en el panel derecho o abre el Asistente de Inicio para comenzar."}
             </p>
+            <div className="chat-quickstart-actions">
+              <button className="btn btn-subtle" onClick={triggerAutoTestAndRepair}>
+                🧪 Ejecutar Auto-Tests y Reparar
+              </button>
+            </div>
           </div>
         )}
         {messages.map((m) => (
@@ -616,7 +683,7 @@ export default function Chat({
           }}
           placeholder={
             ready
-              ? "Instrucción para Makora… (usa @ para archivos, pega o arrastra adjuntos)"
+              ? `[Modo ${agentMode === "plan" ? "Plan" : "Acción"}] Instrucción para Makora… (@ para archivos)`
               : "Conecta un proveedor en el panel derecho primero"
           }
           rows={3}

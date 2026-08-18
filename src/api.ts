@@ -52,3 +52,15 @@ export const termWrite = (id: string, data: string) =>
 export const termResize = (id: string, cols: number, rows: number) =>
   invoke<void>("term_resize", { id, cols, rows });
 export const termKill = (id: string) => invoke<void>("term_kill", { id });
+
+export const keyringGet = (providerId: string) =>
+  invoke<string | null>("keyring_get", { providerId });
+export const keyringSet = (providerId: string, secret: string) =>
+  invoke<void>("keyring_set", { providerId, secret });
+export const keyringDelete = (providerId: string) =>
+  invoke<void>("keyring_delete", { providerId });
+
+export const detectProjectRules = (folders: string[]) =>
+  invoke<string | null>("detect_project_rules", { folders });
+export const detectOllama = () =>
+  invoke<boolean>("detect_ollama");

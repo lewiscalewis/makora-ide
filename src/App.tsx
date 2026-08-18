@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   fetchBalance,
   homeDir,
+  keyringGet,
+  keyringSet,
   listModels,
   mcpConfigure,
   pickFolder,
@@ -21,7 +23,9 @@ import TerminalPanel from "./components/TerminalPanel";
 import EditorPanel from "./components/EditorPanel";
 import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
+import OnboardingModal from "./components/OnboardingModal";
 import type {
+  AgentMode,
   AppConfig,
   BalanceInfo,
   ChatConfig,
@@ -146,6 +150,7 @@ function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [config, setConfig] = useState<AppConfig>(loadConfig);
   const [theme, setTheme] = useState<ThemeId>(loadSavedTheme);
+  const [agentMode, setAgentMode] = useState<AgentMode>("act");
   const [models, setModels] = useState<string[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -156,6 +161,7 @@ function App() {
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [layout, setLayout] = useState<LayoutState>(loadLayout);
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -175,6 +181,24 @@ function App() {
     applyTheme(theme);
     localStorage.setItem("makora.theme", theme);
   }, [theme]);
+
+  // Load API key securely from OS Keyring
+  useEffect(() => {
+    keyringGet(settings.providerId)
+      .then((key) => {
+        if (key && !settings.apiKey) {
+          setSettings((s) => ({ ...s, apiKey: key }));
+        }
+      })
+      .catch(() => undefined);
+  }, [settings.providerId]);
+
+  // Sync API key updates to OS Keyring
+  useEffect(() => {
+    if (settings.apiKey) {
+      keyringSet(settings.providerId, settings.apiKey).catch(() => undefined);
+    }
+  }, [settings.providerId, settings.apiKey]);
 
   const cycleTheme = () => {
     const list = THEME_LIST.map((t) => t.id);
@@ -301,7 +325,11 @@ function App() {
     }
   };
 
-  const addFolder = async () => {
+  const addFolder = async (pathOverride?: string) => {
+    if (pathOverride) {
+      if (!folders.includes(pathOverride)) setFolders((f) => [...f, pathOverride]);
+      return;
+    }
     const p = await pickFolder();
     if (p && !folders.includes(p)) setFolders((f) => [...f, p]);
   };
@@ -459,10 +487,11 @@ function App() {
         workspaceName={workspaceName}
         onWorkspaceName={setWorkspaceName}
         folderCount={folders.length}
-        onAddFolder={addFolder}
+        onAddFolder={() => addFolder()}
         onNewWorkspace={newWorkspace}
         onOpenSettings={() => setShowSettings(true)}
         onOpenPalette={() => setShowPalette(true)}
+        onOpenOnboarding={() => setShowOnboarding(true)}
         currentTheme={theme}
         onSelectTheme={setTheme}
       />
@@ -550,6 +579,8 @@ function App() {
               visionEnabled={modelConfig?.visionEnabled ?? false}
               blocked={balanceBlocked}
               blockReason={blockReason}
+              agentMode={agentMode}
+              onToggleMode={setAgentMode}
               onUsage={addUsage}
               onApplyArtifact={applyArtifact}
               onStatusChange={(busy, tool) => {
@@ -642,10 +673,12 @@ function App() {
           setLayout((l) => ({ ...l, explorerCollapsed: !l.explorerCollapsed }))
         }
         onOpenSettings={() => setShowSettings(true)}
-        onAddFolder={addFolder}
+        onOpenOnboarding={() => setShowOnboarding(true)}
+        onToggleMode={() => setAgentMode((m) => (m === "act" ? "plan" : "act"))}
+        onAddFolder={() => addFolder()}
         onNewWorkspace={newWorkspace}
         onClearChat={() => {
-          // handled in palette
+          // Handled via clearChat in chat
         }}
       />
 
@@ -656,6 +689,19 @@ function App() {
           onClose={() => setShowSettings(false)}
           currentTheme={theme}
           onSelectTheme={setTheme}
+        />
+      )}
+
+      {showOnboarding && (
+        <OnboardingModal
+          isOpen={showOnboarding}
+          onClose={() => setShowOnboarding(false)}
+          settings={settings}
+          onSaveSettings={setSettings}
+          currentTheme={theme}
+          onSelectTheme={setTheme}
+          folders={folders}
+          onAddFolder={(p) => addFolder(p)}
         />
       )}
     </div>

@@ -461,6 +461,87 @@ fn workspace_summary(folders: Vec<String>) -> Result<String, String> {
     Ok(out)
 }
 
+#[tauri::command]
+#[specta::specta]
+
+fn keyring_get(provider_id: String) -> Result<Option<String>, String> {
+    let key = format!("api_key:{}", provider_id.trim().to_lowercase());
+    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn keyring_set(provider_id: String, secret: String) -> Result<(), String> {
+    let key = format!("api_key:{}", provider_id.trim().to_lowercase());
+    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
+    entry.set_password(&secret).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+fn keyring_delete(provider_id: String) -> Result<(), String> {
+    let key = format!("api_key:{}", provider_id.trim().to_lowercase());
+    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn detect_project_rules(folders: Vec<String>) -> Result<Option<String>, String> {
+    let candidates = [
+        ".makora/rules.md",
+        ".makora/RULES.md",
+        "MAKORA.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".cursorrules",
+    ];
+
+    let mut rules_found = Vec::new();
+
+    for f in effective_folders(folders) {
+        let base = std::path::Path::new(&f);
+        for c in &candidates {
+            let p = base.join(c);
+            if p.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&p) {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() {
+                        rules_found.push(format!("### Reglas del Proyecto ({})\n{}", c, trimmed));
+                    }
+                }
+            }
+        }
+    }
+
+    if rules_found.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(rules_found.join("\n\n")))
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn detect_ollama() -> Result<bool, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(800))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get("http://localhost:11434/api/tags").send().await;
+    Ok(resp.map(|r| r.status().is_success()).unwrap_or(false))
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta_builder = Builder::new()
@@ -487,8 +568,14 @@ pub fn run() {
             term_resize,
             term_kill,
             search_paths,
-            workspace_summary
+            workspace_summary,
+            keyring_get,
+            keyring_set,
+            keyring_delete,
+            detect_project_rules,
+            detect_ollama
         ])
+
         .events(collect_events![StreamEvent, ChatDeltaEvent]);
 
     tauri::Builder::default()

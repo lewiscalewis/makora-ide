@@ -12,6 +12,9 @@ interface CommandPaletteProps {
   onToggleTerminal: () => void;
   onToggleExplorer: () => void;
   onOpenSettings: () => void;
+  onOpenOnboarding?: () => void;
+  onToggleMode?: () => void;
+  onAutoTest?: () => void;
   onAddFolder: () => void;
   onNewWorkspace: () => void;
   onClearChat: () => void;
@@ -26,6 +29,9 @@ export default function CommandPalette({
   onToggleTerminal,
   onToggleExplorer,
   onOpenSettings,
+  onOpenOnboarding,
+  onToggleMode,
+  onAutoTest,
   onAddFolder,
   onNewWorkspace,
   onClearChat,
@@ -38,6 +44,39 @@ export default function CommandPalette({
   const searchTimer = useRef<number | null>(null);
 
   const staticActions: CommandItem[] = [
+    {
+      id: "action-onboarding",
+      title: "Abrir Asistente de Inicio / Bienvenida",
+      subtitle: "Configurar proveedores, API Keys seguras, workspace y temas",
+      icon: "🚀",
+      category: "action",
+      action: () => {
+        onOpenOnboarding?.();
+        onClose();
+      },
+    },
+    {
+      id: "action-auto-test",
+      title: "Ejecutar Auto-Tests y Reparar Código",
+      subtitle: "Lanza la suite de pruebas del proyecto y corrige fallos automáticamente",
+      icon: "🧪",
+      category: "action",
+      action: () => {
+        onAutoTest?.();
+        onClose();
+      },
+    },
+    {
+      id: "action-toggle-mode",
+      title: "Alternar Modo Planificación / Acción",
+      subtitle: "Cambiar entre Modo Plan (diseña primero) y Modo Acción (aplica directo)",
+      icon: "📋",
+      category: "action",
+      action: () => {
+        onToggleMode?.();
+        onClose();
+      },
+    },
     {
       id: "action-terminal",
       title: "Alternar Terminal Integrada",

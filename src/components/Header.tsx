@@ -9,6 +9,7 @@ interface HeaderProps {
   onNewWorkspace: () => void;
   onOpenSettings: () => void;
   onOpenPalette: () => void;
+  onOpenOnboarding?: () => void;
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
 }
@@ -21,6 +22,7 @@ export default function Header({
   onNewWorkspace,
   onOpenSettings,
   onOpenPalette,
+  onOpenOnboarding,
   currentTheme,
   onSelectTheme,
 }: HeaderProps) {
@@ -67,6 +69,16 @@ export default function Header({
         <button className="btn btn-subtle" onClick={onNewWorkspace} title="Reiniciar espacio de trabajo">
           Limpiar
         </button>
+
+        {onOpenOnboarding && (
+          <button
+            className="btn btn-subtle"
+            onClick={onOpenOnboarding}
+            title="Asistente de configuración inicial y bienvenida"
+          >
+            🚀 Asistente
+          </button>
+        )}
 
         <div className="theme-picker-wrap">
           <select

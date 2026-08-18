@@ -221,3 +221,17 @@ export interface DiffLine {
   text: string;
 }
 
+export type AgentMode = "act" | "plan";
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  model: string;
+  messages: ChatMessage[];
+  totalCostUsd: number;
+}
+
+
