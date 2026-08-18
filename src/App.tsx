@@ -323,7 +323,8 @@ function App() {
 
   const openFile = useCallback(async (path: string) => {
     try {
-      const content = await readTextFile(path);
+      const raw = await readTextFile(path);
+      const content = raw.replace(/\r\n/g, "\n");
       setOpenFiles((fs) => {
         if (fs.some((f) => f.path === path)) {
           return fs.map((f) => (f.path === path ? { ...f, content, originalContent: content, isDirty: false } : f));
@@ -350,11 +351,13 @@ function App() {
   }, [activePath]);
 
   const updateFileContent = (path: string, content: string) => {
+    const normalized = content.replace(/\r\n/g, "\n");
     setOpenFiles((fs) =>
       fs.map((f) => {
         if (f.path === path) {
-          const isDirty = f.originalContent !== undefined ? content !== f.originalContent : true;
-          return { ...f, content, isDirty };
+          const orig = f.originalContent !== undefined ? f.originalContent.replace(/\r\n/g, "\n") : undefined;
+          const isDirty = orig !== undefined ? normalized !== orig : false;
+          return { ...f, content: normalized, isDirty };
         }
         return f;
       }),
@@ -377,12 +380,13 @@ function App() {
 
   const applyArtifact = async (path: string, content: string) => {
     try {
-      const old = await writeFile(effectiveFolders, path, content);
-      setDiff({ before: old ?? "", after: content });
+      const normalized = content.replace(/\r\n/g, "\n");
+      const old = await writeFile(effectiveFolders, path, normalized);
+      setDiff({ before: old ?? "", after: normalized });
       setOpenFiles((fs) =>
         fs.some((f) => f.path === path)
-          ? fs.map((f) => (f.path === path ? { ...f, content, originalContent: content, isDirty: false } : f))
-          : [...fs, { path, content, originalContent: content, isDirty: false }],
+          ? fs.map((f) => (f.path === path ? { ...f, content: normalized, originalContent: normalized, isDirty: false } : f))
+          : [...fs, { path, content: normalized, originalContent: normalized, isDirty: false }],
       );
       setActivePath(path);
       setRefreshTick((t) => t + 1);
@@ -391,20 +395,21 @@ function App() {
     }
   };
 
-
   const revertDiff = async () => {
     if (!diff || !activePath) return;
     try {
-      await writeFile(effectiveFolders, activePath, diff.before);
+      const beforeNormalized = diff.before.replace(/\r\n/g, "\n");
+      await writeFile(effectiveFolders, activePath, beforeNormalized);
       setDiff({ before: diff.after, after: diff.before });
       setOpenFiles((fs) =>
-        fs.map((f) => (f.path === activePath ? { ...f, content: diff.before, originalContent: diff.before, isDirty: false } : f)),
+        fs.map((f) => (f.path === activePath ? { ...f, content: beforeNormalized, originalContent: beforeNormalized, isDirty: false } : f)),
       );
       setRefreshTick((t) => t + 1);
     } catch (e) {
       console.warn("revert:", e);
     }
   };
+
 
   const updateModelConfig = (patch: Partial<ModelConfig>) => {
     if (!settings.model) return;

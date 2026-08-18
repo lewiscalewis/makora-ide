@@ -91,12 +91,14 @@ function CodeMirrorEditor({
     const view = viewRef.current;
     if (!view) return;
     const currentDoc = view.state.doc.toString();
-    if (currentDoc !== content) {
+    const normalized = content.replace(/\r\n/g, "\n");
+    if (currentDoc !== normalized) {
       view.dispatch({
-        changes: { from: 0, to: currentDoc.length, insert: content },
+        changes: { from: 0, to: currentDoc.length, insert: normalized },
       });
     }
   }, [content]);
+
 
   return <div ref={hostRef} className="editor-host" />;
 }
