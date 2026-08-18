@@ -137,6 +137,37 @@ fn read_text_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 #[specta::specta]
+fn normalize_path_str(p: &std::path::Path) -> String {
+    let s = p.to_string_lossy().to_string();
+    let s = s.trim_start_matches(r"\\?\").replace('\\', "/");
+    #[cfg(target_os = "windows")]
+    {
+        s.to_lowercase()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        s
+    }
+}
+
+fn path_within(folders: &[String], path: &str) -> bool {
+    if folders.is_empty() {
+        return true;
+    }
+    let p = std::path::Path::new(path);
+    let p_canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let p_norm = normalize_path_str(&p_canon);
+
+    folders.iter().any(|f| {
+        let fp = std::path::Path::new(f);
+        let f_canon = fp.canonicalize().unwrap_or_else(|_| fp.to_path_buf());
+        let f_norm = normalize_path_str(&f_canon);
+        p_norm.starts_with(&f_norm)
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
 fn write_file(folders: Vec<String>, path: String, content: String) -> Result<Option<String>, String> {
     let p = std::path::Path::new(&path);
     let abs = if p.is_absolute() {
@@ -145,28 +176,17 @@ fn write_file(folders: Vec<String>, path: String, content: String) -> Result<Opt
         let root = folders.first().ok_or("no hay workspace activo")?;
         std::path::Path::new(root).join(&path)
     };
-    let canon = abs.canonicalize().unwrap_or(abs);
-    let within = folders
-        .iter()
-        .any(|f| canon.starts_with(std::path::Path::new(f)));
-    if !within {
+    if !path_within(&folders, &abs.to_string_lossy()) {
         return Err(format!("la ruta está fuera del workspace: {path}"));
     }
-    let old = std::fs::read_to_string(&canon).ok();
-    if let Some(parent) = std::path::Path::new(&canon).parent() {
+    let old = std::fs::read_to_string(&abs).ok();
+    if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&canon, content).map_err(|e| e.to_string())?;
+    std::fs::write(&abs, content).map_err(|e| e.to_string())?;
     Ok(old)
 }
 
-fn path_within(folders: &[String], path: &str) -> bool {
-    let p = std::path::Path::new(path);
-    let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    folders
-        .iter()
-        .any(|f| canon.starts_with(std::path::Path::new(f)))
-}
 
 #[tauri::command]
 #[specta::specta]

@@ -155,12 +155,34 @@ fn core_tools() -> Vec<ToolDef> {
     ]
 }
 
-fn within(folders: &[String], p: &std::path::Path) -> bool {
-    let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    folders
-        .iter()
-        .any(|f| canon.starts_with(std::path::Path::new(f)))
+fn normalize_path_str(p: &std::path::Path) -> String {
+    let s = p.to_string_lossy().to_string();
+    let s = s.trim_start_matches(r"\\?\").replace('\\', "/");
+    #[cfg(target_os = "windows")]
+    {
+        s.to_lowercase()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        s
+    }
 }
+
+fn within(folders: &[String], p: &std::path::Path) -> bool {
+    if folders.is_empty() {
+        return true;
+    }
+    let p_canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let p_norm = normalize_path_str(&p_canon);
+
+    folders.iter().any(|f| {
+        let fp = std::path::Path::new(f);
+        let f_canon = fp.canonicalize().unwrap_or_else(|_| fp.to_path_buf());
+        let f_norm = normalize_path_str(&f_canon);
+        p_norm.starts_with(&f_norm)
+    })
+}
+
 
 fn find_by_name(dir: &str, name: &str, depth: u32) -> Option<std::path::PathBuf> {
     if depth == 0 {
@@ -332,7 +354,13 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
             pixel_height: 0,
         })
         .map_err(|e| e.to_string())?;
-    let mut builder = portable_pty::CommandBuilder::new(crate::terminal::system_shell());
+    #[cfg(target_os = "windows")]
+    let shell_exec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+    #[cfg(not(target_os = "windows"))]
+    let shell_exec = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    let mut builder = portable_pty::CommandBuilder::new(shell_exec);
+
     let cwd = folders
         .first()
         .cloned()

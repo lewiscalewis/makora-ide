@@ -21,17 +21,34 @@ pub struct TermData {
 fn shell_cmd() -> String {
     #[cfg(target_os = "windows")]
     {
+        if let Ok(p) = std::env::var("SystemRoot") {
+            let ps = format!("{p}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+            if std::path::Path::new(&ps).exists() {
+                return ps;
+            }
+        }
         std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
     }
     #[cfg(not(target_os = "windows"))]
     {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+        std::env::var("SHELL").unwrap_or_else(|_| {
+            if std::path::Path::new("/bin/bash").exists() {
+                "/bin/bash".to_string()
+            } else if std::path::Path::new("/bin/zsh").exists() {
+                "/bin/zsh".to_string()
+            } else {
+                "/bin/sh".to_string()
+            }
+        })
     }
 }
 
+
+#[allow(dead_code)]
 pub fn system_shell() -> String {
     shell_cmd()
 }
+
 
 pub fn spawn(
     app: &AppHandle,
