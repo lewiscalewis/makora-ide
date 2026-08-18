@@ -1,9 +1,10 @@
 import { MAKORA_THEMES } from "../themes";
-import type { ThemeId, Usage } from "../types";
+import type { GitStatusInfo, ThemeId, Usage } from "../types";
 
 interface StatusBarProps {
   workspaceName: string;
   folderCount: number;
+  gitInfo?: GitStatusInfo | null;
   activeModel: string;
   agentBusy: boolean;
   runningToolName?: string | null;
@@ -19,6 +20,7 @@ interface StatusBarProps {
 export default function StatusBar({
   workspaceName,
   folderCount,
+  gitInfo,
   activeModel,
   agentBusy,
   runningToolName,
@@ -32,6 +34,7 @@ export default function StatusBar({
 }: StatusBarProps) {
   const theme = MAKORA_THEMES[currentTheme] || MAKORA_THEMES.void;
   const totalTokens = usage.inputTokens + usage.outputTokens;
+  const totalGitChanges = (gitInfo?.staged ?? 0) + (gitInfo?.modified ?? 0) + (gitInfo?.untracked ?? 0);
 
   return (
     <footer className="status-bar">
@@ -45,6 +48,24 @@ export default function StatusBar({
           <span className="status-text font-semibold">{workspaceName}</span>
           <span className="status-dim">({folderCount})</span>
         </button>
+
+        {gitInfo && (
+          <>
+            <div className="status-divider" />
+            <div
+              className="status-item git-status-item"
+              title={`Rama Git: ${gitInfo.branch} | Staged: ${gitInfo.staged} | Modificados: ${gitInfo.modified} | Sin seguimiento: ${gitInfo.untracked}`}
+            >
+              <span className="status-icon">🌿</span>
+              <span className="status-text font-mono">{gitInfo.branch}</span>
+              {totalGitChanges > 0 && (
+                <span className="git-changes-badge" title={`${totalGitChanges} archivos con cambios`}>
+                  ● {totalGitChanges}
+                </span>
+              )}
+            </div>
+          </>
+        )}
 
         <div className="status-divider" />
 
@@ -65,7 +86,7 @@ export default function StatusBar({
 
       <div className="status-right">
         {activeModel && (
-          <div className="status-item" title="Modelo activo">
+          <div className="status-item" title="Modelo de IA activo">
             <span className="status-icon">⚡</span>
             <span className="status-text font-mono">{activeModel}</span>
           </div>
@@ -91,7 +112,7 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onToggleTerminal}
-          title="Alternar Terminal (Ctrl+J)"
+          title="Alternar Terminal Integrada (Ctrl+J)"
         >
           <span className="status-icon">💻</span>
           <span className="status-text">Terminal</span>
@@ -103,7 +124,7 @@ export default function StatusBar({
         <button
           className="status-item status-clickable"
           onClick={onCycleTheme}
-          title={`Tema activo: ${theme.name} (Clic para cambiar)`}
+          title={`Tema activo: ${theme.name} (Clic para conmutar)`}
         >
           <span className="status-icon">🎨</span>
           <span className="status-text">{theme.name}</span>

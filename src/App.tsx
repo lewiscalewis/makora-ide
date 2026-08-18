@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchBalance,
+  gitStatus,
   homeDir,
   keyringGet,
   keyringSet,
@@ -13,17 +14,16 @@ import {
 import { presetById } from "./providers";
 import { DEFAULT_CONFIG } from "./defaults";
 import { applyTheme, loadSavedTheme, THEME_LIST } from "./themes";
-import SplitPane from "./core/SplitPane";
 import Header from "./components/Header";
 import Explorer from "./components/Explorer";
 import Chat from "./components/Chat";
 import UsagePanel from "./components/UsagePanel";
 import SettingsModal from "./components/SettingsModal";
 import TerminalPanel from "./components/TerminalPanel";
-import EditorPanel from "./components/EditorPanel";
 import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
 import OnboardingModal from "./components/OnboardingModal";
+import UnifiedWorkspace from "./components/UnifiedWorkspace";
 import type {
   AgentMode,
   AppConfig,
@@ -31,7 +31,7 @@ import type {
   ChatConfig,
   ChatUsage,
   DiffInfo,
-  LayoutState,
+  GitStatusInfo,
   McpSpec,
   ModelConfig,
   OpenFile,
@@ -39,6 +39,7 @@ import type {
   ThemeId,
   ThinkingLevel,
   Usage,
+  WorkspaceViewMode,
 } from "./types";
 import "./App.css";
 
@@ -47,17 +48,6 @@ const DEFAULT_SETTINGS: Settings = {
   baseUrl: "https://api.deepseek.com/v1",
   apiKey: "",
   model: "",
-};
-
-const DEFAULT_LAYOUT: LayoutState = {
-  explorer: 270,
-  right: 320,
-  term: 190,
-  editor: 260,
-  explorerCollapsed: false,
-  rightCollapsed: false,
-  termCollapsed: false,
-  editorCollapsed: false,
 };
 
 function loadSettings(): Settings {
@@ -105,43 +95,6 @@ function loadConfig(): AppConfig {
   return DEFAULT_CONFIG;
 }
 
-function loadLayout(): LayoutState {
-  try {
-    const raw = localStorage.getItem("makora.layout");
-    if (raw) return { ...DEFAULT_LAYOUT, ...JSON.parse(raw) };
-  } catch {
-    /* ignore */
-  }
-  return DEFAULT_LAYOUT;
-}
-
-function PanelShell({
-  collapsed,
-  label,
-  horizontal,
-  onExpand,
-  children,
-}: {
-  collapsed: boolean;
-  label: string;
-  horizontal?: boolean;
-  onExpand: () => void;
-  children: ReactNode;
-}) {
-  if (!collapsed) return <>{children}</>;
-  return (
-    <div
-      className={"panel-collapsed" + (horizontal ? " horizontal" : "")}
-      title={`Expandir ${label}`}
-    >
-      <button className="icon-btn" onClick={onExpand}>
-        {horizontal ? "▴" : "▸"}
-      </button>
-      <span className="collapsed-label">{label}</span>
-    </div>
-  );
-}
-
 function App() {
   const [folders, setFolders] = useState<string[]>(loadFolders);
   const [workspaceName, setWorkspaceName] = useState(
@@ -151,6 +104,13 @@ function App() {
   const [config, setConfig] = useState<AppConfig>(loadConfig);
   const [theme, setTheme] = useState<ThemeId>(loadSavedTheme);
   const [agentMode, setAgentMode] = useState<AgentMode>("act");
+  const [viewMode, setViewMode] = useState<WorkspaceViewMode>("chat");
+  const [zenMode, setZenMode] = useState(false);
+
+  const [explorerOpen, setExplorerOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+
   const [models, setModels] = useState<string[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -162,7 +122,6 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [layout, setLayout] = useState<LayoutState>(loadLayout);
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [homePath, setHomePath] = useState<string>("");
@@ -175,6 +134,7 @@ function App() {
   const [lastUsage, setLastUsage] = useState<ChatUsage | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [runningToolName, setRunningToolName] = useState<string | null>(null);
+  const [gitInfo, setGitInfo] = useState<GitStatusInfo | null>(null);
 
   // Apply theme on load and change
   useEffect(() => {
@@ -216,6 +176,17 @@ function App() {
   const effectiveFolders =
     folders.length > 0 ? folders : homePath ? [homePath] : [];
 
+  // Poll Git Status for active folder
+  useEffect(() => {
+    if (effectiveFolders.length > 0) {
+      gitStatus(effectiveFolders[0])
+        .then(setGitInfo)
+        .catch(() => setGitInfo(null));
+    } else {
+      setGitInfo(null);
+    }
+  }, [effectiveFolders, refreshTick]);
+
   const preset = presetById(settings.providerId);
   const modelConfig = config.models.find((m) => m.id === settings.model);
   const thinkingLevel: ThinkingLevel = modelConfig?.thinkingLevel ?? "medium";
@@ -244,7 +215,7 @@ function App() {
   const balanceBlocked =
     balance !== null && balance.amount > 0 && costUsd >= balance.amount;
   const blockReason = balance
-    ? `Coste de sesión (${costUsd.toFixed(4)} ${balance.currency}) ≥ saldo (${balance.amount.toFixed(2)} ${balance.currency}). El único límite es el saldo: recarga o cambia de proveedor.`
+    ? `Coste de sesión (${costUsd.toFixed(4)} ${balance.currency}) ≥ saldo (${balance.amount.toFixed(2)} ${balance.currency}).`
     : "";
 
   useEffect(() => {
@@ -259,9 +230,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem("makora.config", JSON.stringify(config));
   }, [config]);
-  useEffect(() => {
-    localStorage.setItem("makora.layout", JSON.stringify(layout));
-  }, [layout]);
 
   useEffect(() => {
     setModels([]);
@@ -362,6 +330,8 @@ function App() {
         return [...fs, { path, content, originalContent: content, isDirty: false }];
       });
       setActivePath(path);
+      // If we were in chat-only mode, automatically switch to split view so the user sees their code!
+      setViewMode((vm) => (vm === "chat" ? "split" : vm));
     } catch (e) {
       setOpenFiles((fs) => [...fs.filter((f) => f.path !== path), { path, content: String(e), isDirty: false }]);
       setActivePath(path);
@@ -369,8 +339,14 @@ function App() {
   }, []);
 
   const closeFile = useCallback((path: string) => {
-    setOpenFiles((fs) => fs.filter((f) => f.path !== path));
-    setActivePath((a) => (a === path ? null : a));
+    setOpenFiles((fs) => {
+      const next = fs.filter((f) => f.path !== path);
+      if (activePath === path) {
+        const remaining = next.length > 0 ? next[next.length - 1].path : null;
+        setActivePath(remaining);
+      }
+      return next;
+    });
     setDiff((d) => (d && activePath === path ? null : d));
   }, [activePath]);
 
@@ -394,6 +370,7 @@ function App() {
       setOpenFiles((fs) =>
         fs.map((f) => (f.path === path ? { ...f, originalContent: file.content, isDirty: false } : f)),
       );
+      setRefreshTick((t) => t + 1);
     } catch (e) {
       console.warn("save file:", e);
     }
@@ -409,6 +386,8 @@ function App() {
           : [...fs, { path, content, originalContent: content, isDirty: false }],
       );
       setActivePath(path);
+      setViewMode((vm) => (vm === "chat" ? "split" : vm));
+      setRefreshTick((t) => t + 1);
     } catch (e) {
       console.warn("apply artifact:", e);
     }
@@ -422,6 +401,7 @@ function App() {
       setOpenFiles((fs) =>
         fs.map((f) => (f.path === activePath ? { ...f, content: diff.before, originalContent: diff.before, isDirty: false } : f)),
       );
+      setRefreshTick((t) => t + 1);
     } catch (e) {
       console.warn("revert:", e);
     }
@@ -462,13 +442,16 @@ function App() {
         setShowPalette((prev) => !prev);
       } else if (isCmdOrCtrl && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        setLayout((l) => ({ ...l, explorerCollapsed: !l.explorerCollapsed }));
+        setExplorerOpen((prev) => !prev);
       } else if (isCmdOrCtrl && (e.key.toLowerCase() === "j" || e.key === "`")) {
         e.preventDefault();
-        setLayout((l) => ({ ...l, termCollapsed: !l.termCollapsed }));
+        setTerminalOpen((prev) => !prev);
       } else if (isCmdOrCtrl && e.key === ",") {
         e.preventDefault();
         setShowSettings((prev) => !prev);
+      } else if (e.key === "F11" || (e.altKey && e.key.toLowerCase() === "z")) {
+        e.preventDefault();
+        setZenMode((z) => !z);
       } else if (isCmdOrCtrl && e.key.toLowerCase() === "w") {
         if (activePath) {
           e.preventDefault();
@@ -481,8 +464,34 @@ function App() {
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, [activePath, closeFile]);
 
+  // Chat Element instance to pass into Workspace
+  const chatNode = (
+    <Chat
+      config={requestConfig}
+      ready={settings.model !== ""}
+      folders={effectiveFolders}
+      skillsContent={skillsContent}
+      thinkingLevel={thinkingLevel}
+      includeWorkspace={config.context.includeWorkspace}
+      visionEnabled={modelConfig?.visionEnabled ?? false}
+      blocked={balanceBlocked}
+      blockReason={blockReason}
+      agentMode={agentMode}
+      onToggleMode={setAgentMode}
+      onUsage={addUsage}
+      onApplyArtifact={applyArtifact}
+      onStatusChange={(busy, tool) => {
+        setAgentBusy(busy);
+        setRunningToolName(tool);
+      }}
+    />
+  );
+
+  const showLeftSidebar = explorerOpen && !zenMode;
+  const showRightPanel = panelOpen && !zenMode;
+
   return (
-    <div className="app">
+    <div className={`app ${zenMode ? "zen-mode-active" : ""}`}>
       <Header
         workspaceName={workspaceName}
         onWorkspaceName={setWorkspaceName}
@@ -492,126 +501,64 @@ function App() {
         onOpenSettings={() => setShowSettings(true)}
         onOpenPalette={() => setShowPalette(true)}
         onOpenOnboarding={() => setShowOnboarding(true)}
+        explorerOpen={explorerOpen}
+        onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
+        panelOpen={panelOpen}
+        onTogglePanel={() => setPanelOpen((prev) => !prev)}
         currentTheme={theme}
         onSelectTheme={setTheme}
       />
-      <div className="layout">
-        <SplitPane
-          direction="horizontal"
-          sizes={[layout.explorer, 0, layout.right]}
-          minSizes={[200, 0, 280]}
-          collapsed={[layout.explorerCollapsed, false, layout.rightCollapsed]}
-          onSizes={(s) => setLayout((l) => ({ ...l, explorer: s[0], right: s[2] }))}
-          onToggle={(i) =>
-            setLayout((l) =>
-              i === 0
-                ? { ...l, explorerCollapsed: !l.explorerCollapsed }
-                : { ...l, rightCollapsed: !l.rightCollapsed },
-            )
-          }
-          flexIndex={1}
-        >
-          <PanelShell
-            collapsed={layout.explorerCollapsed}
-            label="Explorador"
-            onExpand={() =>
-              setLayout((l) => ({ ...l, explorerCollapsed: false }))
-            }
-          >
+
+      <div className="layout-root">
+        {/* Left Explorer Sidebar */}
+        {showLeftSidebar && (
+          <aside className="sidebar-explorer">
             <Explorer
               folders={folders}
               activePath={activePath}
               onRemoveFolder={removeFolder}
-              onCollapse={() =>
-                setLayout((l) => ({ ...l, explorerCollapsed: true }))
-              }
+              onCollapse={() => setExplorerOpen(false)}
               onOpenFile={openFile}
               onChanged={() => setRefreshTick((t) => t + 1)}
               refreshTick={refreshTick}
             />
-          </PanelShell>
-          <SplitPane
-            direction="vertical"
-            sizes={[layout.editor, 0, layout.term]}
-            minSizes={[120, 0, 110]}
-            collapsed={[layout.editorCollapsed, false, layout.termCollapsed]}
-            onSizes={(s) =>
-              setLayout((l) => ({ ...l, editor: s[0], term: s[2] }))
-            }
-            onToggle={(i) =>
-              setLayout((l) =>
-                i === 0
-                  ? { ...l, editorCollapsed: !l.editorCollapsed }
-                  : { ...l, termCollapsed: !l.termCollapsed },
-              )
-            }
-            flexIndex={1}
-          >
-            <PanelShell
-              collapsed={layout.editorCollapsed}
-              label="Visor"
-              horizontal
-              onExpand={() =>
-                setLayout((l) => ({ ...l, editorCollapsed: false }))
-              }
-            >
-              <EditorPanel
-                files={openFiles}
-                activePath={activePath}
-                diff={diff}
-                onActivate={setActivePath}
-                onClose={closeFile}
-                onCollapse={() =>
-                  setLayout((l) => ({ ...l, editorCollapsed: true }))
-                }
-                onRevertDiff={revertDiff}
-                onUpdateContent={updateFileContent}
-                onSaveFile={saveFile}
-              />
-            </PanelShell>
-            <Chat
-              config={requestConfig}
-              ready={settings.model !== ""}
-              folders={effectiveFolders}
-              skillsContent={skillsContent}
-              thinkingLevel={thinkingLevel}
-              includeWorkspace={config.context.includeWorkspace}
-              visionEnabled={modelConfig?.visionEnabled ?? false}
-              blocked={balanceBlocked}
-              blockReason={blockReason}
-              agentMode={agentMode}
-              onToggleMode={setAgentMode}
-              onUsage={addUsage}
-              onApplyArtifact={applyArtifact}
-              onStatusChange={(busy, tool) => {
-                setAgentBusy(busy);
-                setRunningToolName(tool);
-              }}
-            />
-            <PanelShell
-              collapsed={layout.termCollapsed}
-              label="Terminal"
-              horizontal
-              onExpand={() =>
-                setLayout((l) => ({ ...l, termCollapsed: false }))
-              }
-            >
+          </aside>
+        )}
+
+        {/* Central Master Workspace & Terminal */}
+        <main className="central-area">
+          <UnifiedWorkspace
+            openFiles={openFiles}
+            activePath={activePath}
+            onActivateFile={setActivePath}
+            onCloseFile={closeFile}
+            onUpdateContent={updateFileContent}
+            onSaveFile={saveFile}
+            diff={diff}
+            onRevertDiff={revertDiff}
+            agentBusy={agentBusy}
+            runningToolName={runningToolName}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            zenMode={zenMode}
+            onToggleZenMode={() => setZenMode((z) => !z)}
+            chatElement={chatNode}
+          />
+
+          {terminalOpen && (
+            <div className="bottom-terminal-drawer">
               <TerminalPanel
                 cwd={effectiveFolders[0] || homePath || null}
                 currentTheme={theme}
-                onCollapse={() =>
-                  setLayout((l) => ({ ...l, termCollapsed: true }))
-                }
+                onCollapse={() => setTerminalOpen(false)}
               />
-            </PanelShell>
-          </SplitPane>
-          <PanelShell
-            collapsed={layout.rightCollapsed}
-            label="Panel"
-            onExpand={() =>
-              setLayout((l) => ({ ...l, rightCollapsed: false }))
-            }
-          >
+            </div>
+          )}
+        </main>
+
+        {/* Right Parameters and Usage Panel */}
+        {showRightPanel && (
+          <aside className="sidebar-usage-panel">
             <UsagePanel
               settings={settings}
               onSettings={setSettings}
@@ -626,9 +573,7 @@ function App() {
               balanceLoading={balanceLoading}
               costUsd={costUsd}
               onRefreshBalance={() => refreshBalance(true)}
-              onCollapse={() =>
-                setLayout((l) => ({ ...l, rightCollapsed: true }))
-              }
+              onCollapse={() => setPanelOpen(false)}
               contextWindow={modelConfig?.contextWindow ?? 128000}
               lastUsage={lastUsage}
               mcpTools={mcpTools}
@@ -639,13 +584,14 @@ function App() {
                 })
               }
             />
-          </PanelShell>
-        </SplitPane>
+          </aside>
+        )}
       </div>
 
       <StatusBar
         workspaceName={workspaceName}
         folderCount={folders.length}
+        gitInfo={gitInfo}
         activeModel={settings.model}
         agentBusy={agentBusy}
         runningToolName={runningToolName}
@@ -653,9 +599,7 @@ function App() {
         costUsd={costUsd}
         currentTheme={theme}
         onCycleTheme={cycleTheme}
-        onToggleTerminal={() =>
-          setLayout((l) => ({ ...l, termCollapsed: !l.termCollapsed }))
-        }
+        onToggleTerminal={() => setTerminalOpen((prev) => !prev)}
         onOpenPalette={() => setShowPalette(true)}
         onOpenSettings={() => setShowSettings(true)}
       />
@@ -666,20 +610,14 @@ function App() {
         folders={effectiveFolders}
         onOpenFile={openFile}
         onSelectTheme={setTheme}
-        onToggleTerminal={() =>
-          setLayout((l) => ({ ...l, termCollapsed: !l.termCollapsed }))
-        }
-        onToggleExplorer={() =>
-          setLayout((l) => ({ ...l, explorerCollapsed: !l.explorerCollapsed }))
-        }
+        onToggleTerminal={() => setTerminalOpen((prev) => !prev)}
+        onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenOnboarding={() => setShowOnboarding(true)}
         onToggleMode={() => setAgentMode((m) => (m === "act" ? "plan" : "act"))}
         onAddFolder={() => addFolder()}
         onNewWorkspace={newWorkspace}
-        onClearChat={() => {
-          // Handled via clearChat in chat
-        }}
+        onClearChat={() => undefined}
       />
 
       {showSettings && (

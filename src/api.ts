@@ -64,3 +64,9 @@ export const detectProjectRules = (folders: string[]) =>
   invoke<string | null>("detect_project_rules", { folders });
 export const detectOllama = () =>
   invoke<boolean>("detect_ollama");
+
+export const gitStatus = (folder: string) =>
+  invoke<import("./types").GitStatusInfo | null>("git_status", { folder });
+export const gitDiff = (folder: string, path?: string | null, staged = false) =>
+  invoke<string>("git_diff", { folder, path: path || null, staged });
+

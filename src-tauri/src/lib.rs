@@ -542,6 +542,91 @@ async fn detect_ollama() -> Result<bool, String> {
 }
 
 
+#[derive(Clone, serde::Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusInfo {
+    pub branch: String,
+    pub staged: u32,
+    pub modified: u32,
+    pub untracked: u32,
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_status(folder: String) -> Result<Option<GitStatusInfo>, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let branch_out = match cmd.arg("branch").arg("--show-current").output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => return Ok(None),
+    };
+
+    let mut status_cmd = std::process::Command::new("git");
+    status_cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        status_cmd.creation_flags(0x08000000);
+    }
+    let status_out = match status_cmd.arg("status").arg("--porcelain").output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return Ok(None),
+    };
+
+    let mut staged = 0u32;
+    let mut modified = 0u32;
+    let mut untracked = 0u32;
+
+    for line in status_out.lines() {
+        if line.starts_with("??") {
+            untracked += 1;
+        } else {
+            let bytes = line.as_bytes();
+            if bytes.len() >= 2 {
+                if bytes[0] != b' ' && bytes[0] != b'?' {
+                    staged += 1;
+                }
+                if bytes[1] != b' ' && bytes[1] != b'?' {
+                    modified += 1;
+                }
+            }
+        }
+    }
+
+    Ok(Some(GitStatusInfo {
+        branch: if branch_out.is_empty() { "HEAD".to_string() } else { branch_out },
+        staged,
+        modified,
+        untracked,
+    }))
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_diff(folder: String, path: Option<String>, staged: bool) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("diff");
+    if staged {
+        cmd.arg("--staged");
+    }
+    if let Some(p) = path {
+        cmd.arg("--").arg(p);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta_builder = Builder::new()
@@ -573,8 +658,11 @@ pub fn run() {
             keyring_set,
             keyring_delete,
             detect_project_rules,
-            detect_ollama
+            detect_ollama,
+            git_status,
+            git_diff
         ])
+
 
         .events(collect_events![StreamEvent, ChatDeltaEvent]);
 

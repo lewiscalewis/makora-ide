@@ -167,7 +167,7 @@ export interface LayoutState {
   editorCollapsed: boolean;
 }
 
-export type ThemeId = "void" | "emerald" | "tokyo" | "solar" | "synthwave";
+export type ThemeId = "void" | "nordic" | "tokyo" | "monokai" | "solar";
 
 export interface ThemeConfig {
   id: ThemeId;
@@ -233,5 +233,15 @@ export interface ChatSession {
   messages: ChatMessage[];
   totalCostUsd: number;
 }
+
+export interface GitStatusInfo {
+  branch: string;
+  staged: number;
+  modified: number;
+  untracked: number;
+}
+
+export type WorkspaceViewMode = "chat" | "split" | "editor";
+
 
 

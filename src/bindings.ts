@@ -32,6 +32,11 @@ export const commands = {
 	termKill: (id: string) => __TAURI_INVOKE<void>("term_kill", { id }),
 	searchPaths: (folders: string[], query: string) => typedError<string[], string>(__TAURI_INVOKE("search_paths", { folders, query })),
 	workspaceSummary: (folders: string[]) => typedError<string, string>(__TAURI_INVOKE("workspace_summary", { folders })),
+	keyringGet: (providerId: string) => typedError<string | null, string>(__TAURI_INVOKE("keyring_get", { providerId })),
+	keyringSet: (providerId: string, secret: string) => typedError<null, string>(__TAURI_INVOKE("keyring_set", { providerId, secret })),
+	keyringDelete: (providerId: string) => typedError<null, string>(__TAURI_INVOKE("keyring_delete", { providerId })),
+	detectProjectRules: (folders: string[]) => typedError<string | null, string>(__TAURI_INVOKE("detect_project_rules", { folders })),
+	detectOllama: () => typedError<boolean, string>(__TAURI_INVOKE("detect_ollama")),
 };
 
 /** Events */
