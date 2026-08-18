@@ -159,8 +159,22 @@ export default function UnifiedWorkspace({
       {/* Unified Tab Bar */}
       <div className="unified-tab-bar">
         <div className="tab-bar-tabs">
-          {/* Sticky Master Chat Tab with Accessible New Chat Button */}
+          {/* Sticky Master Chat Tab with Accessible New Chat Icon Button on the Left */}
           <div className="master-chat-tab-container">
+            {onNewChat && (
+              <button
+                type="button"
+                className="tab-new-chat-icon-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onActivateFile(null);
+                  onNewChat();
+                }}
+                title="Nueva conversación limpia (Ctrl+L)"
+              >
+                <Plus size={13} />
+              </button>
+            )}
             <div
               className={`master-chat-tab ${isChatTabActive ? "active" : ""}`}
               onClick={() => onActivateFile(null)}
@@ -173,21 +187,6 @@ export default function UnifiedWorkspace({
                 title={agentBusy ? (runningToolName ? `Ejecutando ${runningToolName}` : "Razonando...") : "Listo"}
               />
             </div>
-            {onNewChat && (
-              <button
-                type="button"
-                className="tab-new-chat-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onActivateFile(null);
-                  onNewChat();
-                }}
-                title="Comenzar una nueva conversación limpia (Ctrl+L)"
-              >
-                <Plus size={12} />
-                <span>Nuevo Chat</span>
-              </button>
-            )}
           </div>
 
           {/* Open File Tabs */}

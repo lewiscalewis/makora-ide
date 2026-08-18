@@ -3877,7 +3877,30 @@ option:checked, option:hover {
 .master-chat-tab-container {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+}
+
+.tab-new-chat-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(0, 200, 214, 0.1);
+  border: 1px solid rgba(0, 200, 214, 0.28);
+  border-radius: var(--radius-sm);
+  color: var(--cyan);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.tab-new-chat-icon-btn:hover {
+  background: rgba(0, 200, 214, 0.25);
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px rgba(0, 200, 214, 0.35);
+  transform: translateY(-0.5px);
 }
 
 .tab-new-chat-btn {
