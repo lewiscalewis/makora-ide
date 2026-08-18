@@ -233,26 +233,30 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.theme-select {
   height: 28px;
   border-radius: 6px;
   border: 1px solid var(--glass-border);
   background: var(--bg-select);
+  padding: 0 4px 0 8px;
+}
+
+.theme-icon-indicator {
   color: var(--cyan);
-  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.theme-select {
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--cyan);
+  padding: 0 4px;
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s ease;
-}
-
-.theme-select:hover,
-.theme-select:focus {
-  border-color: var(--cyan);
   outline: none;
 }
+
 
 .toggle-sidebar-btn.active,
 .toggle-panel-btn.active {
@@ -2456,4 +2460,110 @@ svg {
 .mt-8 {
   margin-top: 8px;
 }
+
+.mt-12 {
+  margin-top: 12px;
+}
+
+.mt-4 {
+  margin-top: 4px;
+}
+
+.pb-20 {
+  padding-bottom: 24px;
+}
+
+/* Settings Modal Body Scroll and Spacing */
+.settings-modal-body {
+  max-height: calc(85vh - 100px);
+  padding: 16px 20px 32px 20px;
+  overflow-y: auto;
+}
+
+/* API Key Input with Eye Toggle */
+.api-key-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.api-key-input-wrap input {
+  width: 100%;
+  padding-right: 32px;
+  font-family: Consolas, "Fira Code", monospace;
+}
+
+.api-key-input-wrap .pass-toggle {
+  position: absolute;
+  right: 6px;
+}
+
+/* Local LLM Banner */
+.local-llm-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(52, 199, 89, 0.08);
+  border: 1px solid rgba(52, 199, 89, 0.25);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.local-llm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Model Selector Row */
+.model-selector-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-main-select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Provider Quick Guides */
+.provider-quick-guides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.guide-card {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guide-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cyan);
+  font-size: 11px;
+  text-decoration: none;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.guide-link:hover {
+  text-decoration: underline;
+}
+
+.cfg-bottom-action {
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-border);
+}
+
 

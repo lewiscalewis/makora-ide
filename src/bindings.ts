@@ -44,6 +44,14 @@ export const commands = {
 	untracked: number,
 } | null, string>(__TAURI_INVOKE("git_status", { folder })),
 	gitDiff: (folder: string, path: string | null, staged: boolean) => typedError<string, string>(__TAURI_INVOKE("git_diff", { folder, path, staged })),
+	gitLog: (folder: string, limit: number | null) => typedError<GitCommitInfo[], string>(__TAURI_INVOKE("git_log", { folder, limit })),
+	gitFiles: (folder: string) => typedError<GitFileItem[], string>(__TAURI_INVOKE("git_files", { folder })),
+	gitStage: (folder: string, path: string) => typedError<null, string>(__TAURI_INVOKE("git_stage", { folder, path })),
+	gitUnstage: (folder: string, path: string) => typedError<null, string>(__TAURI_INVOKE("git_unstage", { folder, path })),
+	gitStageAll: (folder: string) => typedError<null, string>(__TAURI_INVOKE("git_stage_all", { folder })),
+	gitCommit: (folder: string, message: string) => typedError<string, string>(__TAURI_INVOKE("git_commit", { folder, message })),
+	gitPush: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_push", { folder })),
+	gitPull: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_pull", { folder })),
 };
 
 /** Events */
@@ -93,6 +101,20 @@ export type DirEntry = {
 	name: string,
 	path: string,
 	isDir: boolean,
+};
+
+export type GitCommitInfo = {
+	hash: string,
+	shortHash: string,
+	author: string,
+	date: string,
+	message: string,
+};
+
+export type GitFileItem = {
+	path: string,
+	status: string,
+	isStaged: boolean,
 };
 
 export type GitStatusInfo = {

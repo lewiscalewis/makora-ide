@@ -638,11 +638,18 @@ function App() {
         <SettingsModal
           config={config}
           onConfig={setConfig}
-          onClose={() => setShowSettings(false)}
+          settings={settings}
+          onSaveSettings={setSettings}
+          models={models}
+          connecting={connecting}
+          modelsError={modelsError}
+          onConnect={connect}
           currentTheme={theme}
           onSelectTheme={setTheme}
+          onClose={() => setShowSettings(false)}
         />
       )}
+
 
       {showOnboarding && (
         <OnboardingModal

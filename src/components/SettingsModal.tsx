@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { THINKING_LEVELS } from "../defaults";
 import { THEME_LIST } from "../themes";
+import { PROVIDERS, presetById } from "../providers";
+import { detectOllama, keyringGet, keyringSet } from "../api";
 import {
+  Key,
   Cpu,
   Layers,
   Sparkles,
@@ -12,25 +15,39 @@ import {
   Trash2,
   Check,
   Sliders,
+  ShieldCheck,
+  Zap,
+  Eye,
+  EyeOff,
+  Server,
+  HardDrive,
+  ExternalLink,
 } from "lucide-react";
 
 import type {
   AppConfig,
   McpConfig,
   ModelConfig,
+  Settings,
   SkillConfig,
   ThemeId,
   ThinkingLevel,
 } from "../types";
 
-type Tab = "models" | "context" | "skills" | "mcps" | "appearance";
+type Tab = "providers" | "models" | "context" | "skills" | "mcps" | "appearance";
 
 interface Props {
   config: AppConfig;
   onConfig: (c: AppConfig) => void;
-  onClose: () => void;
+  settings: Settings;
+  onSaveSettings: (s: Settings) => void;
+  models: string[];
+  connecting: boolean;
+  modelsError: string | null;
+  onConnect: () => void;
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
+  onClose: () => void;
 }
 
 function num(v: string, fallback: number): number {
@@ -41,17 +58,58 @@ function num(v: string, fallback: number): number {
 export default function SettingsModal({
   config,
   onConfig,
-  onClose,
+  settings,
+  onSaveSettings,
+  models,
+  connecting,
+  modelsError,
+  onConnect,
   currentTheme,
   onSelectTheme,
+  onClose,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("models");
+  const [tab, setTab] = useState<Tab>("providers");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
+
+  const currentPreset = presetById(settings.providerId);
+
+  useEffect(() => {
+    detectOllama().then((running) => setOllamaRunning(running)).catch(() => setOllamaRunning(false));
+  }, []);
+
+  const handleProviderChange = async (providerId: string) => {
+    const preset = presetById(providerId);
+    let savedKey = "";
+    try {
+      const stored = await keyringGet(providerId);
+      if (stored) savedKey = stored;
+    } catch {
+      /* ignore */
+    }
+
+    onSaveSettings({
+      ...settings,
+      providerId,
+      baseUrl: preset.baseUrl,
+      apiKey: savedKey,
+      model: "",
+    });
+  };
+
+  const handleApiKeyChange = (apiKey: string) => {
+    onSaveSettings({ ...settings, apiKey });
+    if (settings.providerId && apiKey.trim()) {
+      keyringSet(settings.providerId, apiKey.trim()).catch(() => undefined);
+    }
+  };
 
   const updModel = (i: number, patch: Partial<ModelConfig>) =>
     onConfig({
       ...config,
       models: config.models.map((m, idx) => (idx === i ? { ...m, ...patch } : m)),
     });
+
   const addModel = () =>
     onConfig({
       ...config,
@@ -60,7 +118,7 @@ export default function SettingsModal({
         {
           id: "",
           label: "",
-          providerId: "deepseek",
+          providerId: settings.providerId || "deepseek",
           thinkingLevel: "medium",
           contextWindow: 128000,
           maxOutputTokens: 8192,
@@ -71,6 +129,7 @@ export default function SettingsModal({
         },
       ],
     });
+
   const removeModel = (i: number) =>
     onConfig({ ...config, models: config.models.filter((_, idx) => idx !== i) });
 
@@ -82,8 +141,10 @@ export default function SettingsModal({
       ...config,
       skills: config.skills.map((s, idx) => (idx === i ? { ...s, ...patch } : s)),
     });
+
   const addSkill = () =>
     onConfig({ ...config, skills: [...config.skills, { name: "", description: "", content: "" }] });
+
   const removeSkill = (i: number) =>
     onConfig({ ...config, skills: config.skills.filter((_, idx) => idx !== i) });
 
@@ -92,8 +153,10 @@ export default function SettingsModal({
       ...config,
       mcps: config.mcps.map((m, idx) => (idx === i ? { ...m, ...patch } : m)),
     });
+
   const addMcp = () =>
     onConfig({ ...config, mcps: [...config.mcps, { name: "", command: "", args: "", enabled: true }] });
+
   const removeMcp = (i: number) =>
     onConfig({ ...config, mcps: config.mcps.filter((_, idx) => idx !== i) });
 
@@ -106,7 +169,7 @@ export default function SettingsModal({
             <Sliders size={16} className="text-cyan" />
             <div>
               <h3>Configuración de MakoraIDE</h3>
-              <span className="settings-sub muted small">Ajustes de motor agéntico, modelos, skills y temas</span>
+              <span className="settings-sub muted small">Claves API, LLMs locales, modelos y motor agéntico</span>
             </div>
           </div>
           <button className="icon-btn" title="Cerrar (Esc)" onClick={onClose}>
@@ -114,28 +177,35 @@ export default function SettingsModal({
           </button>
         </div>
 
-        {/* Tab Bar */}
+        {/* Modal Navigation Tabs */}
         <div className="modal-tabs">
+          <button
+            className={`tab ${tab === "providers" ? "active" : ""}`}
+            onClick={() => setTab("providers")}
+          >
+            <Key size={12} />
+            <span>Proveedores & API Keys</span>
+          </button>
           <button
             className={`tab ${tab === "models" ? "active" : ""}`}
             onClick={() => setTab("models")}
           >
             <Cpu size={12} />
-            <span>Modelos ({config.models.length})</span>
+            <span>Modelos & Precios ({config.models.length})</span>
           </button>
           <button
             className={`tab ${tab === "context" ? "active" : ""}`}
             onClick={() => setTab("context")}
           >
             <Layers size={12} />
-            <span>Contexto & Presupuesto</span>
+            <span>Contexto & Tokens</span>
           </button>
           <button
             className={`tab ${tab === "skills" ? "active" : ""}`}
             onClick={() => setTab("skills")}
           >
             <Sparkles size={12} />
-            <span>Skills Agénticas</span>
+            <span>Skills Agénticas ({config.skills.length})</span>
           </button>
           <button
             className={`tab ${tab === "mcps" ? "active" : ""}`}
@@ -154,7 +224,167 @@ export default function SettingsModal({
         </div>
 
         {/* Modal Body */}
-        <div className="modal-body">
+        <div className="modal-body settings-modal-body">
+          {/* TAB 1: PROVIDERS & API KEYS */}
+          {tab === "providers" && (
+            <div className="cfg-section">
+              <div className="analytics-info-box">
+                <ShieldCheck size={16} className="text-green" />
+                <div>
+                  <strong>Configuración Rápida de Conexión</strong>
+                  <p className="small muted">
+                    Introduce tu API Key o selecciona un motor local (Ollama / LM Studio). Tus credenciales se almacenan de forma segura en el <strong>Keyring del SO</strong> (Windows DPAPI / Keychain).
+                  </p>
+                </div>
+              </div>
+
+              {/* Provider Selection Card */}
+              <div className="cfg-card">
+                <div className="cfg-head">
+                  <div className="cfg-head-title">
+                    <Server size={14} className="text-cyan" />
+                    <strong>Proveedor de Inteligencia Artificial</strong>
+                  </div>
+                  {ollamaRunning && (
+                    <span className="badge-pill active" title="Servicio local Ollama activo en localhost:11434">
+                      🟢 Ollama Detectado
+                    </span>
+                  )}
+                </div>
+
+                <div className="field">
+                  <label>Seleccionar Proveedor</label>
+                  <select
+                    value={settings.providerId}
+                    onChange={(e) => handleProviderChange(e.target.value)}
+                  >
+                    {PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Base URL (editable if custom or local) */}
+                <div className="field">
+                  <label>Endpoint / Base URL</label>
+                  <input
+                    type="text"
+                    value={settings.baseUrl}
+                    placeholder="https://api.openai.com/v1"
+                    onChange={(e) => onSaveSettings({ ...settings, baseUrl: e.target.value })}
+                  />
+                </div>
+
+                {/* API Key Field */}
+                {currentPreset.needsKey ? (
+                  <div className="field">
+                    <div className="field-label-row">
+                      <label>API Key de {currentPreset.label}</label>
+                      <span className="keyring-badge" title="Tus claves están protegidas con encriptación nativa del sistema operativo">
+                        <ShieldCheck size={10} />
+                        <span>Keyring SO Seguro</span>
+                      </span>
+                    </div>
+                    <div className="api-key-input-wrap">
+                      <input
+                        type={showApiKey ? "text" : "password"}
+                        value={settings.apiKey}
+                        placeholder={
+                          settings.providerId === "deepseek"
+                            ? "sk-..."
+                            : settings.providerId === "openrouter"
+                              ? "sk-or-v1-..."
+                              : "sk-..."
+                        }
+                        onChange={(e) => handleApiKeyChange(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="icon-btn-micro pass-toggle"
+                        onClick={() => setShowApiKey((v) => !v)}
+                        title={showApiKey ? "Ocultar clave" : "Mostrar clave"}
+                      >
+                        {showApiKey ? <EyeOff size={11} /> : <Eye size={11} />}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="local-llm-banner">
+                    <HardDrive size={14} className="text-green" />
+                    <div className="local-llm-text">
+                      <strong>Motor Local sin Clave API</strong>
+                      <span className="small muted">
+                        {settings.providerId === "ollama"
+                          ? "Ollama se ejecuta de forma 100% privada en tu máquina (puerto 11434)."
+                          : "LM Studio se ejecuta en local (puerto 1234)."}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Model Selector & Connection Button */}
+                <div className="field">
+                  <label>Modelo Activo de Makora</label>
+                  <div className="model-selector-row">
+                    <select
+                      value={settings.model}
+                      disabled={models.length === 0}
+                      onChange={(e) => onSaveSettings({ ...settings, model: e.target.value })}
+                      className="model-main-select"
+                    >
+                      {models.length === 0 ? (
+                        <option value="">
+                          {connecting ? "Conectando y listando modelos..." : "Haz clic en 'Conectar' para listar los modelos disponibles"}
+                        </option>
+                      ) : (
+                        models.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))
+                      )}
+                    </select>
+
+                    <button
+                      className="btn btn-primary"
+                      onClick={onConnect}
+                      disabled={connecting || (currentPreset.needsKey && !settings.apiKey)}
+                      title="Probar conexión con la API y refrescar catálogo de modelos"
+                    >
+                      <Zap size={12} />
+                      <span>{connecting ? "Conectando..." : "Conectar & Listar"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {modelsError && <p className="error small mt-4">{modelsError}</p>}
+              </div>
+
+              {/* Quick Preset Guide */}
+              <div className="provider-quick-guides">
+                <div className="guide-card">
+                  <strong>DeepSeek (V3 / R1)</strong>
+                  <p className="small muted">La mejor relación coste/rendimiento para desarrollo de software institucional.</p>
+                  <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer" className="guide-link">
+                    <span>Obtener clave DeepSeek</span>
+                    <ExternalLink size={10} />
+                  </a>
+                </div>
+                <div className="guide-card">
+                  <strong>OpenRouter</strong>
+                  <p className="small muted">Acceso unificado a Claude 3.5 Sonnet, GPT-4o, Llama 3.3 y Gemini en una sola clave.</p>
+                  <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="guide-link">
+                    <span>Obtener clave OpenRouter</span>
+                    <ExternalLink size={10} />
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: MODELS & PRICING */}
           {tab === "models" && (
             <div className="cfg-section">
               <div className="cfg-top-action">
@@ -275,6 +505,7 @@ export default function SettingsModal({
             </div>
           )}
 
+          {/* TAB 3: CONTEXT & BUDGET */}
           {tab === "context" && (
             <div className="cfg-section">
               <div className="analytics-info-box">
@@ -356,8 +587,9 @@ export default function SettingsModal({
             </div>
           )}
 
+          {/* TAB 4: AGENTIC SKILLS */}
           {tab === "skills" && (
-            <div className="cfg-section">
+            <div className="cfg-section pb-20">
               <div className="cfg-card system-skill">
                 <div className="cfg-head">
                   <div className="cfg-head-title">
@@ -370,11 +602,6 @@ export default function SettingsModal({
                   Optimiza cada respuesta para economizar tokens: instrucciones concisas, parches quirúrgicos, lectura selectiva de rangos y auto-recuperación ante fallos.
                 </p>
               </div>
-
-              <button className="btn btn-connect" onClick={addSkill}>
-                <Plus size={12} />
-                <span>Añadir Nueva Skill Personalizada</span>
-              </button>
 
               <div className="cfg-cards-stack">
                 {config.skills.map((s, i) => (
@@ -404,19 +631,22 @@ export default function SettingsModal({
                   </div>
                 ))}
               </div>
+
+              <div className="cfg-bottom-action mt-12">
+                <button className="btn btn-connect" onClick={addSkill}>
+                  <Plus size={12} />
+                  <span>+ Añadir Nueva Skill Personalizada</span>
+                </button>
+              </div>
             </div>
           )}
 
+          {/* TAB 5: MCPS */}
           {tab === "mcps" && (
-            <div className="cfg-section">
+            <div className="cfg-section pb-20">
               <p className="muted small">
                 Configura servidores MCP (Model Context Protocol) externos para conectar Makora con bases de datos, APIs o herramientas locales.
               </p>
-
-              <button className="btn btn-connect" onClick={addMcp}>
-                <Plus size={12} />
-                <span>Añadir Servidor MCP</span>
-              </button>
 
               <div className="cfg-cards-stack">
                 {config.mcps.map((m, i) => (
@@ -447,9 +677,17 @@ export default function SettingsModal({
                   </div>
                 ))}
               </div>
+
+              <div className="cfg-bottom-action mt-12">
+                <button className="btn btn-connect" onClick={addMcp}>
+                  <Plus size={12} />
+                  <span>+ Añadir Servidor MCP</span>
+                </button>
+              </div>
             </div>
           )}
 
+          {/* TAB 6: APPEARANCE & THEMES */}
           {tab === "appearance" && (
             <div className="cfg-section">
               <h4 className="section-title">Paleta de Color & Contraste (WCAG 2.2 AAA)</h4>

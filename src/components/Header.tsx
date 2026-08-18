@@ -101,8 +101,8 @@ export default function Header({
           onClick={onAddFolder}
           title="Añadir carpeta de proyecto al workspace"
         >
-          <FolderPlus size={12} />
-          <span>+ Carpeta</span>
+          <FolderPlus size={13} />
+          <span>Añadir Carpeta</span>
         </button>
 
         <button
@@ -110,7 +110,7 @@ export default function Header({
           onClick={onNewWorkspace}
           title="Reiniciar espacio de trabajo"
         >
-          <Trash2 size={12} />
+          <Trash2 size={13} />
           <span>Limpiar</span>
         </button>
 
@@ -120,13 +120,13 @@ export default function Header({
             onClick={onOpenOnboarding}
             title="Asistente de configuración inicial y bienvenida"
           >
-            <Rocket size={12} />
+            <Rocket size={13} />
             <span>Asistente</span>
           </button>
         )}
 
         <div className="theme-picker-wrap">
-          <Palette size={12} className="theme-icon-indicator" />
+          <Palette size={13} className="theme-icon-indicator" />
           <select
             className="theme-select"
             value={currentTheme}
@@ -140,6 +140,7 @@ export default function Header({
             ))}
           </select>
         </div>
+
 
         {onTogglePanel && (
           <button
