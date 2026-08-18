@@ -100,9 +100,27 @@ export default function UsagePanel({
         <label>Proveedor</label>
         <select
           value={settings.providerId}
-          onChange={(e) =>
-            onSettings({ ...settings, providerId: e.target.value, model: "" })
-          }
+          onChange={(e) => {
+            const newPid = e.target.value;
+            const p = PROVIDERS.find((x) => x.id === newPid) ?? PROVIDERS[0];
+            let key = "";
+            try {
+              const rawKeys = localStorage.getItem("makora.provider_keys");
+              if (rawKeys) {
+                const parsed = JSON.parse(rawKeys);
+                key = parsed[newPid] || "";
+              }
+            } catch {
+              /* ignore */
+            }
+            onSettings({
+              ...settings,
+              providerId: newPid,
+              baseUrl: p.baseUrl,
+              apiKey: key,
+              model: "",
+            });
+          }}
         >
           {PROVIDERS.map((p) => (
             <option key={p.id} value={p.id}>

@@ -68,7 +68,22 @@ const DEFAULT_SETTINGS: Settings = {
 function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem("makora.settings");
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      let key = parsed.apiKey || "";
+      if (!key && parsed.providerId) {
+        try {
+          const rawKeys = localStorage.getItem("makora.provider_keys");
+          if (rawKeys) {
+            const keyMap = JSON.parse(rawKeys);
+            key = keyMap[parsed.providerId] || "";
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      return { ...DEFAULT_SETTINGS, ...parsed, apiKey: key };
+    }
   } catch {
     /* ignore */
   }
@@ -186,21 +201,54 @@ function App() {
     localStorage.setItem("makora.theme", theme);
   }, [theme]);
 
-  // Load API key securely from OS Keyring
+  // Load API key securely from OS Keyring or fallback per-provider map when provider changes
   useEffect(() => {
-    keyringGet(settings.providerId)
-      .then((key) => {
-        if (key && !settings.apiKey) {
-          setSettings((s) => ({ ...s, apiKey: key }));
+    let cancelled = false;
+    async function loadKeyForProvider(providerId: string) {
+      let key: string | null = null;
+      try {
+        key = await keyringGet(providerId);
+      } catch {
+        /* ignore */
+      }
+      if (!key) {
+        try {
+          const rawKeys = localStorage.getItem("makora.provider_keys");
+          if (rawKeys) {
+            const parsed = JSON.parse(rawKeys);
+            key = parsed[providerId] || null;
+          }
+        } catch {
+          /* ignore */
         }
-      })
-      .catch(() => undefined);
+      }
+      if (!cancelled && key) {
+        setSettings((s) => {
+          if (s.providerId === providerId && (!s.apiKey || s.apiKey !== key)) {
+            return { ...s, apiKey: key };
+          }
+          return s;
+        });
+      }
+    }
+    loadKeyForProvider(settings.providerId);
+    return () => {
+      cancelled = true;
+    };
   }, [settings.providerId]);
 
-  // Sync API key updates to OS Keyring
+  // Sync API key updates to OS Keyring and per-provider map
   useEffect(() => {
-    if (settings.apiKey) {
+    if (settings.providerId && settings.apiKey) {
       keyringSet(settings.providerId, settings.apiKey).catch(() => undefined);
+      try {
+        const rawKeys = localStorage.getItem("makora.provider_keys");
+        const parsed = rawKeys ? JSON.parse(rawKeys) : {};
+        parsed[settings.providerId] = settings.apiKey;
+        localStorage.setItem("makora.provider_keys", JSON.stringify(parsed));
+      } catch {
+        /* ignore */
+      }
     }
   }, [settings.providerId, settings.apiKey]);
 
@@ -319,6 +367,27 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.providerId]);
+
+  // Auto-connect and load available models on startup or when provider/key is configured
+  useEffect(() => {
+    if (settings.apiKey || preset.kind === "ollama") {
+      listModels(requestConfig)
+        .then((m) => {
+          if (m && m.length > 0) {
+            setModels(m);
+            if (!settings.model || !m.includes(settings.model)) {
+              setSettings((s) => ({
+                ...s,
+                model: s.model && m.includes(s.model) ? s.model : m[0],
+              }));
+            }
+          }
+        })
+        .catch(() => undefined);
+      refreshBalance();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.providerId, settings.apiKey]);
 
   useEffect(() => {
     const specs: McpSpec[] = config.mcps

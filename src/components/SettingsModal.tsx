@@ -87,6 +87,17 @@ export default function SettingsModal({
     } catch {
       /* ignore */
     }
+    if (!savedKey) {
+      try {
+        const rawKeys = localStorage.getItem("makora.provider_keys");
+        if (rawKeys) {
+          const parsed = JSON.parse(rawKeys);
+          savedKey = parsed[providerId] || "";
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     onSaveSettings({
       ...settings,
@@ -99,8 +110,18 @@ export default function SettingsModal({
 
   const handleApiKeyChange = (apiKey: string) => {
     onSaveSettings({ ...settings, apiKey });
-    if (settings.providerId && apiKey.trim()) {
-      keyringSet(settings.providerId, apiKey.trim()).catch(() => undefined);
+    if (settings.providerId) {
+      if (apiKey.trim()) {
+        keyringSet(settings.providerId, apiKey.trim()).catch(() => undefined);
+        try {
+          const rawKeys = localStorage.getItem("makora.provider_keys");
+          const parsed = rawKeys ? JSON.parse(rawKeys) : {};
+          parsed[settings.providerId] = apiKey.trim();
+          localStorage.setItem("makora.provider_keys", JSON.stringify(parsed));
+        } catch {
+          /* ignore */
+        }
+      }
     }
   };
 

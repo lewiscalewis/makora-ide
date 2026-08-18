@@ -47,6 +47,17 @@ export default function OnboardingModal({
     if (p && id !== "custom") {
       setBaseUrl(p.baseUrl);
     }
+    let savedKey = "";
+    try {
+      const rawKeys = localStorage.getItem("makora.provider_keys");
+      if (rawKeys) {
+        const parsed = JSON.parse(rawKeys);
+        savedKey = parsed[id] || "";
+      }
+    } catch {
+      /* ignore */
+    }
+    setApiKey(savedKey);
     setTestResult(null);
   };
 
