@@ -6,17 +6,17 @@ import SvgViewer from "./viewers/SvgViewer";
 import EditorPanel from "./EditorPanel";
 import {
   Sparkles,
-  MessageSquare,
   Columns2,
   FileCode,
   Maximize2,
+  Minimize2,
   X,
   FileText,
   Image,
   Table,
   Code2,
 } from "lucide-react";
-import type { DiffInfo, OpenFile, WorkspaceViewMode } from "../types";
+import type { DiffInfo, OpenFile } from "../types";
 
 interface UnifiedWorkspaceProps {
   openFiles: OpenFile[];
@@ -31,8 +31,8 @@ interface UnifiedWorkspaceProps {
   agentBusy: boolean;
   runningToolName: string | null;
 
-  viewMode: WorkspaceViewMode;
-  onViewModeChange: (mode: WorkspaceViewMode) => void;
+  isSplit: boolean;
+  onToggleSplit: () => void;
   zenMode: boolean;
   onToggleZenMode: () => void;
 
@@ -46,28 +46,30 @@ function getFileIcon(filename: string) {
     case "tsx":
     case "js":
     case "jsx":
-      return <FileCode size={13} className="file-icon-ts" />;
+    case "mjs":
+    case "cjs":
+      return <FileCode size={13} className="text-cyan" />;
     case "rs":
-      return <Code2 size={13} className="file-icon-rs" />;
+      return <Code2 size={13} className="text-purple" />;
     case "py":
-      return <Code2 size={13} className="file-icon-py" />;
+      return <Code2 size={13} className="text-blue" />;
     case "json":
-      return <Code2 size={13} className="file-icon-json" />;
+      return <Code2 size={13} className="text-gold" />;
     case "md":
     case "mdx":
-      return <FileText size={13} className="file-icon-md" />;
+      return <FileText size={13} className="text-blue" />;
     case "png":
     case "jpg":
     case "jpeg":
     case "webp":
     case "gif":
     case "svg":
-      return <Image size={13} className="file-icon-img" />;
+      return <Image size={13} className="text-green" />;
     case "csv":
     case "tsv":
-      return <Table size={13} className="file-icon-csv" />;
+      return <Table size={13} className="text-cyan" />;
     default:
-      return <FileText size={13} className="file-icon-default" />;
+      return <FileText size={13} className="opacity-70" />;
   }
 }
 
@@ -82,17 +84,23 @@ export default function UnifiedWorkspace({
   onRevertDiff,
   agentBusy,
   runningToolName,
-  viewMode,
-  onViewModeChange,
+  isSplit,
+  onToggleSplit,
   zenMode,
   onToggleZenMode,
   chatElement,
 }: UnifiedWorkspaceProps) {
-  const isChatActive = activePath === null;
-  const activeFile = openFiles.find((f) => f.path === activePath);
+  const isChatTabActive = activePath === null;
+
+  // Determine active file for editor (fallback to last open file if in split mode with chat selected)
+  const targetFile = activePath
+    ? openFiles.find((f) => f.path === activePath)
+    : openFiles.length > 0
+      ? openFiles[openFiles.length - 1]
+      : null;
 
   const renderActiveViewer = () => {
-    if (!activeFile) {
+    if (!targetFile) {
       return (
         <div className="editor-empty muted">
           <p>Selecciona un archivo del explorador o presiona <kbd className="hint-kbd">Ctrl+P</kbd></p>
@@ -100,15 +108,15 @@ export default function UnifiedWorkspace({
       );
     }
 
-    const path = activeFile.path;
+    const path = targetFile.path;
     const lower = path.toLowerCase();
 
     if (lower.endsWith(".md") || lower.endsWith(".mdx")) {
       return (
         <MarkdownViewer
-          content={activeFile.content}
+          content={targetFile.content}
           path={path}
-          isDirty={activeFile.isDirty}
+          isDirty={targetFile.isDirty}
           onUpdateContent={(c) => onUpdateContent(path, c)}
           onSave={() => onSaveFile(path)}
         />
@@ -116,15 +124,15 @@ export default function UnifiedWorkspace({
     }
 
     if (lower.endsWith(".csv") || lower.endsWith(".tsv")) {
-      return <DataGridViewer content={activeFile.content} path={path} />;
+      return <DataGridViewer content={targetFile.content} path={path} />;
     }
 
     if (lower.endsWith(".svg")) {
       return (
         <SvgViewer
-          content={activeFile.content}
+          content={targetFile.content}
           path={path}
-          isDirty={activeFile.isDirty}
+          isDirty={targetFile.isDirty}
           onUpdateContent={(c) => onUpdateContent(path, c)}
           onSave={() => onSaveFile(path)}
         />
@@ -139,7 +147,7 @@ export default function UnifiedWorkspace({
     return (
       <EditorPanel
         files={openFiles}
-        activePath={activePath}
+        activePath={targetFile.path}
         diff={diff}
         onActivate={onActivateFile}
         onClose={onCloseFile}
@@ -153,28 +161,26 @@ export default function UnifiedWorkspace({
 
   return (
     <div className="unified-workspace">
-      {/* Tab Bar with Sticky Master Chat Tab */}
+      {/* Unified Tab Bar */}
       <div className="unified-tab-bar">
         <div className="tab-bar-tabs">
-          {/* Sticky Master Tab */}
+          {/* Sticky Master Chat Tab */}
           <div
-            className={`master-chat-tab ${isChatActive ? "active" : ""}`}
+            className={`master-chat-tab ${isChatTabActive ? "active" : ""}`}
             onClick={() => onActivateFile(null)}
-            title="Pestaña maestra del agente Makora"
+            title="Abrir Chat del Agente Makora"
           >
-            <div className="master-tab-content">
-              <Sparkles size={13} className="master-tab-icon" />
-              <span className="master-tab-title">MAKORA CHAT</span>
-              <span
-                className={`master-status-dot ${agentBusy ? "pulse-dot" : "idle-dot"}`}
-                title={agentBusy ? (runningToolName ? `Ejecutando ${runningToolName}` : "Razonando...") : "Listo"}
-              />
-            </div>
+            <Sparkles size={12} className="master-tab-icon" />
+            <span className="master-tab-title">MAKORA CHAT</span>
+            <span
+              className={`master-status-dot ${agentBusy ? "pulse-dot" : "idle-dot"}`}
+              title={agentBusy ? (runningToolName ? `Ejecutando ${runningToolName}` : "Razonando...") : "Listo"}
+            />
           </div>
 
           {/* Open File Tabs */}
           {openFiles.map((file) => {
-            const isActive = file.path === activePath;
+            const isActive = !isChatTabActive && file.path === activePath;
             const name = file.path.split(/[\\/]/).pop() || file.path;
 
             return (
@@ -202,63 +208,31 @@ export default function UnifiedWorkspace({
           })}
         </div>
 
-        {/* View Mode Controls */}
+        {/* View Mode Actions (Split & Zen) */}
         <div className="tab-bar-controls">
-          <div className="segmented-control view-mode-control">
-            <button
-              className={`seg-btn ${viewMode === "chat" ? "active" : ""}`}
-              onClick={() => {
-                onViewModeChange("chat");
-                onActivateFile(null);
-              }}
-              title="Mostrar solo el Chat del Agente"
-            >
-              <MessageSquare size={11} />
-              <span>Chat</span>
-            </button>
-            <button
-              className={`seg-btn ${viewMode === "split" ? "active" : ""}`}
-              onClick={() => onViewModeChange("split")}
-              title="Vista dividida: Chat a la izquierda y Editor a la derecha"
-            >
-              <Columns2 size={11} />
-              <span>Split</span>
-            </button>
-            <button
-              className={`seg-btn ${viewMode === "editor" ? "active" : ""}`}
-              onClick={() => {
-                onViewModeChange("editor");
-                if (isChatActive && openFiles.length > 0) {
-                  onActivateFile(openFiles[0].path);
-                }
-              }}
-              title="Mostrar solo el Editor / Visualizador"
-            >
-              <FileCode size={11} />
-              <span>Editor</span>
-            </button>
-          </div>
+          <button
+            className={`tab-control-btn ${isSplit ? "active" : ""}`}
+            onClick={onToggleSplit}
+            title={isSplit ? "Desactivar vista dividida" : "Dividir vista: Chat y Editor lado a lado"}
+          >
+            <Columns2 size={12} />
+            <span>Split</span>
+          </button>
 
           <button
-            className={`zen-mode-btn ${zenMode ? "active" : ""}`}
+            className={`tab-control-btn ${zenMode ? "active" : ""}`}
             onClick={onToggleZenMode}
-            title={zenMode ? "Salir de Modo Zen" : "Modo Zen: Ocultar barras laterales para enfoque total"}
+            title={zenMode ? "Salir de Modo Zen" : "Modo Zen: Enfoque total"}
           >
-            <Maximize2 size={11} />
+            {zenMode ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
             <span>{zenMode ? "Salir Zen" : "Zen"}</span>
           </button>
         </div>
       </div>
 
-      {/* Main Workspace Canvas */}
-      <div className={`workspace-canvas layout-${viewMode}`}>
-        {viewMode === "chat" && (
-          <div className="canvas-pane chat-pane full-canvas">
-            {chatElement}
-          </div>
-        )}
-
-        {viewMode === "split" && (
+      {/* Dynamic Main Canvas */}
+      <div className={`workspace-canvas ${isSplit ? "layout-split" : "layout-single"}`}>
+        {isSplit ? (
           <div className="split-canvas">
             <div className="split-side left-side">
               {chatElement}
@@ -267,9 +241,11 @@ export default function UnifiedWorkspace({
               {renderActiveViewer()}
             </div>
           </div>
-        )}
-
-        {viewMode === "editor" && (
+        ) : isChatTabActive ? (
+          <div className="canvas-pane chat-pane full-canvas">
+            {chatElement}
+          </div>
+        ) : (
           <div className="canvas-pane editor-pane full-canvas">
             {renderActiveViewer()}
           </div>

@@ -39,8 +39,8 @@ import type {
   ThemeId,
   ThinkingLevel,
   Usage,
-  WorkspaceViewMode,
 } from "./types";
+
 import "./App.css";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -104,8 +104,9 @@ function App() {
   const [config, setConfig] = useState<AppConfig>(loadConfig);
   const [theme, setTheme] = useState<ThemeId>(loadSavedTheme);
   const [agentMode, setAgentMode] = useState<AgentMode>("act");
-  const [viewMode, setViewMode] = useState<WorkspaceViewMode>("chat");
+  const [isSplit, setIsSplit] = useState(false);
   const [zenMode, setZenMode] = useState(false);
+
 
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -330,8 +331,6 @@ function App() {
         return [...fs, { path, content, originalContent: content, isDirty: false }];
       });
       setActivePath(path);
-      // If we were in chat-only mode, automatically switch to split view so the user sees their code!
-      setViewMode((vm) => (vm === "chat" ? "split" : vm));
     } catch (e) {
       setOpenFiles((fs) => [...fs.filter((f) => f.path !== path), { path, content: String(e), isDirty: false }]);
       setActivePath(path);
@@ -386,12 +385,12 @@ function App() {
           : [...fs, { path, content, originalContent: content, isDirty: false }],
       );
       setActivePath(path);
-      setViewMode((vm) => (vm === "chat" ? "split" : vm));
       setRefreshTick((t) => t + 1);
     } catch (e) {
       console.warn("apply artifact:", e);
     }
   };
+
 
   const revertDiff = async () => {
     if (!diff || !activePath) return;
@@ -538,12 +537,13 @@ function App() {
             onRevertDiff={revertDiff}
             agentBusy={agentBusy}
             runningToolName={runningToolName}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
+            isSplit={isSplit}
+            onToggleSplit={() => setIsSplit((s) => !s)}
             zenMode={zenMode}
             onToggleZenMode={() => setZenMode((z) => !z)}
             chatElement={chatNode}
           />
+
 
           {terminalOpen && (
             <div className="bottom-terminal-drawer">
