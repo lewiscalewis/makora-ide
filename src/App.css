@@ -1807,3 +1807,653 @@ svg {
 *::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 200, 214, 0.3);
 }
+
+/* ===== Modal Tab Bars ===== */
+.modal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--glass-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.modal-tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.modal-tabs .tab:hover {
+  color: var(--text-main);
+  background: var(--glass-bg);
+}
+
+.modal-tabs .tab.active {
+  background: rgba(0, 200, 214, 0.12);
+  color: var(--cyan);
+  border-color: rgba(0, 200, 214, 0.3);
+  font-weight: 600;
+}
+
+/* ===== Git Studio Modal ===== */
+.git-studio-modal {
+  width: min(980px, 94vw);
+  height: 84vh;
+}
+
+.git-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-header-title h3 {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.git-branch-badge {
+  font-family: Consolas, "Fira Code", monospace;
+  font-size: 10px;
+  color: var(--cyan);
+  background: rgba(0, 200, 214, 0.12);
+  border: 1px solid rgba(0, 200, 214, 0.3);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.git-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.git-changes-layout {
+  display: flex;
+  gap: 12px;
+  height: 100%;
+  min-height: 440px;
+}
+
+.git-files-pane {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-right: 1px solid var(--glass-border);
+  padding-right: 10px;
+  overflow-y: auto;
+}
+
+.git-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 4px 2px;
+}
+
+.git-text-btn {
+  border: none;
+  background: transparent;
+  color: var(--cyan);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.git-text-btn:hover {
+  text-decoration: underline;
+}
+
+.git-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.git-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  transition: background 0.1s ease;
+}
+
+.git-file-row:hover {
+  background: var(--glass-bg-hover);
+}
+
+.git-file-row.active {
+  background: rgba(0, 200, 214, 0.1);
+  color: var(--cyan);
+}
+
+.git-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, monospace;
+}
+
+.git-status-tag {
+  font-family: Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  width: 16px;
+  text-align: center;
+}
+
+.tag-M { background: rgba(229, 181, 103, 0.2); color: var(--gold); }
+.tag-A { background: rgba(52, 199, 89, 0.2); color: var(--accent-green); }
+.tag-D { background: rgba(242, 85, 85, 0.2); color: var(--accent-red); }
+.tag-\? { background: rgba(0, 200, 214, 0.2); color: var(--cyan); }
+
+.git-commit-box {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.git-commit-input {
+  width: 100%;
+  resize: none;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-card);
+  color: var(--text-main);
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 11.5px;
+}
+
+.git-commit-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+.git-commit-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.git-diff-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #090b12;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
+}
+
+.git-diff-header {
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid var(--glass-border);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  color: var(--cyan);
+}
+
+.git-diff-content {
+  flex: 1;
+  overflow: auto;
+  padding: 6px;
+}
+
+.diff-pre {
+  margin: 0;
+  font-family: "Cascadia Code", Consolas, "Fira Code", monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.diff-line {
+  padding: 0 4px;
+  border-radius: 2px;
+  white-space: pre-wrap;
+}
+
+.diff-line-add { background: rgba(52, 199, 89, 0.15); color: #8ef0a5; }
+.diff-line-del { background: rgba(242, 85, 85, 0.15); color: #fca5a5; }
+.diff-line-hunk { background: rgba(0, 200, 214, 0.12); color: var(--cyan); font-weight: 600; }
+.diff-line-ctx { color: var(--text-muted); }
+
+/* History Timeline */
+.git-history-pane {
+  overflow-y: auto;
+  height: 100%;
+}
+
+.git-commits-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
+}
+
+.git-commit-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.commit-point {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.commit-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.commit-msg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.commit-subject {
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.commit-hash {
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  color: var(--cyan);
+  background: rgba(0, 200, 214, 0.1);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.commit-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.commit-author,
+.commit-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.git-alert {
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+}
+
+.git-alert-error {
+  background: rgba(242, 85, 85, 0.15);
+  border: 1px solid rgba(242, 85, 85, 0.35);
+  color: var(--accent-red);
+}
+
+.git-alert-success {
+  background: rgba(52, 199, 89, 0.15);
+  border: 1px solid rgba(52, 199, 89, 0.35);
+  color: var(--accent-green);
+}
+
+/* ===== Analytics & Universal Telemetry ===== */
+.analytics-modal {
+  width: min(840px, 92vw);
+}
+
+.analytics-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analytics-header-left h3 {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.analytics-sub,
+.settings-sub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.analytics-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.analytics-card {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.card-main-val {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: Consolas, monospace;
+}
+
+.analytics-full-card {
+  grid-column: 1 / -1;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+
+.section-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.token-breakdown-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  margin: 8px 0;
+}
+
+.seg-input { background: var(--cyan); }
+.seg-output { background: var(--purple); }
+
+.token-legend-row {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-input { background: var(--cyan); }
+.dot-output { background: var(--purple); }
+.dot-cache { background: var(--accent-green); }
+
+.analytics-info-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(0, 200, 214, 0.08);
+  border: 1px solid rgba(0, 200, 214, 0.25);
+  margin-bottom: 12px;
+}
+
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.analytics-table th,
+.analytics-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--glass-border);
+  text-align: left;
+}
+
+.analytics-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.inline-icon {
+  margin-right: 4px;
+}
+
+/* ===== Settings Modal Refinements ===== */
+.settings-modal {
+  width: min(840px, 92vw);
+}
+
+.settings-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-header-left h3 {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.cfg-cards-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cfg-card {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cfg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cfg-head-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.checks-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.checks-row.align-center {
+  align-items: center;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 200, 214, 0.1);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 200, 214, 0.25);
+}
+
+.badge-pill.active {
+  background: rgba(52, 199, 89, 0.12);
+  color: var(--accent-green);
+  border-color: rgba(52, 199, 89, 0.3);
+}
+
+.icon-btn-micro {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.icon-btn-micro:hover {
+  color: var(--text-main);
+  background: var(--glass-bg-hover);
+  border-color: var(--cyan);
+}
+
+.icon-btn-micro.danger:hover {
+  color: var(--accent-red);
+  border-color: var(--accent-red);
+  background: rgba(242, 85, 85, 0.15);
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.theme-option-card {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.theme-option-card:hover,
+.theme-option-card.active {
+  border-color: var(--cyan);
+  background: var(--glass-bg-hover);
+  box-shadow: 0 0 12px rgba(0, 200, 214, 0.15);
+}
+
+.theme-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.theme-color-preview {
+  display: flex;
+  gap: 4px;
+  height: 12px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.theme-color-preview span {
+  flex: 1;
+  height: 100%;
+}
+
+.mt-8 {
+  margin-top: 8px;
+}
+

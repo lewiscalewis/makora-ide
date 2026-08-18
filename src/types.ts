@@ -241,7 +241,28 @@ export interface GitStatusInfo {
   untracked: number;
 }
 
-export type WorkspaceViewMode = "chat" | "split" | "editor";
+export interface GitCommitInfo {
+  hash: string;
+  shortHash: string;
+  author: string;
+  date: string;
+  message: string;
+}
+
+export interface GitFileItem {
+  path: string;
+  status: string;
+  isStaged: boolean;
+}
+
+export interface UniversalTelemetry {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedTokens: number;
+  totalCostUsd: number;
+  modelUsage: Record<string, { input: number; output: number; cached: number; cost: number; turns: number }>;
+}
+
 
 
 

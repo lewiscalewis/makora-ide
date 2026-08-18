@@ -8,6 +8,7 @@ import {
   Palette,
   Settings,
 } from "lucide-react";
+
 import type { GitStatusInfo, ThemeId, Usage } from "../types";
 
 interface StatusBarProps {
@@ -24,6 +25,8 @@ interface StatusBarProps {
   onToggleTerminal: () => void;
   onOpenPalette: () => void;
   onOpenSettings: () => void;
+  onOpenGit?: () => void;
+  onOpenAnalytics?: () => void;
 }
 
 export default function StatusBar({
@@ -40,6 +43,8 @@ export default function StatusBar({
   onToggleTerminal,
   onOpenPalette,
   onOpenSettings,
+  onOpenGit,
+  onOpenAnalytics,
 }: StatusBarProps) {
   const theme = MAKORA_THEMES[currentTheme] || MAKORA_THEMES.void;
   const totalTokens = usage.inputTokens + usage.outputTokens;
@@ -61,9 +66,10 @@ export default function StatusBar({
         {gitInfo && (
           <>
             <div className="status-divider" />
-            <div
-              className="status-item git-status-item"
-              title={`Rama Git: ${gitInfo.branch} | Staged: ${gitInfo.staged} | Modificados: ${gitInfo.modified} | Sin seguimiento: ${gitInfo.untracked}`}
+            <button
+              className="status-item status-clickable git-status-item"
+              onClick={onOpenGit}
+              title={`Git Studio: Rama ${gitInfo.branch} | ${totalGitChanges} cambios pendientes (Clic para abrir)`}
             >
               <GitBranch size={12} className="status-icon" />
               <span className="status-text font-mono">{gitInfo.branch}</span>
@@ -72,7 +78,7 @@ export default function StatusBar({
                   ● {totalGitChanges}
                 </span>
               )}
-            </div>
+            </button>
           </>
         )}
 
@@ -103,18 +109,19 @@ export default function StatusBar({
 
         <div className="status-divider" />
 
-        <div
-          className="status-item"
-          title={`Entrada: ${usage.inputTokens.toLocaleString()} | Salida: ${usage.outputTokens.toLocaleString()} | Caché: ${usage.cachedTokens.toLocaleString()}`}
+        <button
+          className="status-item status-clickable"
+          onClick={onOpenAnalytics}
+          title="Abrir Telemetría de Tokens & Crédito Universal (Clic para ver detalles)"
         >
-          <BarChart2 size={11} className="status-icon" />
+          <BarChart2 size={11} className="status-icon text-gold" />
           <span className="status-text font-mono">
             {totalTokens.toLocaleString()} tok
           </span>
           <span className="status-cost accent-green font-mono">
             ${costUsd.toFixed(4)}
           </span>
-        </div>
+        </button>
 
         <div className="status-divider" />
 

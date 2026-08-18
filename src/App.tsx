@@ -24,6 +24,10 @@ import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
 import OnboardingModal from "./components/OnboardingModal";
 import UnifiedWorkspace from "./components/UnifiedWorkspace";
+import GitModal from "./components/GitModal";
+import AnalyticsModal from "./components/AnalyticsModal";
+
+
 import type {
   AgentMode,
   AppConfig,
@@ -123,6 +127,9 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showGitModal, setShowGitModal] = useState(false);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [homePath, setHomePath] = useState<string>("");
@@ -607,6 +614,8 @@ function App() {
         onToggleTerminal={() => setTerminalOpen((prev) => !prev)}
         onOpenPalette={() => setShowPalette(true)}
         onOpenSettings={() => setShowSettings(true)}
+        onOpenGit={() => setShowGitModal(true)}
+        onOpenAnalytics={() => setShowAnalyticsModal(true)}
       />
 
       <CommandPalette
@@ -647,8 +656,30 @@ function App() {
           onAddFolder={(p) => addFolder(p)}
         />
       )}
+
+      {showGitModal && (
+        <GitModal
+          folder={effectiveFolders[0] || ""}
+          onClose={() => setShowGitModal(false)}
+          onRefreshWorkspace={() => setRefreshTick((t) => t + 1)}
+        />
+      )}
+
+      {showAnalyticsModal && (
+        <AnalyticsModal
+          settings={settings}
+          usage={usage}
+          lastUsage={lastUsage}
+          balance={balance}
+          balanceLoading={balanceLoading}
+          costUsd={costUsd}
+          onRefreshBalance={refreshBalance}
+          onClose={() => setShowAnalyticsModal(false)}
+        />
+      )}
     </div>
   );
 }
 
 export default App;
+

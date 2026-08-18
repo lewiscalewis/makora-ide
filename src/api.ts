@@ -69,4 +69,21 @@ export const gitStatus = (folder: string) =>
   invoke<import("./types").GitStatusInfo | null>("git_status", { folder });
 export const gitDiff = (folder: string, path?: string | null, staged = false) =>
   invoke<string>("git_diff", { folder, path: path || null, staged });
+export const gitLog = (folder: string, limit?: number) =>
+  invoke<import("./types").GitCommitInfo[]>("git_log", { folder, limit: limit ?? 25 });
+export const gitFiles = (folder: string) =>
+  invoke<import("./types").GitFileItem[]>("git_files", { folder });
+export const gitStage = (folder: string, path: string) =>
+  invoke<void>("git_stage", { folder, path });
+export const gitUnstage = (folder: string, path: string) =>
+  invoke<void>("git_unstage", { folder, path });
+export const gitStageAll = (folder: string) =>
+  invoke<void>("git_stage_all", { folder });
+export const gitCommit = (folder: string, message: string) =>
+  invoke<string>("git_commit", { folder, message });
+export const gitPush = (folder: string) =>
+  invoke<string>("git_push", { folder });
+export const gitPull = (folder: string) =>
+  invoke<string>("git_pull", { folder });
+
 

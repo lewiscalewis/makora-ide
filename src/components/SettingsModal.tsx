@@ -1,6 +1,19 @@
 import { useState } from "react";
 import { THINKING_LEVELS } from "../defaults";
 import { THEME_LIST } from "../themes";
+import {
+  Cpu,
+  Layers,
+  Sparkles,
+  Network,
+  Palette,
+  X,
+  Plus,
+  Trash2,
+  Check,
+  Sliders,
+} from "lucide-react";
+
 import type {
   AppConfig,
   McpConfig,
@@ -86,226 +99,378 @@ export default function SettingsModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
         <div className="modal-header">
-          <h2>Configuración de MakoraIDE</h2>
-          <button className="icon-btn" title="Cerrar (Escape)" onClick={onClose}>
-            ×
+          <div className="settings-header-left">
+            <Sliders size={16} className="text-cyan" />
+            <div>
+              <h3>Configuración de MakoraIDE</h3>
+              <span className="settings-sub muted small">Ajustes de motor agéntico, modelos, skills y temas</span>
+            </div>
+          </div>
+          <button className="icon-btn" title="Cerrar (Esc)" onClick={onClose}>
+            <X size={13} />
           </button>
         </div>
+
+        {/* Tab Bar */}
         <div className="modal-tabs">
-          <button className={"tab" + (tab === "models" ? " active" : "")} onClick={() => setTab("models")}>Modelos</button>
-          <button className={"tab" + (tab === "context" ? " active" : "")} onClick={() => setTab("context")}>Contexto & Tokens</button>
-          <button className={"tab" + (tab === "skills" ? " active" : "")} onClick={() => setTab("skills")}>Skills</button>
-          <button className={"tab" + (tab === "mcps" ? " active" : "")} onClick={() => setTab("mcps")}>MCPs</button>
-          <button className={"tab" + (tab === "appearance" ? " active" : "")} onClick={() => setTab("appearance")}>🎨 Apariencia & Temas</button>
+          <button
+            className={`tab ${tab === "models" ? "active" : ""}`}
+            onClick={() => setTab("models")}
+          >
+            <Cpu size={12} />
+            <span>Modelos ({config.models.length})</span>
+          </button>
+          <button
+            className={`tab ${tab === "context" ? "active" : ""}`}
+            onClick={() => setTab("context")}
+          >
+            <Layers size={12} />
+            <span>Contexto & Presupuesto</span>
+          </button>
+          <button
+            className={`tab ${tab === "skills" ? "active" : ""}`}
+            onClick={() => setTab("skills")}
+          >
+            <Sparkles size={12} />
+            <span>Skills Agénticas</span>
+          </button>
+          <button
+            className={`tab ${tab === "mcps" ? "active" : ""}`}
+            onClick={() => setTab("mcps")}
+          >
+            <Network size={12} />
+            <span>Servidores MCP</span>
+          </button>
+          <button
+            className={`tab ${tab === "appearance" ? "active" : ""}`}
+            onClick={() => setTab("appearance")}
+          >
+            <Palette size={12} />
+            <span>Apariencia & Temas</span>
+          </button>
         </div>
 
+        {/* Modal Body */}
         <div className="modal-body">
           {tab === "models" && (
             <div className="cfg-section">
               <div className="cfg-top-action">
-                <button className="btn btn-connect" onClick={addModel}>+ Añadir Modelo Personalizado</button>
+                <button className="btn btn-connect" onClick={addModel}>
+                  <Plus size={12} />
+                  <span>Añadir Modelo Personalizado</span>
+                </button>
               </div>
-              {config.models.map((m, i) => (
-                <div className="cfg-card" key={i}>
-                  <div className="cfg-head">
-                    <strong>{m.label || m.id || "Nuevo modelo"}</strong>
-                    <button className="icon-btn" title="Eliminar" onClick={() => removeModel(i)}>×</button>
-                  </div>
-                  <div className="field">
-                    <label>ID (del proveedor)</label>
-                    <input value={m.id} onChange={(e) => updModel(i, { id: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Etiqueta</label>
-                    <input value={m.label} onChange={(e) => updModel(i, { label: e.target.value })} />
-                  </div>
-                  <div className="grid-2">
-                    <div className="field">
-                      <label>Pensamiento por defecto</label>
-                      <select value={m.thinkingLevel} onChange={(e) => updModel(i, { thinkingLevel: e.target.value as ThinkingLevel })}>
-                        {THINKING_LEVELS.map((t) => (
-                          <option key={t.value} value={t.value}>{t.label}</option>
-                        ))}
-                      </select>
+
+              <div className="cfg-cards-stack">
+                {config.models.map((m, i) => (
+                  <div className="cfg-card" key={i}>
+                    <div className="cfg-head">
+                      <div className="cfg-head-title">
+                        <Cpu size={14} className="text-cyan" />
+                        <strong>{m.label || m.id || "Nuevo modelo"}</strong>
+                        {m.reasoningEnabled && <span className="badge-pill">Thinking</span>}
+                        {m.visionEnabled && <span className="badge-pill">Visión</span>}
+                      </div>
+                      <button className="icon-btn-micro danger" title="Eliminar modelo" onClick={() => removeModel(i)}>
+                        <Trash2 size={11} />
+                      </button>
                     </div>
-                    <div className="field">
-                      <label>Ventana contexto (tokens)</label>
-                      <input type="number" value={m.contextWindow} onChange={(e) => updModel(i, { contextWindow: num(e.target.value, 0) })} />
+
+                    <div className="grid-2">
+                      <div className="field">
+                        <label>ID del Proveedor</label>
+                        <input
+                          placeholder="ej. deepseek-chat"
+                          value={m.id}
+                          onChange={(e) => updModel(i, { id: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Etiqueta Visible</label>
+                        <input
+                          placeholder="ej. DeepSeek V3 Flash"
+                          value={m.label}
+                          onChange={(e) => updModel(i, { label: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid-2">
+                      <div className="field">
+                        <label>Pensamiento por Defecto</label>
+                        <select
+                          value={m.thinkingLevel}
+                          onChange={(e) => updModel(i, { thinkingLevel: e.target.value as ThinkingLevel })}
+                        >
+                          {THINKING_LEVELS.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>Ventana de Contexto (Tokens)</label>
+                        <input
+                          type="number"
+                          value={m.contextWindow}
+                          onChange={(e) => updModel(i, { contextWindow: num(e.target.value, 0) })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid-2">
+                      <div className="field">
+                        <label>Máx. Tokens de Salida</label>
+                        <input
+                          type="number"
+                          value={m.maxOutputTokens}
+                          onChange={(e) => updModel(i, { maxOutputTokens: num(e.target.value, 0) })}
+                        />
+                      </div>
+                      <div className="checks-row align-center">
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={m.reasoningEnabled}
+                            onChange={(e) => updModel(i, { reasoningEnabled: e.target.checked })}
+                          />
+                          <span>Razonamiento API (Thinking)</span>
+                        </label>
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={m.visionEnabled}
+                            onChange={(e) => updModel(i, { visionEnabled: e.target.checked })}
+                          />
+                          <span>Visión (OCR / Imágenes)</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="grid-2">
+                      <div className="field">
+                        <label>Precio Entrada ($/1M Tokens)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={m.inputPrice}
+                          onChange={(e) => updModel(i, { inputPrice: num(e.target.value, 0) })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Precio Salida ($/1M Tokens)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={m.outputPrice}
+                          onChange={(e) => updModel(i, { outputPrice: num(e.target.value, 0) })}
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="grid-2">
-                    <div className="field">
-                      <label>Máx. tokens salida</label>
-                      <input type="number" value={m.maxOutputTokens} onChange={(e) => updModel(i, { maxOutputTokens: num(e.target.value, 0) })} />
-                    </div>
-                    <div className="checks-row">
-                      <label className="check">
-                        <input type="checkbox" checked={m.reasoningEnabled} onChange={(e) => updModel(i, { reasoningEnabled: e.target.checked })} />
-                        <span>Razonamiento vía API (thinking)</span>
-                      </label>
-                      <label className="check">
-                        <input type="checkbox" checked={m.visionEnabled} onChange={(e) => updModel(i, { visionEnabled: e.target.checked })} />
-                        <span>Visión (imágenes)</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div className="grid-2">
-                    <div className="field">
-                      <label>Precio entrada ($/M)</label>
-                      <input type="number" step="0.01" value={m.inputPrice} onChange={(e) => updModel(i, { inputPrice: num(e.target.value, 0) })} />
-                    </div>
-                    <div className="field">
-                      <label>Precio salida ($/M)</label>
-                      <input type="number" step="0.01" value={m.outputPrice} onChange={(e) => updModel(i, { outputPrice: num(e.target.value, 0) })} />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 
           {tab === "context" && (
             <div className="cfg-section">
-              <div className="grid-2">
-                <div className="field">
-                  <label>Presupuesto total (tokens)</label>
-                  <input type="number" value={config.context.maxTokens} onChange={(e) => setCtx({ maxTokens: num(e.target.value, 0) })} />
-                </div>
-                <div className="field">
-                  <label>Repo-map (tokens)</label>
-                  <input type="number" value={config.context.repoMapTokens} onChange={(e) => setCtx({ repoMapTokens: num(e.target.value, 0) })} />
-                </div>
-              </div>
-              <div className="grid-2">
-                <div className="field">
-                  <label>Sistema (%)</label>
-                  <input type="number" value={config.context.systemShare} onChange={(e) => setCtx({ systemShare: num(e.target.value, 0) })} />
-                </div>
-                <div className="field">
-                  <label>Historial (%)</label>
-                  <input type="number" value={config.context.historyShare} onChange={(e) => setCtx({ historyShare: num(e.target.value, 0) })} />
+              <div className="analytics-info-box">
+                <Layers size={14} className="text-cyan" />
+                <div>
+                  <strong>Presupuesto Dinámico de Contexto</strong>
+                  <p className="small muted">
+                    Controla el reparto del contexto entre el sistema, el historial de conversación y los archivos analizados.
+                  </p>
                 </div>
               </div>
+
               <div className="grid-2">
                 <div className="field">
-                  <label>Archivos (%)</label>
-                  <input type="number" value={config.context.filesShare} onChange={(e) => setCtx({ filesShare: num(e.target.value, 0) })} />
+                  <label>Presupuesto Total (Tokens)</label>
+                  <input
+                    type="number"
+                    value={config.context.maxTokens}
+                    onChange={(e) => setCtx({ maxTokens: num(e.target.value, 0) })}
+                  />
                 </div>
                 <div className="field">
-                  <label>Umbral compactación (0-1)</label>
-                  <input type="number" step="0.05" value={config.context.compactionThreshold} onChange={(e) => setCtx({ compactionThreshold: num(e.target.value, 0) })} />
+                  <label>Repo-Map Árbol (Tokens)</label>
+                  <input
+                    type="number"
+                    value={config.context.repoMapTokens}
+                    onChange={(e) => setCtx({ repoMapTokens: num(e.target.value, 0) })}
+                  />
                 </div>
               </div>
-              <label className="check">
-                <input type="checkbox" checked={config.context.includeWorkspace} onChange={(e) => setCtx({ includeWorkspace: e.target.checked })} />
-                <span>Incluir estructura del workspace en el contexto</span>
+
+              <div className="grid-2">
+                <div className="field">
+                  <label>Cuota Instrucciones Sistema (%)</label>
+                  <input
+                    type="number"
+                    value={config.context.systemShare}
+                    onChange={(e) => setCtx({ systemShare: num(e.target.value, 0) })}
+                  />
+                </div>
+                <div className="field">
+                  <label>Cuota Historial Chat (%)</label>
+                  <input
+                    type="number"
+                    value={config.context.historyShare}
+                    onChange={(e) => setCtx({ historyShare: num(e.target.value, 0) })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="field">
+                  <label>Cuota Archivos del Workspace (%)</label>
+                  <input
+                    type="number"
+                    value={config.context.filesShare}
+                    onChange={(e) => setCtx({ filesShare: num(e.target.value, 0) })}
+                  />
+                </div>
+                <div className="field">
+                  <label>Umbral de Compactación Automática (0-1)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={config.context.compactionThreshold}
+                    onChange={(e) => setCtx({ compactionThreshold: num(e.target.value, 0) })}
+                  />
+                </div>
+              </div>
+
+              <label className="check mt-8">
+                <input
+                  type="checkbox"
+                  checked={config.context.includeWorkspace}
+                  onChange={(e) => setCtx({ includeWorkspace: e.target.checked })}
+                />
+                <span>Incluir estructura viva del workspace en cada instrucción</span>
               </label>
             </div>
           )}
 
           {tab === "skills" && (
             <div className="cfg-section">
-              <p className="muted small">
-                Las skills se inyectan como instrucciones del sistema en cada turno agéntico.
-              </p>
               <div className="cfg-card system-skill">
                 <div className="cfg-head">
-                  <strong>⚡ Makora Core Skill (sistema, universal)</strong>
-                  <span className="skill-badge">siempre activa</span>
+                  <div className="cfg-head-title">
+                    <Sparkles size={14} className="text-cyan" />
+                    <strong>Makora Core Engine Skill (Sistema)</strong>
+                  </div>
+                  <span className="badge-pill active">Activa por defecto</span>
                 </div>
                 <p className="muted small">
-                  Optimiza cada respuesta para gastar el mínimo de tokens sin perder
-                  calidad: respuestas esenciales, tools agrupadas, lectura selectiva con
-                  grep/list_dir/read_file_range, parches quirúrgicos con apply_patch,
-                  reintentos automáticos y ejecución continuada.
+                  Optimiza cada respuesta para economizar tokens: instrucciones concisas, parches quirúrgicos, lectura selectiva de rangos y auto-recuperación ante fallos.
                 </p>
               </div>
-              <button className="btn btn-connect" onClick={addSkill}>+ Añadir Skill</button>
-              {config.skills.map((s, i) => (
-                <div className="cfg-card" key={i}>
-                  <div className="cfg-head">
-                    <strong>{s.name || "Nueva skill"}</strong>
-                    <button className="icon-btn" title="Eliminar" onClick={() => removeSkill(i)}>×</button>
+
+              <button className="btn btn-connect" onClick={addSkill}>
+                <Plus size={12} />
+                <span>Añadir Nueva Skill Personalizada</span>
+              </button>
+
+              <div className="cfg-cards-stack">
+                {config.skills.map((s, i) => (
+                  <div className="cfg-card" key={i}>
+                    <div className="cfg-head">
+                      <strong>{s.name || "Nueva skill"}</strong>
+                      <button className="icon-btn-micro danger" title="Eliminar" onClick={() => removeSkill(i)}>
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                    <div className="field">
+                      <label>Nombre de la Skill</label>
+                      <input value={s.name} onChange={(e) => updSkill(i, { name: e.target.value })} />
+                    </div>
+                    <div className="field">
+                      <label>Descripción del Contexto</label>
+                      <input value={s.description} onChange={(e) => updSkill(i, { description: e.target.value })} />
+                    </div>
+                    <div className="field">
+                      <label>Contenido del Prompt / Reglas</label>
+                      <textarea
+                        rows={4}
+                        value={s.content}
+                        onChange={(e) => updSkill(i, { content: e.target.value })}
+                      />
+                    </div>
                   </div>
-                  <div className="field">
-                    <label>Nombre</label>
-                    <input value={s.name} onChange={(e) => updSkill(i, { name: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Descripción</label>
-                    <input value={s.description} onChange={(e) => updSkill(i, { description: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Contenido</label>
-                    <textarea rows={5} value={s.content} onChange={(e) => updSkill(i, { content: e.target.value })} />
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 
           {tab === "mcps" && (
             <div className="cfg-section">
-              <p className="muted small">Servidores MCP (Model Context Protocol). El agente expone automáticamente las tools descubiertas.</p>
-              <button className="btn btn-connect" onClick={addMcp}>+ Añadir Servidor MCP</button>
-              {config.mcps.map((m, i) => (
-                <div className="cfg-card" key={i}>
-                  <div className="cfg-head">
-                    <strong>{m.name || "Nuevo MCP"}</strong>
-                    <button className="icon-btn" title="Eliminar" onClick={() => removeMcp(i)}>×</button>
+              <p className="muted small">
+                Configura servidores MCP (Model Context Protocol) externos para conectar Makora con bases de datos, APIs o herramientas locales.
+              </p>
+
+              <button className="btn btn-connect" onClick={addMcp}>
+                <Plus size={12} />
+                <span>Añadir Servidor MCP</span>
+              </button>
+
+              <div className="cfg-cards-stack">
+                {config.mcps.map((m, i) => (
+                  <div className="cfg-card" key={i}>
+                    <div className="cfg-head">
+                      <div className="cfg-head-title">
+                        <Network size={14} className="text-purple" />
+                        <strong>{m.name || "Servidor MCP"}</strong>
+                      </div>
+                      <button className="icon-btn-micro danger" title="Eliminar" onClick={() => removeMcp(i)}>
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                    <div className="grid-2">
+                      <div className="field">
+                        <label>Nombre Identificador</label>
+                        <input value={m.name} onChange={(e) => updMcp(i, { name: e.target.value })} />
+                      </div>
+                      <div className="field">
+                        <label>Comando Ejecutable (binario / npx / uvx)</label>
+                        <input value={m.command} onChange={(e) => updMcp(i, { command: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label>Argumentos (separados por espacio o JSON array)</label>
+                      <input value={m.args} onChange={(e) => updMcp(i, { args: e.target.value })} />
+                    </div>
                   </div>
-                  <div className="field">
-                    <label>Nombre del namespace</label>
-                    <input value={m.name} onChange={(e) => updMcp(i, { name: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Comando ejecutable (ej: npx, uvx, python)</label>
-                    <input value={m.command} onChange={(e) => updMcp(i, { command: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Argumentos</label>
-                    <input value={m.args} onChange={(e) => updMcp(i, { args: e.target.value })} />
-                  </div>
-                  <label className="check">
-                    <input type="checkbox" checked={m.enabled} onChange={(e) => updMcp(i, { enabled: e.target.checked })} />
-                    <span>Servidor Habilitado</span>
-                  </label>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 
           {tab === "appearance" && (
             <div className="cfg-section">
-              <p className="muted small">
-                Selecciona tu tema visual Makora. Cada tema adapta fondos, tarjetas de cristal, terminal xterm.js, resaltado de código y acentos.
-              </p>
-              <div className="themes-grid">
-                {THEME_LIST.map((t) => {
-                  const isSelected = t.id === currentTheme;
+              <h4 className="section-title">Paleta de Color & Contraste (WCAG 2.2 AAA)</h4>
+              <div className="theme-grid">
+                {THEME_LIST.map((th) => {
+                  const isActive = th.id === currentTheme;
                   return (
                     <div
-                      key={t.id}
-                      className={`theme-card ${isSelected ? "selected" : ""}`}
-                      onClick={() => onSelectTheme(t.id)}
+                      key={th.id}
+                      className={`theme-option-card ${isActive ? "active" : ""}`}
+                      onClick={() => onSelectTheme(th.id)}
                     >
                       <div className="theme-card-head">
-                        <div className="theme-name-group">
-                          <strong>{t.name}</strong>
-                          <span className="theme-badge">{t.badge}</span>
-                        </div>
-                        {isSelected && <span className="theme-active-tag">Activo ✓</span>}
+                        <strong>{th.name}</strong>
+                        {isActive && <Check size={13} className="text-cyan" />}
                       </div>
-                      <p className="theme-desc">{t.description}</p>
-                      <div className="theme-palette-preview">
-                        <div className="palette-chip" style={{ background: t.colors.bg }} title="Fondo" />
-                        <div className="palette-chip" style={{ background: t.colors.cyan }} title="Cian" />
-                        <div className="palette-chip" style={{ background: t.colors.purple }} title="Púrpura" />
-                        <div className="palette-chip" style={{ background: t.colors.accentGreen }} title="Verde" />
-                        <div className="palette-chip" style={{ background: t.colors.gold }} title="Dorado" />
-                        <div className="palette-chip" style={{ background: t.colors.crimson }} title="Carmesí" />
+                      <div className="theme-color-preview">
+                        <span style={{ background: th.colors.bg }} />
+                        <span style={{ background: th.colors.cyan }} />
+                        <span style={{ background: th.colors.purple }} />
+                        <span style={{ background: th.colors.accentGreen }} />
                       </div>
                     </div>
                   );
