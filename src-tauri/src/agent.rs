@@ -767,12 +767,100 @@ fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
+fn execute_subagent_tool(
+    name: &str,
+    arguments: &str,
+    folders: &[String],
+) -> Result<String, String> {
+    let args: Value = if arguments.trim().is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str(arguments).map_err(|e| format!("argumentos JSON inválidos: {e}"))?
+    };
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    match name {
+        "read_file" => {
+            let path = resolve_path(folders, &s("path"), false)?;
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            Ok(token_engine::global().truncate(&text, 10000))
+        }
+        "read_file_range" => {
+            let path = resolve_path(folders, &s("path"), false)?;
+            let start = args
+                .get("start_line")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(1)
+                .max(1) as usize;
+            let end = args
+                .get("end_line")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(start as u64)
+                .max(start as u64) as usize;
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let lines: Vec<&str> = text.lines().collect();
+            let slice: Vec<&str> = lines
+                .iter()
+                .skip(start - 1)
+                .take(end - start + 1)
+                .copied()
+                .collect();
+            let mut out = String::new();
+            for (i, l) in slice.iter().enumerate() {
+                out.push_str(&format!("{}| {}\n", start + i, l));
+            }
+            Ok(out)
+        }
+        "list_dir" => {
+            let path = resolve_path(folders, &s("path"), false)?;
+            let mut out = String::new();
+            let mut entries: Vec<_> =
+                std::fs::read_dir(&path).map_err(|e| e.to_string())?.flatten().collect();
+            entries.sort_by(|a, b| {
+                let ad = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                let bd = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                bd.cmp(&ad).then(a.file_name().cmp(&b.file_name()))
+            });
+            for e in entries.iter().take(200) {
+                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                out.push_str(&format!(
+                    "{}{}\n",
+                    e.file_name().to_string_lossy(),
+                    if is_dir { "/" } else { "" }
+                ));
+            }
+            Ok(out)
+        }
+        "grep" => {
+            let pattern = s("pattern").to_lowercase();
+            let path_arg = s("path");
+            let dirs: Vec<String> = if path_arg.is_empty() {
+                folders.to_vec()
+            } else {
+                vec![resolve_path(folders, &path_arg, false)?]
+            };
+            let mut out = String::new();
+            let mut count = 0u32;
+            for d in dirs {
+                grep_dir(&d, &pattern, &mut out, &mut count, 150);
+                if count >= 150 {
+                    break;
+                }
+            }
+            if out.is_empty() {
+                out = "sin coincidencias".into();
+            }
+            Ok(token_engine::global().truncate(&out, 3000))
+        }
+        _ => Err(format!("herramienta no permitida en subagente explorer: {name}")),
+    }
+}
+
 async fn run_explore_subagent(
     app: &AppHandle,
     cfg: &ChatConfig,
     task: &str,
     folders: &[String],
-    registry: &McpRegistry,
 ) -> Result<String, String> {
     let sub_system = format!(
         "Eres el Subagente Explorer de MakoraIDE. Tu misión exclusiva es investigar y responder con síntesis técnica concisa (100-250 palabras):\n{task}\n\nUsa las herramientas read_file_range, list_dir, grep para localizar la información. Al terminar emite directamente tu conclusión técnica sin rodeos."
@@ -839,7 +927,7 @@ async fn run_explore_subagent(
 
         let mut tool_results = Vec::new();
         for tc in &outcome.tool_calls {
-            let res = execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry).await
+            let res = execute_subagent_tool(&tc.name, &tc.arguments, folders)
                 .unwrap_or_else(|e| format!("ERROR: {e}"));
             tool_results.push(ChatMessage {
                 role: "tool".into(),
@@ -929,7 +1017,7 @@ async fn execute_tool(
             if task.trim().is_empty() {
                 return Err("debes especificar la tarea para explore_subagent".into());
             }
-            run_explore_subagent(app, cfg, &task, folders, registry).await
+            run_explore_subagent(app, cfg, &task, folders).await
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
