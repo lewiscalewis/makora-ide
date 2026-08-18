@@ -21,7 +21,10 @@ import {
   Image as ImageIcon,
   FileText,
   X,
+  ChevronDown,
+  Search,
 } from "lucide-react";
+
 
 
 import type {
@@ -112,6 +115,10 @@ export default function Chat({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [projectRules, setProjectRules] = useState<string | null>(null);
 
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const mentionTimer = useRef<number | null>(null);
@@ -119,7 +126,25 @@ export default function Chat({
   const currentAssistantId = useRef<number>(0);
   const isAutoScrollEnabled = useRef<boolean>(true);
 
+  // Close model menu on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setModelMenuOpen(false);
+      }
+    };
+    if (modelMenuOpen) {
+      document.addEventListener("mousedown", handleOutsideClick);
+    }
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [modelMenuOpen]);
+
+  const filteredModels = models.filter((m) =>
+    m.toLowerCase().includes(modelSearch.toLowerCase())
+  );
+
   const runningTool = activities.find((a) => a.ok === null);
+
 
   useEffect(() => {
     onStatusChange?.(busy, runningTool ? runningTool.name : null);
@@ -728,27 +753,70 @@ export default function Chat({
         {/* Dynamic In-Chat Bottom Toolbar */}
         <div className="chat-input-toolbar">
           <div className="chat-toolbar-left">
-            {/* Direct Model Picker Dropdown */}
-            <div className="chat-model-picker" title="Modelo de IA activo (Clic para cambiar)">
-              <Zap size={11} className="text-cyan" />
-              <select
-                value={activeModel || config.model || ""}
-                onChange={(e) => onSelectModel?.(e.target.value)}
-                className="chat-model-select"
+            {/* Custom Makora Model Picker Combobox */}
+            <div className="custom-model-picker-wrap" ref={modelMenuRef}>
+              <button
+                type="button"
+                className={`model-picker-trigger ${modelMenuOpen ? "active" : ""}`}
+                onClick={() => setModelMenuOpen((v) => !v)}
+                title="Seleccionar modelo de IA (Clic para desplegar)"
               >
-                {models && models.length > 0 ? (
-                  models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))
-                ) : (
-                  <option value={activeModel || config.model || ""}>
-                    {activeModel || config.model || "Sin modelo"}
-                  </option>
-                )}
-              </select>
+                <Zap size={11} className="model-picker-icon text-cyan" />
+                <span className="model-picker-name font-mono">
+                  {activeModel || config.model || "Seleccionar modelo"}
+                </span>
+                <ChevronDown size={11} className={`model-chevron ${modelMenuOpen ? "rotated" : ""}`} />
+              </button>
+
+              {modelMenuOpen && (
+                <div className="model-picker-popover">
+                  {models.length > 5 && (
+                    <div className="model-search-wrap">
+                      <Search size={11} className="model-search-icon" />
+                      <input
+                        type="text"
+                        className="model-search-input"
+                        placeholder="Filtrar modelos..."
+                        value={modelSearch}
+                        onChange={(e) => setModelSearch(e.target.value)}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  )}
+
+                  <div className="model-options-list">
+                    {filteredModels.length === 0 ? (
+                      <div className="model-option-empty">
+                        <span>{models.length === 0 ? "Sin modelos cargados (usa Conectar en Config)" : "Sin coincidencias"}</span>
+                      </div>
+                    ) : (
+                      filteredModels.map((m) => {
+                        const isSelected = (activeModel || config.model) === m;
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            className={`model-option-item ${isSelected ? "selected" : ""}`}
+                            onClick={() => {
+                              onSelectModel?.(m);
+                              setModelMenuOpen(false);
+                            }}
+                          >
+                            <div className="model-option-left">
+                              <Zap size={11} className={isSelected ? "text-cyan" : "opacity-50"} />
+                              <span className="model-option-label font-mono">{m}</span>
+                            </div>
+                            {isSelected && <Check size={12} className="text-cyan" />}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
+
 
             {/* Mode Switcher Pill */}
             {onToggleMode && (

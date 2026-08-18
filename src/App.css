@@ -1395,29 +1395,165 @@ svg {
   gap: 6px;
 }
 
-.chat-model-picker {
+/* Custom Makora Model Picker Popover */
+.custom-model-picker-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+}
+
+.model-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 26px;
   border-radius: 6px;
   border: 1px solid var(--glass-border);
-  background: var(--bg-select);
-  padding: 0 6px 0 8px;
+  background: var(--bg-card);
+  color: var(--text-main);
+  padding: 0 8px;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  font-size: 11px;
 }
 
-.chat-model-select {
+.model-picker-trigger:hover,
+.model-picker-trigger.active {
+  background: var(--glass-bg-hover);
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px rgba(0, 200, 214, 0.2);
+}
+
+.model-picker-icon {
+  flex-shrink: 0;
+}
+
+.model-picker-name {
+  max-width: 175px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cyan);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.model-chevron {
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.model-chevron.rotated {
+  transform: rotate(180deg);
+  color: var(--cyan);
+}
+
+.model-picker-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 250px;
+  max-width: 320px;
+  max-height: 280px;
+  background: #0c0f18;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 16px rgba(0, 200, 214, 0.12);
+  padding: 6px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  backdrop-filter: blur(16px);
+  animation: fadeIn 0.15s ease;
+}
+
+.model-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--glass-border);
+  margin-bottom: 4px;
+}
+
+.model-search-input {
+  flex: 1;
   border: none;
   background: transparent;
-  color: var(--cyan);
-  font-family: Consolas, "Fira Code", monospace;
+  color: var(--text-main);
   font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
   outline: none;
-  max-width: 190px;
-  text-overflow: ellipsis;
+  font-family: inherit;
 }
+
+.model-search-icon {
+  color: var(--text-muted);
+}
+
+.model-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  max-height: 220px;
+}
+
+.model-option-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+  width: 100%;
+}
+
+.model-option-item:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-main);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.model-option-item.selected {
+  background: rgba(0, 200, 214, 0.12);
+  color: var(--cyan);
+  border-color: rgba(0, 200, 214, 0.3);
+  font-weight: 600;
+}
+
+.model-option-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.model-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.model-option-empty {
+  padding: 12px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 
 .chat-pill-btn {
   display: inline-flex;
