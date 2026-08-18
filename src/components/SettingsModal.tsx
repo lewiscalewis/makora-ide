@@ -69,7 +69,7 @@ export default function SettingsModal({
   onSelectTheme,
   onClose,
 }: Props) {
-  const { language, setLanguage } = useI18n();
+  const { language, setLanguage, t } = useI18n();
   const [tab, setTab] = useState<Tab>("providers");
   const [showApiKey, setShowApiKey] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
@@ -191,11 +191,11 @@ export default function SettingsModal({
           <div className="settings-header-left">
             <Sliders size={16} className="text-cyan" />
             <div>
-              <h3>Configuración de MakoraIDE</h3>
-              <span className="settings-sub muted small">Claves API, LLMs locales, modelos y motor agéntico</span>
+              <h3>{t.settings.modalTitle}</h3>
+              <span className="settings-sub muted small">{t.settings.modalSubtitle}</span>
             </div>
           </div>
-          <button className="icon-btn" title="Cerrar (Esc)" onClick={onClose}>
+          <button className="icon-btn" title={t.common.close} onClick={onClose}>
             <X size={13} />
           </button>
         </div>
@@ -207,42 +207,42 @@ export default function SettingsModal({
             onClick={() => setTab("providers")}
           >
             <Key size={12} />
-            <span>Proveedores & API Keys</span>
+            <span>{t.settings.tabProviders}</span>
           </button>
           <button
             className={`tab ${tab === "models" ? "active" : ""}`}
             onClick={() => setTab("models")}
           >
             <Cpu size={12} />
-            <span>Modelos & Precios ({config.models.length})</span>
+            <span>{t.settings.tabModels} ({config.models.length})</span>
           </button>
           <button
             className={`tab ${tab === "context" ? "active" : ""}`}
             onClick={() => setTab("context")}
           >
             <Layers size={12} />
-            <span>Contexto & Tokens</span>
+            <span>{t.settings.tabContext}</span>
           </button>
           <button
             className={`tab ${tab === "skills" ? "active" : ""}`}
             onClick={() => setTab("skills")}
           >
             <Sparkles size={12} />
-            <span>Skills Agénticas ({config.skills.length})</span>
+            <span>{t.settings.tabSkills} ({config.skills.length})</span>
           </button>
           <button
             className={`tab ${tab === "mcps" ? "active" : ""}`}
             onClick={() => setTab("mcps")}
           >
             <Network size={12} />
-            <span>Servidores MCP</span>
+            <span>{t.settings.tabMcps}</span>
           </button>
           <button
             className={`tab ${tab === "appearance" ? "active" : ""}`}
             onClick={() => setTab("appearance")}
           >
             <Palette size={12} />
-            <span>Apariencia & Temas</span>
+            <span>{t.settings.tabAppearance}</span>
           </button>
         </div>
 
@@ -254,9 +254,9 @@ export default function SettingsModal({
               <div className="analytics-info-box">
                 <ShieldCheck size={16} className="text-green" />
                 <div>
-                  <strong>Configuración Rápida de Conexión</strong>
+                  <strong>{t.settings.quickConnectTitle}</strong>
                   <p className="small muted">
-                    Introduce tu API Key o selecciona un motor local (Ollama / LM Studio). Tus credenciales se almacenan de forma segura en el <strong>Keyring del SO</strong> (Windows DPAPI / Keychain).
+                    {t.settings.quickConnectDesc}
                   </p>
                 </div>
               </div>
@@ -266,17 +266,17 @@ export default function SettingsModal({
                 <div className="cfg-head">
                   <div className="cfg-head-title">
                     <Server size={14} className="text-cyan" />
-                    <strong>Proveedor de Inteligencia Artificial</strong>
+                    <strong>{t.settings.aiProviderTitle}</strong>
                   </div>
                   {ollamaRunning && (
                     <span className="badge-pill active" title="Servicio local Ollama activo en localhost:11434">
-                      🟢 Ollama Detectado
+                      {t.settings.ollamaDetected}
                     </span>
                   )}
                 </div>
 
                 <div className="field">
-                  <label>Seleccionar Proveedor</label>
+                  <label>{t.settings.selectProvider}</label>
                   <select
                     value={settings.providerId}
                     onChange={(e) => handleProviderChange(e.target.value)}
@@ -291,7 +291,7 @@ export default function SettingsModal({
 
                 {/* Base URL (editable if custom or local) */}
                 <div className="field">
-                  <label>Endpoint / Base URL</label>
+                  <label>{t.settings.endpointBaseUrl}</label>
                   <input
                     type="text"
                     value={settings.baseUrl}
@@ -304,10 +304,10 @@ export default function SettingsModal({
                 {currentPreset.needsKey ? (
                   <div className="field">
                     <div className="field-label-row">
-                      <label>API Key de {currentPreset.label}</label>
+                      <label>{t.settings.apiKeyLabel} {currentPreset.label}</label>
                       <span className="keyring-badge" title="Tus claves están protegidas con encriptación nativa del sistema operativo">
                         <ShieldCheck size={10} />
-                        <span>Keyring SO Seguro</span>
+                        <span>{t.settings.osKeyringSecure}</span>
                       </span>
                     </div>
                     <div className="api-key-input-wrap">
@@ -336,23 +336,20 @@ export default function SettingsModal({
                     </div>
                     {settings.providerId === "gemini" && (
                       <div className="small muted" style={{ marginTop: 4 }}>
-                        💡 Obtén tu API Key 100% gratuita con 1M tokens/min en{" "}
+                        💡 Google AI Studio:{" "}
                         <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--cyan)", textDecoration: "underline" }}>
-                          Google AI Studio
-                        </a>.
+                          aistudio.google.com
+                        </a>
                       </div>
                     )}
-
                   </div>
                 ) : (
                   <div className="local-llm-banner">
                     <HardDrive size={14} className="text-green" />
                     <div className="local-llm-text">
-                      <strong>Motor Local sin Clave API</strong>
+                      <strong>{t.settings.localEngineTitle}</strong>
                       <span className="small muted">
-                        {settings.providerId === "ollama"
-                          ? "Ollama se ejecuta de forma 100% privada en tu máquina (puerto 11434)."
-                          : "LM Studio se ejecuta en local (puerto 1234)."}
+                        {t.settings.localEngineDesc}
                       </span>
                     </div>
                   </div>
@@ -360,7 +357,7 @@ export default function SettingsModal({
 
                 {/* Model Selector & Connection Button */}
                 <div className="field">
-                  <label>Modelo Activo de Makora</label>
+                  <label>{t.settings.activeModelLabel}</label>
                   <div className="model-selector-row">
                     <select
                       value={settings.model}
@@ -370,7 +367,7 @@ export default function SettingsModal({
                     >
                       {models.length === 0 ? (
                         <option value="">
-                          {connecting ? "Conectando y listando modelos..." : "Haz clic en 'Conectar' para listar los modelos disponibles"}
+                          {connecting ? t.common.connecting : t.chat.noModels}
                         </option>
                       ) : (
                         models.map((m) => (
@@ -388,7 +385,7 @@ export default function SettingsModal({
                       title="Probar conexión con la API y refrescar catálogo de modelos"
                     >
                       <Zap size={12} />
-                      <span>{connecting ? "Conectando..." : "Conectar & Listar"}</span>
+                      <span>{connecting ? t.common.connecting : t.settings.connectAndList}</span>
                     </button>
                   </div>
                 </div>
@@ -399,18 +396,18 @@ export default function SettingsModal({
               {/* Quick Preset Guide */}
               <div className="provider-quick-guides">
                 <div className="guide-card">
-                  <strong>DeepSeek (V3 / R1)</strong>
-                  <p className="small muted">La mejor relación coste/rendimiento para desarrollo de software institucional.</p>
+                  <strong>{t.settings.deepseekTitle}</strong>
+                  <p className="small muted">{t.settings.deepseekDesc}</p>
                   <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer" className="guide-link">
-                    <span>Obtener clave DeepSeek</span>
+                    <span>{t.settings.getKeyDeepseek}</span>
                     <ExternalLink size={10} />
                   </a>
                 </div>
                 <div className="guide-card">
-                  <strong>OpenRouter</strong>
-                  <p className="small muted">Acceso unificado a Claude 3.5 Sonnet, GPT-4o, Llama 3.3 y Gemini en una sola clave.</p>
+                  <strong>{t.settings.openrouterTitle}</strong>
+                  <p className="small muted">{t.settings.openrouterDesc}</p>
                   <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="guide-link">
-                    <span>Obtener clave OpenRouter</span>
+                    <span>{t.settings.getKeyOpenrouter}</span>
                     <ExternalLink size={10} />
                   </a>
                 </div>
@@ -424,7 +421,7 @@ export default function SettingsModal({
               <div className="cfg-top-action">
                 <button className="btn btn-connect" onClick={addModel}>
                   <Plus size={12} />
-                  <span>Añadir Modelo Personalizado</span>
+                  <span>{t.settings.addCustomModel}</span>
                 </button>
               </div>
 
@@ -434,18 +431,18 @@ export default function SettingsModal({
                     <div className="cfg-head">
                       <div className="cfg-head-title">
                         <Cpu size={14} className="text-cyan" />
-                        <strong>{m.label || m.id || "Nuevo modelo"}</strong>
+                        <strong>{m.label || m.id || "Model"}</strong>
                         {m.reasoningEnabled && <span className="badge-pill">Thinking</span>}
-                        {m.visionEnabled && <span className="badge-pill">Visión</span>}
+                        {m.visionEnabled && <span className="badge-pill">Vision</span>}
                       </div>
-                      <button className="icon-btn-micro danger" title="Eliminar modelo" onClick={() => removeModel(i)}>
+                      <button className="icon-btn-micro danger" title={t.common.delete} onClick={() => removeModel(i)}>
                         <Trash2 size={11} />
                       </button>
                     </div>
 
                     <div className="grid-2">
                       <div className="field">
-                        <label>ID del Proveedor</label>
+                        <label>{t.settings.providerModelId}</label>
                         <input
                           placeholder="ej. deepseek-chat"
                           value={m.id}
@@ -453,7 +450,7 @@ export default function SettingsModal({
                         />
                       </div>
                       <div className="field">
-                        <label>Etiqueta Visible</label>
+                        <label>{t.settings.visibleLabel}</label>
                         <input
                           placeholder="ej. DeepSeek V3 Flash"
                           value={m.label}
@@ -464,18 +461,18 @@ export default function SettingsModal({
 
                     <div className="grid-2">
                       <div className="field">
-                        <label>Pensamiento por Defecto</label>
+                        <label>{t.settings.defaultThinking}</label>
                         <select
                           value={m.thinkingLevel}
                           onChange={(e) => updModel(i, { thinkingLevel: e.target.value as ThinkingLevel })}
                         >
-                          {THINKING_LEVELS.map((t) => (
-                            <option key={t.value} value={t.value}>{t.label}</option>
+                          {THINKING_LEVELS.map((th) => (
+                            <option key={th.value} value={th.value}>{th.label}</option>
                           ))}
                         </select>
                       </div>
                       <div className="field">
-                        <label>Ventana de Contexto (Tokens)</label>
+                        <label>{t.settings.contextWindow}</label>
                         <input
                           type="number"
                           value={m.contextWindow}
@@ -486,7 +483,7 @@ export default function SettingsModal({
 
                     <div className="grid-2">
                       <div className="field">
-                        <label>Máx. Tokens de Salida</label>
+                        <label>{t.settings.maxOutputTokens}</label>
                         <input
                           type="number"
                           value={m.maxOutputTokens}
@@ -500,7 +497,7 @@ export default function SettingsModal({
                             checked={m.reasoningEnabled}
                             onChange={(e) => updModel(i, { reasoningEnabled: e.target.checked })}
                           />
-                          <span>Razonamiento API (Thinking)</span>
+                          <span>{t.settings.apiReasoning}</span>
                         </label>
                         <label className="check">
                           <input
@@ -508,14 +505,14 @@ export default function SettingsModal({
                             checked={m.visionEnabled}
                             onChange={(e) => updModel(i, { visionEnabled: e.target.checked })}
                           />
-                          <span>Visión (OCR / Imágenes)</span>
+                          <span>{t.settings.visionOcr}</span>
                         </label>
                       </div>
                     </div>
 
                     <div className="grid-2">
                       <div className="field">
-                        <label>Precio Entrada ($/1M Tokens)</label>
+                        <label>{t.settings.inputPrice}</label>
                         <input
                           type="number"
                           step="0.01"
@@ -524,7 +521,7 @@ export default function SettingsModal({
                         />
                       </div>
                       <div className="field">
-                        <label>Precio Salida ($/1M Tokens)</label>
+                        <label>{t.settings.outputPrice}</label>
                         <input
                           type="number"
                           step="0.01"
@@ -545,16 +542,16 @@ export default function SettingsModal({
               <div className="analytics-info-box">
                 <Layers size={14} className="text-cyan" />
                 <div>
-                  <strong>Presupuesto Dinámico de Contexto</strong>
+                  <strong>{t.settings.contextBudgetTitle}</strong>
                   <p className="small muted">
-                    Controla el reparto del contexto entre el sistema, el historial de conversación y los archivos analizados.
+                    {t.settings.contextBudgetDesc}
                   </p>
                 </div>
               </div>
 
               <div className="grid-2">
                 <div className="field">
-                  <label>Presupuesto Total (Tokens)</label>
+                  <label>{t.settings.totalBudgetTokens}</label>
                   <input
                     type="number"
                     value={config.context.maxTokens}
@@ -562,7 +559,7 @@ export default function SettingsModal({
                   />
                 </div>
                 <div className="field">
-                  <label>Repo-Map Árbol (Tokens)</label>
+                  <label>{t.settings.repoMapTokens}</label>
                   <input
                     type="number"
                     value={config.context.repoMapTokens}
@@ -573,7 +570,7 @@ export default function SettingsModal({
 
               <div className="grid-2">
                 <div className="field">
-                  <label>Cuota Instrucciones Sistema (%)</label>
+                  <label>{t.settings.systemInstructionsShare}</label>
                   <input
                     type="number"
                     value={config.context.systemShare}
@@ -581,7 +578,7 @@ export default function SettingsModal({
                   />
                 </div>
                 <div className="field">
-                  <label>Cuota Historial Chat (%)</label>
+                  <label>{t.settings.chatHistoryShare}</label>
                   <input
                     type="number"
                     value={config.context.historyShare}
@@ -592,7 +589,7 @@ export default function SettingsModal({
 
               <div className="grid-2">
                 <div className="field">
-                  <label>Cuota Archivos del Workspace (%)</label>
+                  <label>{t.settings.workspaceFilesShare}</label>
                   <input
                     type="number"
                     value={config.context.filesShare}
@@ -600,7 +597,7 @@ export default function SettingsModal({
                   />
                 </div>
                 <div className="field">
-                  <label>Umbral de Compactación Automática (0-1)</label>
+                  <label>{t.settings.compactionThreshold}</label>
                   <input
                     type="number"
                     step="0.05"
@@ -616,7 +613,7 @@ export default function SettingsModal({
                   checked={config.context.includeWorkspace}
                   onChange={(e) => setCtx({ includeWorkspace: e.target.checked })}
                 />
-                <span>Incluir estructura viva del workspace en cada instrucción</span>
+                <span>{t.settings.includeWorkspaceStructure}</span>
               </label>
             </div>
           )}
@@ -628,12 +625,12 @@ export default function SettingsModal({
                 <div className="cfg-head">
                   <div className="cfg-head-title">
                     <Sparkles size={14} className="text-cyan" />
-                    <strong>Makora Core Engine Skill (Sistema)</strong>
+                    <strong>{t.settings.coreSkillTitle}</strong>
                   </div>
-                  <span className="badge-pill active">Activa por defecto</span>
+                  <span className="badge-pill active">{t.settings.activeByDefault}</span>
                 </div>
                 <p className="muted small">
-                  Optimiza cada respuesta para economizar tokens: instrucciones concisas, parches quirúrgicos, lectura selectiva de rangos y auto-recuperación ante fallos.
+                  {t.settings.coreSkillDesc}
                 </p>
               </div>
 
@@ -641,21 +638,21 @@ export default function SettingsModal({
                 {config.skills.map((s, i) => (
                   <div className="cfg-card" key={i}>
                     <div className="cfg-head">
-                      <strong>{s.name || "Nueva skill"}</strong>
-                      <button className="icon-btn-micro danger" title="Eliminar" onClick={() => removeSkill(i)}>
+                      <strong>{s.name || "Skill"}</strong>
+                      <button className="icon-btn-micro danger" title={t.common.delete} onClick={() => removeSkill(i)}>
                         <Trash2 size={11} />
                       </button>
                     </div>
                     <div className="field">
-                      <label>Nombre de la Skill</label>
+                      <label>{t.settings.skillName}</label>
                       <input value={s.name} onChange={(e) => updSkill(i, { name: e.target.value })} />
                     </div>
                     <div className="field">
-                      <label>Descripción del Contexto</label>
+                      <label>{t.settings.contextDesc}</label>
                       <input value={s.description} onChange={(e) => updSkill(i, { description: e.target.value })} />
                     </div>
                     <div className="field">
-                      <label>Contenido del Prompt / Reglas</label>
+                      <label>{t.settings.promptRulesContent}</label>
                       <textarea
                         rows={4}
                         value={s.content}
@@ -669,7 +666,7 @@ export default function SettingsModal({
               <div className="cfg-bottom-action mt-12">
                 <button className="btn btn-connect" onClick={addSkill}>
                   <Plus size={12} />
-                  <span>+ Añadir Nueva Skill Personalizada</span>
+                  <span>{t.settings.addNewSkill}</span>
                 </button>
               </div>
             </div>
@@ -679,7 +676,7 @@ export default function SettingsModal({
           {tab === "mcps" && (
             <div className="cfg-section pb-20">
               <p className="muted small">
-                Configura servidores MCP (Model Context Protocol) externos para conectar Makora con bases de datos, APIs o herramientas locales.
+                {t.settings.mcpDesc}
               </p>
 
               <div className="cfg-cards-stack">
@@ -688,24 +685,24 @@ export default function SettingsModal({
                     <div className="cfg-head">
                       <div className="cfg-head-title">
                         <Network size={14} className="text-purple" />
-                        <strong>{m.name || "Servidor MCP"}</strong>
+                        <strong>{m.name || "MCP Server"}</strong>
                       </div>
-                      <button className="icon-btn-micro danger" title="Eliminar" onClick={() => removeMcp(i)}>
+                      <button className="icon-btn-micro danger" title={t.common.delete} onClick={() => removeMcp(i)}>
                         <Trash2 size={11} />
                       </button>
                     </div>
                     <div className="grid-2">
                       <div className="field">
-                        <label>Nombre Identificador</label>
+                        <label>{t.settings.mcpName}</label>
                         <input value={m.name} onChange={(e) => updMcp(i, { name: e.target.value })} />
                       </div>
                       <div className="field">
-                        <label>Comando Ejecutable (binario / npx / uvx)</label>
+                        <label>{t.settings.mcpCommand}</label>
                         <input value={m.command} onChange={(e) => updMcp(i, { command: e.target.value })} />
                       </div>
                     </div>
                     <div className="field">
-                      <label>Argumentos (separados por espacio o JSON array)</label>
+                      <label>{t.settings.mcpArgs}</label>
                       <input value={m.args} onChange={(e) => updMcp(i, { args: e.target.value })} />
                     </div>
                   </div>
@@ -715,7 +712,7 @@ export default function SettingsModal({
               <div className="cfg-bottom-action mt-12">
                 <button className="btn btn-connect" onClick={addMcp}>
                   <Plus size={12} />
-                  <span>+ Añadir Servidor MCP</span>
+                  <span>{t.settings.mcpAddBtn}</span>
                 </button>
               </div>
             </div>
@@ -724,7 +721,7 @@ export default function SettingsModal({
           {/* TAB 6: APPEARANCE & LANGUAGE */}
           {tab === "appearance" && (
             <div className="cfg-section">
-              <h4 className="section-title">Idioma del Entorno / Interface Language</h4>
+              <h4 className="section-title">{t.settings.languageTitle}</h4>
               <div className="theme-grid mb-20">
                 {LANGUAGE_LIST.map((l) => {
                   const isActive = l.id === language;
@@ -744,7 +741,7 @@ export default function SettingsModal({
                 })}
               </div>
 
-              <h4 className="section-title">Paleta de Color & Contraste (WCAG 2.2 AAA)</h4>
+              <h4 className="section-title">{t.settings.colorPaletteTitle}</h4>
               <div className="theme-grid">
                 {THEME_LIST.map((th) => {
                   const isActive = th.id === currentTheme;
@@ -775,4 +772,3 @@ export default function SettingsModal({
     </div>
   );
 }
-

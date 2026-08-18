@@ -871,12 +871,12 @@ export default function Chat({
           {busy ? (
             <span className="chat-badge-busy">
               <span className="pulse-dot" />
-              {runningTool ? `Ejecutando ${runningTool.name}` : "Pensando..."}
+              {runningTool ? `${t.chat.toolsRunning} ${runningTool.name}` : t.chat.thinkingStreaming}
             </span>
           ) : (
             <span className="chat-badge-ready">
               <span className="idle-dot" />
-              {ready ? "Sesión activa" : "Sin conexión"}
+              {ready ? t.chat.activeSession : t.common.inactive}
             </span>
           )}
 
@@ -958,7 +958,7 @@ export default function Chat({
         {messages.length === 0 && (
           <div className="chat-empty muted">
             <img src="/makora.svg" alt="" className="chat-empty-logo" />
-            <p className="chat-empty-title">MakoraIDE · Desarrollo Agéntico</p>
+            <p className="chat-empty-title">{t.chat.title}</p>
             <p className="chat-empty-sub">
               {ready
                 ? t.chat.readyHint
