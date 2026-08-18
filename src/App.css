@@ -2985,6 +2985,12 @@ input {
   gap: 8px;
 }
 
+.analytics-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .analytics-header-left h3 {
   margin: 0;
   font-size: 13.5px;

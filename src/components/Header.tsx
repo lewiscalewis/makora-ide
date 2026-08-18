@@ -2,7 +2,6 @@ import { THEME_LIST } from "../themes";
 import {
   FolderPlus,
   Trash2,
-  Rocket,
   Settings,
   Search,
   PanelLeft,
@@ -21,7 +20,6 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenPalette: () => void;
   onOpenHistory: () => void;
-  onOpenOnboarding?: () => void;
   explorerOpen?: boolean;
   onToggleExplorer?: () => void;
   panelOpen?: boolean;
@@ -39,7 +37,6 @@ export default function Header({
   onOpenSettings,
   onOpenPalette,
   onOpenHistory,
-  onOpenOnboarding,
   explorerOpen = true,
   onToggleExplorer,
   panelOpen = true,
@@ -116,17 +113,6 @@ export default function Header({
           <Trash2 size={13} />
           <span>Limpiar</span>
         </button>
-
-        {onOpenOnboarding && (
-          <button
-            className="btn btn-subtle btn-onboarding"
-            onClick={onOpenOnboarding}
-            title="Asistente de configuración inicial y bienvenida"
-          >
-            <Rocket size={13} />
-            <span>Asistente</span>
-          </button>
-        )}
 
         <div className="theme-picker-wrap">
           <Palette size={13} className="theme-icon-indicator" />

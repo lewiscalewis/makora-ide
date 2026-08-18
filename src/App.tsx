@@ -805,7 +805,6 @@ function App() {
         onOpenSettings={() => setShowSettings(true)}
         onOpenPalette={() => setShowPalette(true)}
         onOpenHistory={() => setShowHistory(true)}
-        onOpenOnboarding={() => setShowOnboarding(true)}
         explorerOpen={explorerOpen}
         onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
         panelOpen={panelOpen}
