@@ -18,6 +18,7 @@ interface CommandPaletteProps {
   onAddFolder: () => void;
   onNewWorkspace: () => void;
   onClearChat: () => void;
+  onOpenHistory: () => void;
 }
 
 export default function CommandPalette({
@@ -35,6 +36,7 @@ export default function CommandPalette({
   onAddFolder,
   onNewWorkspace,
   onClearChat,
+  onOpenHistory,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -143,6 +145,18 @@ export default function CommandPalette({
       category: "action",
       action: () => {
         onClearChat();
+        onClose();
+      },
+    },
+    {
+      id: "action-history",
+      title: "Historial de Chats",
+      subtitle: "Abrir conversaciones guardadas y continuar donde lo dejaste",
+      icon: "🕘",
+      shortcut: "Ctrl+H",
+      category: "action",
+      action: () => {
+        onOpenHistory();
         onClose();
       },
     },

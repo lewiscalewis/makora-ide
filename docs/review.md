@@ -42,4 +42,4 @@ Fecha: 2026-08-18. Revisión interna (código actual, sin auditoría externa).
 1. **P0** — DPAPI/Keychain para API keys; CSP de producción; presupuesto duro por turno (tokens/USD).
 2. **P1** — Checkpoints por turno en SQLite + restore (ya diseñado); pipeline de permisos deny→ask→allow; sanitizar env del agente.
 3. **P2** — Tests unitarios (resolve_path, SSE, MCP) + evals; code-splitting del bundle; LSP vía language servers.
-4. **P3** — M2/M4: motor de contexto con presupuestos reales y prompt caching con prefijo estable (ver `docs/token-engine.md`).
+4. **P3** — M2/M4: motor de contexto con presupuestos reales y prompt caching con prefijo estable (ver `docs/token-engine.md`). _Estado 2026-08-18: parcialmente implementado — TokenCounter/ContextComposer (`token_engine.rs`), HistoryManager SQLite + metering + resume por checkpoint (`history.rs`), `cache_control` ephemeral en Anthropic. Pendiente: repo-index tree-sitter, BM25, compactación jerárquica con resumen LLM._

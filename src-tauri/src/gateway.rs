@@ -400,7 +400,13 @@ pub async fn anthropic_turn(
         "messages": msgs
     });
     if !system.trim().is_empty() {
-        body["system"] = json!(system);
+        // Prefijo estable + breakpoint de caché explícito (M4):
+        // el system prompt va siempre primero y con cache_control ephemeral.
+        body["system"] = json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"}
+        }]);
     }
     body["max_tokens"] = json!(cfg.max_output_tokens.unwrap_or(4096));
     if let Some(t) = cfg.temperature {
@@ -414,7 +420,7 @@ pub async fn anthropic_turn(
         }
     }
     if !tools.is_empty() {
-        let arr: Vec<Value> = tools
+        let mut arr: Vec<Value> = tools
             .iter()
             .map(|t| {
                 json!({
@@ -424,6 +430,10 @@ pub async fn anthropic_turn(
                 })
             })
             .collect();
+        // Breakpoint de caché al final del bloque de herramientas (prefijo estable).
+        if let Some(last) = arr.last_mut() {
+            last["cache_control"] = json!({"type": "ephemeral"});
+        }
         body["tools"] = json!(arr);
         body["tool_choice"] = json!({"type": "auto"});
     }

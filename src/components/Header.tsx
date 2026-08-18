@@ -8,6 +8,7 @@ import {
   PanelLeft,
   PanelRight,
   Palette,
+  History,
 } from "lucide-react";
 import type { ThemeId } from "../types";
 
@@ -19,6 +20,7 @@ interface HeaderProps {
   onNewWorkspace: () => void;
   onOpenSettings: () => void;
   onOpenPalette: () => void;
+  onOpenHistory: () => void;
   onOpenOnboarding?: () => void;
   explorerOpen?: boolean;
   onToggleExplorer?: () => void;
@@ -36,6 +38,7 @@ export default function Header({
   onNewWorkspace,
   onOpenSettings,
   onOpenPalette,
+  onOpenHistory,
   onOpenOnboarding,
   explorerOpen = true,
   onToggleExplorer,
@@ -151,6 +154,14 @@ export default function Header({
             <PanelRight size={14} />
           </button>
         )}
+
+        <button
+          className="icon-btn"
+          title="Historial de Chats (Ctrl+H)"
+          onClick={onOpenHistory}
+        >
+          <History size={14} />
+        </button>
 
         <button
           className="icon-btn"

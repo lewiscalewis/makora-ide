@@ -26,6 +26,15 @@ import OnboardingModal from "./components/OnboardingModal";
 import UnifiedWorkspace from "./components/UnifiedWorkspace";
 import GitModal from "./components/GitModal";
 import AnalyticsModal from "./components/AnalyticsModal";
+import HistoryModal from "./components/HistoryModal";
+import {
+  initSessions,
+  saveSessions,
+  setActiveSessionId as persistActiveSessionId,
+  makeSession,
+  sanitizeMessages,
+  deriveTitle,
+} from "./sessions";
 
 
 import type {
@@ -33,6 +42,8 @@ import type {
   AppConfig,
   BalanceInfo,
   ChatConfig,
+  ChatMessage,
+  ChatSession,
   ChatUsage,
   DiffInfo,
   GitStatusInfo,
@@ -144,6 +155,21 @@ function App() {
   const [runningToolName, setRunningToolName] = useState<string | null>(null);
   const [gitInfo, setGitInfo] = useState<GitStatusInfo | null>(null);
 
+  // Chat history state (persisted in localStorage)
+  const sessionCostRef = useRef(0);
+  const [sessionState, setSessionState] = useState(() => {
+    const s = initSessions();
+    sessionCostRef.current =
+      s.sessions.find((x) => x.id === s.activeId)?.totalCostUsd ?? 0;
+    return s;
+  });
+  const sessions = sessionState.sessions;
+  const activeSessionId = sessionState.activeId;
+  const [showHistory, setShowHistory] = useState(false);
+  const activeSessionIdRef = useRef<string | null>(activeSessionId);
+  const sessionStateRef = useRef(sessionState);
+  const saveTimerRef = useRef<number | null>(null);
+
   // Apply theme on load and change
   useEffect(() => {
     applyTheme(theme);
@@ -239,6 +265,41 @@ function App() {
     localStorage.setItem("makora.config", JSON.stringify(config));
   }, [config]);
 
+  // Debounced persistence avoids hammering localStorage on every token chunk.
+  useEffect(() => {
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => saveSessions(sessionState.sessions), 400);
+    return () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    };
+  }, [sessionState.sessions]);
+
+  useEffect(() => {
+    sessionStateRef.current = sessionState;
+  }, [sessionState]);
+
+  // Flush pending writes when the window is hidden or closed.
+  useEffect(() => {
+    const flush = () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      saveSessions(sessionStateRef.current.sessions);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+    if (activeSessionId) persistActiveSessionId(activeSessionId);
+  }, [activeSessionId]);
+
   useEffect(() => {
     setModels([]);
     setModelsError(null);
@@ -326,6 +387,13 @@ function App() {
     }));
     setLastUsage(u);
     refreshBalance();
+    if (modelConfig) {
+      const turnCost =
+        (u.inputTokens * modelConfig.inputPrice +
+          u.outputTokens * modelConfig.outputPrice) /
+        1_000_000;
+      if (Number.isFinite(turnCost)) sessionCostRef.current += turnCost;
+    }
   };
 
   const openFile = useCallback(async (path: string) => {
@@ -443,6 +511,91 @@ function App() {
     });
   };
 
+  const activeSession = activeSessionId
+    ? sessions.find((s) => s.id === activeSessionId) ?? null
+    : null;
+
+  const persistTranscript = useCallback((messages: ChatMessage[]) => {
+    const id = activeSessionIdRef.current;
+    if (!id) return;
+    const cleaned = sanitizeMessages(messages);
+    setSessionState((prev) => {
+      const target = prev.sessions.find((s) => s.id === id);
+      if (!target) return prev;
+      const title =
+        !target.title || target.title === "Nueva Conversación"
+          ? deriveTitle(cleaned)
+          : target.title;
+      const updated: ChatSession = {
+        ...target,
+        model: settings.model || target.model,
+        title,
+        updatedAt: Date.now(),
+        messageCount: cleaned.length,
+        messages: cleaned,
+        totalCostUsd: sessionCostRef.current,
+      };
+      return {
+        ...prev,
+        sessions: [updated, ...prev.sessions.filter((s) => s.id !== id)],
+      };
+    });
+  }, [settings.model]);
+
+  const handleNewSession = useCallback(() => {
+    const fresh = makeSession(settings.model || "");
+    setSessionState((prev) => ({
+      sessions: [fresh, ...prev.sessions],
+      activeId: fresh.id,
+    }));
+    sessionCostRef.current = 0;
+  }, [settings.model]);
+
+  const handleOpenSession = useCallback(
+    (id: string) => {
+      const target = sessions.find((s) => s.id === id);
+      if (!target) return;
+      sessionCostRef.current = target.totalCostUsd ?? 0;
+      setSessionState((prev) => ({ ...prev, activeId: id }));
+      setShowHistory(false);
+    },
+    [sessions],
+  );
+
+  const handleDeleteSession = useCallback(
+    (id: string) => {
+      const remaining = sessions.filter((s) => s.id !== id);
+      if (activeSessionId !== id) {
+        setSessionState((prev) => ({ ...prev, sessions: remaining }));
+        return;
+      }
+      if (remaining.length > 0) {
+        sessionCostRef.current = remaining[0].totalCostUsd ?? 0;
+        setSessionState({ sessions: remaining, activeId: remaining[0].id });
+      } else {
+        const fresh = makeSession(settings.model || "");
+        sessionCostRef.current = 0;
+        setSessionState({ sessions: [fresh], activeId: fresh.id });
+      }
+    },
+    [sessions, activeSessionId, settings.model],
+  );
+
+  const handleRenameSession = useCallback((id: string, title: string) => {
+    setSessionState((prev) => ({
+      ...prev,
+      sessions: prev.sessions.map((s) =>
+        s.id === id ? { ...s, title: title.trim().slice(0, 120) } : s,
+      ),
+    }));
+  }, []);
+
+  const handleClearSessions = useCallback(() => {
+    const fresh = makeSession(settings.model || "");
+    setSessionState({ sessions: [fresh], activeId: fresh.id });
+    sessionCostRef.current = 0;
+  }, [settings.model]);
+
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -460,6 +613,9 @@ function App() {
       } else if (isCmdOrCtrl && e.key === ",") {
         e.preventDefault();
         setShowSettings((prev) => !prev);
+      } else if (isCmdOrCtrl && e.key.toLowerCase() === "h") {
+        e.preventDefault();
+        setShowHistory((prev) => !prev);
       } else if (e.key === "F11" || (e.altKey && e.key.toLowerCase() === "z")) {
         e.preventDefault();
         setZenMode((z) => !z);
@@ -478,6 +634,7 @@ function App() {
   // Chat Element instance to pass into Workspace
   const chatNode = (
     <Chat
+      key={activeSessionId ?? "new"}
       config={requestConfig}
       ready={settings.model !== ""}
       folders={effectiveFolders}
@@ -499,6 +656,9 @@ function App() {
         setAgentBusy(busy);
         setRunningToolName(tool);
       }}
+      onClearSessionTrigger={handleNewSession}
+      initialTranscript={activeSession?.messages ?? []}
+      onTranscriptChange={persistTranscript}
     />
   );
 
@@ -516,6 +676,7 @@ function App() {
         onNewWorkspace={newWorkspace}
         onOpenSettings={() => setShowSettings(true)}
         onOpenPalette={() => setShowPalette(true)}
+        onOpenHistory={() => setShowHistory(true)}
         onOpenOnboarding={() => setShowOnboarding(true)}
         explorerOpen={explorerOpen}
         onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
@@ -636,7 +797,8 @@ function App() {
         onToggleMode={() => setAgentMode((m) => (m === "act" ? "plan" : "act"))}
         onAddFolder={() => addFolder()}
         onNewWorkspace={newWorkspace}
-        onClearChat={() => undefined}
+        onClearChat={handleNewSession}
+        onOpenHistory={() => setShowHistory(true)}
       />
 
       {showSettings && (
@@ -689,6 +851,18 @@ function App() {
           onClose={() => setShowAnalyticsModal(false)}
         />
       )}
+
+      <HistoryModal
+        isOpen={showHistory}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onOpen={handleOpenSession}
+        onNew={handleNewSession}
+        onDelete={handleDeleteSession}
+        onRename={handleRenameSession}
+        onClearAll={handleClearSessions}
+        onClose={() => setShowHistory(false)}
+      />
     </div>
   );
 }

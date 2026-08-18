@@ -1,8 +1,10 @@
 mod agent;
 mod balance;
 mod gateway;
+mod history;
 mod mcp;
 mod terminal;
+mod token_engine;
 
 use std::sync::LazyLock;
 

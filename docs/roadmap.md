@@ -2,6 +2,19 @@
 
 Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desde M0.
 
+## Estado real (actualizado 2026-08-18)
+
+| Milestone | Estado | Notas |
+|---|---|---|
+| M0 Fundamentos y spike | ✅ Done | Spike sustituido por IDE real; decisión de editor documentada (CM6) |
+| M1 Base IDE + conexión de modelos | 🟡 Parcial | Chat streaming, coste visible por turno OK. **Pendiente:** tabla `requests` en SQLite (implementada en M4 parcial) |
+| M2 Motor de contexto v1 | 🟡 Parcial | `token_engine.rs`: TokenCounter (tiktoken + fallback), truncado por presupuesto con límites de línea, ContextComposer con cuotas por componente. **Pendiente:** repo-index con tree-sitter, BM25/fastembed, integración del composer en el ensamblado |
+| M3 Agent runtime v1 | 🔵 En curso | Loop + tools + MCP + eventos en vivo OK. SQLite sesiones/checkpoints ✅ (M4 parcial). **Pendiente:** undo, timeline tipado |
+| M4 Caché de prefijo + compactación | 🟡 Parcial | `history.rs`: SQLite (sessions/items/checkpoints/requests) con metering por turno, resume por checkpoint, archivo de transcript. `cache_control` ephemeral en system+tools (Anthropic). **Pendiente:** compactación jerárquica con resumen LLM, `cache_read_ratio` > 0.6 medido, limpieza automática de requests viejas |
+| M5 Caché semántica + offload local | ⬜ No empezado | — |
+| M6 Laboratorio de optimización | 🟡 Parcial | Perfiles Eco/Balanced/Deep activos (ADR-015). Tabla `requests` con coste/caché/latencia disponible para el dashboard. **Pendiente:** baseline naive, eval suite, optimizer |
+| M7 Empaquetado y pulido | ⬜ No empezado | — |
+
 ## M0 — Fundamentos y spike técnico (semana 1–2)
 
 - Instalar Rust (rustup, toolchain stable-msvc). MSVC y WebView2 ya presentes.
@@ -10,7 +23,7 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - Spike: streaming SSE desde Rust a React con cancelación (base del gateway).
 - Elegir editor definitivo (CM6 vs Monaco) con datos del spike.
 
-**Done:** la app abre un workspace, el editor pinta archivos, decisión de editor documentada.
+**Estado:** ✅ Done (el spike se sustituyó por el IDE real; CM6 elegido, ver ADR-002).
 
 ## M1 — Base IDE + conexión de modelos (semana 3–4)
 
@@ -19,7 +32,7 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - Chat simple: prompt → streaming al panel, sin herramientas.
 - `token-counter` integrado: conteo en vivo del contexto; tabla `requests` en SQLite; desglose de tokens/coste por turno (usage real del API).
 
-**Done:** chat con streaming y coste real visible por turno.
+**Estado:** 🟡 Parcial. Chat con streaming y coste real por turno ✅. Tabla `requests` en SQLite ❌ (se añadirá con HistoryManager en M4).
 
 ## M2 — Motor de contexto v1 (semana 5–6)
 
@@ -28,7 +41,9 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - Retrieval BM25 + embeddings (fastembed) de chunks por símbolo.
 - Tool "leer archivo por rango" con cuotas.
 
-**Done:** el agente responde sobre el código del repo enviando solo fragmentos relevantes; conteo local ≈ conteo real del API.
+**Criterios de aceptación:** el agente responde sobre el código del repo enviando solo fragmentos relevantes; conteo local ≈ conteo real del API.
+
+**Estado:** 🟡 Parcial. TokenCounter + truncado por presupuesto + ContextComposer implementados en `src-tauri/src/token_engine.rs` (tests incluidos); el conteo local se registra por turno (`[TOKEN_ENGINE] turn=… local=… api_in=…`). Pendiente: repo-index tree-sitter, BM25/fastembed, integración del composer en el ensamblado.
 
 ## M3 — Agent runtime v1 (semana 7–9)
 
@@ -38,7 +53,9 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - SQLite: sesiones, items, checkpoints por turno, undo de turno, resume.
 - Timeline del agente en el frontend (eventos tipados).
 
-**Done:** el agente completa tareas end-to-end ("añade feature X con tests") con aprobaciones; undo funciona.
+**Criterios de aceptación:** el agente completa tareas end-to-end ("añade feature X con tests") con aprobaciones; undo funciona.
+
+**Estado:** 🔵 En curso. Loop, tools (read_file/list_dir/grep/bash/write_file/apply_patch/read_file_range), MCP y eventos en vivo ✅. Pendiente: SQLite sesiones/checkpoints, undo, timeline tipado.
 
 ## M4 — Caché de prefijo + compactación (semana 10–11)
 
@@ -47,7 +64,9 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - `previous_response_id` / budgets de razonamiento; limpieza de tool results viejas.
 - Resume por checkpoint con estado resumido.
 
-**Done:** `cache_read_ratio` > 0.6 en sesiones de 20+ turnos; coste por turno decreciente; la compactación no pierde decisiones (eval).
+**Criterios de aceptación:** `cache_read_ratio` > 0.6 en sesiones de 20+ turnos; coste por turno decreciente; la compactación no pierde decisiones (eval).
+
+**Estado:** 🟡 Parcial. HistoryManager SQLite (`history.rs`: sessions/items/checkpoints/requests + metering por turno + resume por checkpoint), prefijo estable con `cache_control` ephemeral en system y tools (Anthropic). Pendiente: compactación jerárquica con resumen LLM (CompactBoundary completo), medición de `cache_read_ratio` en sesiones largas y limpieza de la tabla `requests`.
 
 ## M5 — Caché semántica + offload local (semana 12–13)
 
@@ -56,7 +75,9 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - Sub-agente explorador con contexto propio.
 - Batch API para tareas nocturnas (resúmenes, embeddings, evals).
 
-**Done:** hit ratio > 30% en sesiones reales; ahorro $ medible vs sin caché; cero falsos positivos reportados.
+**Criterios de aceptación:** hit ratio > 30% en sesiones reales; ahorro $ medible vs sin caché; cero falsos positivos reportados.
+
+**Estado:** ⬜ No empezado.
 
 ## M6 — Laboratorio de optimización (semana 14–15)
 
@@ -65,7 +86,9 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - Eval suite de tareas + regresión de calidad.
 - Optimizer: sugerencias automáticas de policy con proyección de ahorro.
 
-**Done:** informe A/B de perfiles; pass rate de evals estable entre perfiles; ahorro total del motor ≥ 60% vs línea base.
+**Criterios de aceptación:** informe A/B de perfiles; pass rate de evals estable entre perfiles; ahorro total del motor ≥ 60% vs línea base.
+
+**Estado:** 🟡 Parcial. Perfiles Eco/Balanced/Deep activos (ADR-015). Pendiente: baseline naive, eval suite, optimizer.
 
 ## M7 — Empaquetado y pulido (semana 16)
 
@@ -74,7 +97,9 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 - Documentación de uso (conectar keys, permisos, perfiles).
 - Revisión de seguridad (keys, subprocess, CSP).
 
-**Done:** instalador funcionando en Windows limpio; demo end-to-end grabada.
+**Criterios de aceptación:** instalador funcionando en Windows limpio; demo end-to-end grabada.
+
+**Estado:** ⬜ No empezado.
 
 ## Riesgos globales
 

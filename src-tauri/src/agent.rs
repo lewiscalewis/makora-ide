@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
 use crate::gateway::{self, ToolDef};
+use crate::history::{self, RequestMeter};
 use crate::mcp::{self, McpRegistry};
+use crate::token_engine;
 use crate::{ChatConfig, ChatMessage, ChatResult, ChatUsage};
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -731,7 +733,7 @@ async fn execute_tool(
         "read_file" => {
             let path = resolve_path(folders, &s("path"), false)?;
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            Ok(truncate(&text, 60000))
+            Ok(token_engine::global().truncate(&text, 15000))
         }
         "read_file_range" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -810,7 +812,7 @@ async fn execute_tool(
             if out.is_empty() {
                 out = "sin coincidencias".into();
             }
-            Ok(truncate(&out, 12000))
+            Ok(token_engine::global().truncate(&out, 3000))
         }
         "bash" => run_bash(app, &s("command"), folders).await,
         "write_file" => {
@@ -841,9 +843,33 @@ pub async fn run(
     registry: &McpRegistry,
 ) -> Result<ChatResult, String> {
     CANCEL.store(false, Ordering::SeqCst);
+    history::init();
     let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
     let mut total = ChatUsage::default();
+    let counter = token_engine::global();
+    let workspace = folders
+        .iter()
+        .find(|f| !f.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "default".into());
+    let session_id = {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in workspace.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        format!("{h:016x}")
+    };
+    history::upsert_session(&session_id, &workspace, &cfg.model);
+    // M4: resume por checkpoint cuando el frontend entrega un transcript vacío.
+    if msgs.is_empty() {
+        if let Some((_, restored)) = history::latest_checkpoint(&session_id) {
+            println!("[TOKEN_ENGINE] resume por checkpoint: {} mensajes restaurados", restored.len());
+            msgs = restored;
+        }
+    }
+    let mut turn: u32 = 0;
     let mut tools = core_tools();
     {
         let map = registry.tools.lock().unwrap();
@@ -865,6 +891,9 @@ pub async fn run(
         }
         // ADR-014: poda de resultados antiguos de tools (evicción local)
         msgs = evict_tool_results(&msgs);
+        turn += 1;
+        let started = std::time::Instant::now();
+        let local_tokens = counter.count_messages(&full_system, &msgs);
         let outcome = if cfg.kind == "anthropic" {
             gateway::anthropic_turn(app, cfg, &full_system, &msgs, &tools).await?
         } else {
@@ -873,6 +902,23 @@ pub async fn run(
         total.input_tokens += outcome.usage.input_tokens;
         total.output_tokens += outcome.usage.output_tokens;
         total.cached_tokens += outcome.usage.cached_tokens;
+        history::record_request(
+            &session_id,
+            turn,
+            &cfg.kind,
+            &cfg.model,
+            &RequestMeter {
+                input_tokens: outcome.usage.input_tokens,
+                cached_tokens: outcome.usage.cached_tokens,
+                output_tokens: outcome.usage.output_tokens,
+                cost_usd: 0.0,
+                latency_ms: started.elapsed().as_millis() as i64,
+            },
+        );
+        println!(
+            "[TOKEN_ENGINE] turn={turn} local={local_tokens} api_in={} api_cached={} api_out={}",
+            outcome.usage.input_tokens, outcome.usage.cached_tokens, outcome.usage.output_tokens
+        );
 
         if outcome.tool_calls.is_empty() {
             msgs.push(ChatMessage {
@@ -882,6 +928,12 @@ pub async fn run(
                 tool_calls: None,
                 tool_call_id: None,
             });
+            history::create_checkpoint(&session_id, turn, &msgs);
+            history::archive_transcript(&session_id, turn, &msgs);
+            println!(
+                "[TOKEN_ENGINE] sesión terminada: {}",
+                history::requests_summary(&session_id)
+            );
             return Ok(ChatResult {
                 input_tokens: total.input_tokens,
                 output_tokens: total.output_tokens,
@@ -909,6 +961,19 @@ pub async fn run(
                 total.input_tokens += forced.usage.input_tokens;
                 total.output_tokens += forced.usage.output_tokens;
                 total.cached_tokens += forced.usage.cached_tokens;
+                history::record_request(
+                    &session_id,
+                    turn,
+                    &cfg.kind,
+                    &cfg.model,
+                    &RequestMeter {
+                        input_tokens: forced.usage.input_tokens,
+                        cached_tokens: forced.usage.cached_tokens,
+                        output_tokens: forced.usage.output_tokens,
+                        cost_usd: 0.0,
+                        latency_ms: 0,
+                    },
+                );
                 msgs.push(ChatMessage {
                     role: "assistant".into(),
                     content: format!(
@@ -919,6 +984,8 @@ pub async fn run(
                     tool_calls: None,
                     tool_call_id: None,
                 });
+                history::create_checkpoint(&session_id, turn, &msgs);
+                history::archive_transcript(&session_id, turn, &msgs);
                 return Ok(ChatResult {
                     input_tokens: total.input_tokens,
                     output_tokens: total.output_tokens,

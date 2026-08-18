@@ -41,6 +41,23 @@ import type {
   UiMessage,
 } from "../types";
 
+function transcriptToUi(transcript: ChatMessage[]): UiMessage[] {
+  const out: UiMessage[] = [];
+  let id = 0;
+  for (const m of transcript) {
+    if (m.role === "user") {
+      out.push({ id: ++id, role: "user", text: m.content || "(adjuntos)" });
+    } else if (m.role === "assistant") {
+      out.push({
+        id: ++id,
+        role: "assistant",
+        text: m.content || (m.toolCalls?.length ? "(ejecutó herramientas)" : ""),
+      });
+    }
+  }
+  return out;
+}
+
 function thinkingNudge(level: ThinkingLevel): string {
   switch (level) {
     case "none":
@@ -54,6 +71,199 @@ function thinkingNudge(level: ThinkingLevel): string {
     case "high":
       return "Razona a fondo, paso a paso, y justifica tus decisiones.";
   }
+}
+
+function prettyArgs(args: string): string {
+  if (!args) return "";
+  try {
+    const parsed = JSON.parse(args);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return args;
+  }
+}
+
+function ActivityRow({
+  activity,
+  copied,
+  onCopyLog,
+}: {
+  activity: ToolActivity;
+  copied: boolean;
+  onCopyLog: (log: string) => void;
+}) {
+  const [open, setOpen] = useState(activity.ok === null);
+  const [showFullLog, setShowFullLog] = useState(false);
+  const argsPreview = activity.arguments.replace(/\s+/g, " ").slice(0, 90);
+  const formattedArgs = prettyArgs(activity.arguments);
+  const LOG_PREVIEW = 1500;
+  const logTooLong = activity.log.length > LOG_PREVIEW;
+  const visibleLog = showFullLog ? activity.log : activity.log.slice(-LOG_PREVIEW);
+
+  useEffect(() => {
+    if (activity.ok === null) setOpen(true);
+  }, [activity.ok]);
+
+  return (
+    <details
+      className={`activity-item ${activity.ok === null ? "running" : activity.ok ? "success" : "failed"}`}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary className="activity-item-header">
+        <span
+          className={
+            "activity-item-icon " +
+            (activity.ok === null ? "run" : activity.ok ? "ok" : "err")
+          }
+        >
+          {activity.ok === null ? "⚙" : activity.ok ? "✓" : "✗"}
+        </span>
+        <code className="activity-item-name">{activity.name}</code>
+        <span className="activity-item-args font-mono" title={activity.arguments}>
+          {argsPreview}
+        </span>
+        <span
+          className={`activity-state-pill ${activity.ok === null ? "run" : activity.ok ? "ok" : "err"}`}
+        >
+          {activity.ok === null ? "ejecutando" : activity.ok ? "completada" : "fallida"}
+        </span>
+        <ChevronDown size={13} className="activity-item-chevron" />
+      </summary>
+      {activity.arguments && (
+        <div className="tool-args-wrap">
+          <div className="tool-args-bar">
+            <span className="activity-log-label">Argumentos</span>
+          </div>
+          <pre className="tool-args-pre font-mono">{formattedArgs}</pre>
+        </div>
+      )}
+      {activity.log && (
+        <div className="activity-log-wrap">
+          <div className="activity-log-bar">
+            <span className="activity-log-label">
+              Resultado{logTooLong && !showFullLog ? ` (últimos ${LOG_PREVIEW} caracteres)` : ""}
+            </span>
+            <div className="activity-log-actions">
+              {logTooLong && (
+                <button
+                  type="button"
+                  className="activity-log-copy"
+                  onClick={() => setShowFullLog((v) => !v)}
+                >
+                  {showFullLog ? "Ver menos" : "Ver más"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="activity-log-copy"
+                onClick={() => onCopyLog(activity.log)}
+              >
+                {copied ? (
+                  <>
+                    <Check size={10} />
+                    Copiado
+                  </>
+                ) : (
+                  <>
+                    <Copy size={10} />
+                    Copiar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+          <pre className="activity-log">{visibleLog}</pre>
+        </div>
+      )}
+    </details>
+  );
+}
+
+function toolVerb(name: string): string {
+  const base = name.replace(/^mcp__[^_]+__/, "").toLowerCase();
+  if (base.startsWith("read_file") || base.startsWith("list_dir") || base.startsWith("inspect")) return "Inspeccionó";
+  if (base.startsWith("grep") || base.startsWith("glob") || base.startsWith("search")) return "Buscó";
+  if (base.startsWith("write_file") || base.startsWith("create")) return "Escribió";
+  if (base.startsWith("apply_patch") || base.startsWith("edit")) return "Editó";
+  if (base.startsWith("bash") || base.startsWith("run") || base.startsWith("exec") || base.startsWith("term")) return "Ejecutó";
+  if (base.startsWith("delete") || base.startsWith("remove")) return "Eliminó";
+  return "Usó";
+}
+
+function summarizeActivities(activities: ToolActivity[]): string {
+  const counts = new Map<string, number>();
+  for (const a of activities) {
+    const verb = toolVerb(a.name);
+    counts.set(verb, (counts.get(verb) ?? 0) + 1);
+  }
+  const parts = Array.from(counts.entries()).map(([verb, n]) => `${verb} ×${n}`);
+  return parts.join(" · ") || "Sin herramientas";
+}
+
+function ToolActivityCard({
+  activities,
+  running,
+  copiedLogId,
+  onCopyLog,
+  onHoverChange,
+}: {
+  activities: ToolActivity[];
+  running: boolean;
+  copiedLogId: string | null;
+  onCopyLog: (id: string, log: string) => void;
+  onHoverChange?: (hovered: boolean) => void;
+}) {
+  const [open, setOpen] = useState(running);
+  const runningTool = activities.find((a) => a.ok === null);
+  const okCount = activities.filter((a) => a.ok === true).length;
+  const failCount = activities.filter((a) => a.ok === false).length;
+  const summary = runningTool
+    ? `${toolVerb(runningTool.name)} con ${runningTool.name}`
+    : summarizeActivities(activities);
+
+  useEffect(() => {
+    if (running) setOpen(true);
+  }, [running]);
+
+  return (
+    <details
+      className={`tool-card ${running ? "running" : ""}`}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
+    >
+      <summary className="tool-card-header">
+        <span className={`tool-card-dot ${running ? "running" : failCount > 0 ? "failed" : "done"}`} />
+        <span className="tool-card-icon">{runningTool ? "⚙" : failCount > 0 ? "⚠" : "✓"}</span>
+        <span className="tool-card-summary">
+          {runningTool
+            ? `Ejecutando ${runningTool.name}…`
+            : summary}
+        </span>
+        <span className="tool-card-count">
+          {activities.length} herramienta{activities.length === 1 ? "" : "s"}
+          {!running && (okCount !== activities.length || failCount > 0) && (
+            <span className="tool-card-count-detail">
+              {" "}· {okCount} ✓ {failCount > 0 ? `· ${failCount} ✗` : ""}
+            </span>
+          )}
+        </span>
+        <ChevronDown size={13} className={`tool-card-chevron ${open ? "rotated" : ""}`} />
+      </summary>
+      <div className="tool-card-body">
+        {activities.map((a) => (
+          <ActivityRow
+            key={a.id}
+            activity={a}
+            copied={copiedLogId === a.id}
+            onCopyLog={(log) => onCopyLog(a.id, log)}
+          />
+        ))}
+      </div>
+    </details>
+  );
 }
 
 interface ChatProps {
@@ -76,6 +286,8 @@ interface ChatProps {
   onApplyArtifact: (path: string, content: string) => void;
   onStatusChange?: (busy: boolean, runningToolName: string | null) => void;
   onClearSessionTrigger?: () => void;
+  initialTranscript?: ChatMessage[];
+  onTranscriptChange?: (messages: ChatMessage[]) => void;
 }
 
 export default function Chat({
@@ -97,12 +309,17 @@ export default function Chat({
   onUsage,
   onApplyArtifact,
   onStatusChange,
+  onClearSessionTrigger,
+  initialTranscript = [],
+  onTranscriptChange,
 }: ChatProps) {
-  const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [transcript, setTranscript] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<UiMessage[]>(() =>
+    transcriptToUi(initialTranscript),
+  );
+  const [transcript, setTranscript] = useState<ChatMessage[]>(initialTranscript);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [activities, setActivities] = useState<ToolActivity[]>([]);
+  const [turnActivities, setTurnActivities] = useState<Record<number, ToolActivity[]>>({});
   const [thinking, setThinking] = useState<{ id: number; text: string } | null>(null);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -114,6 +331,8 @@ export default function Chat({
   const [mentionIndex, setMentionIndex] = useState(0);
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<number | null>(null);
+  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
+  const [hoveringToolCard, setHoveringToolCard] = useState(false);
   const [projectRules, setProjectRules] = useState<string | null>(null);
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -127,6 +346,13 @@ export default function Chat({
   const lastAttachmentId = useRef<number>(0);
   const currentAssistantId = useRef<number>(0);
   const isAutoScrollEnabled = useRef<boolean>(true);
+  const idCounter = useRef<number>(initialTranscript.length);
+  const didHydrate = useRef<boolean>(false);
+
+  const nextId = () => {
+    idCounter.current += 1;
+    return idCounter.current;
+  };
 
   // Close model menu on outside click
   useEffect(() => {
@@ -145,7 +371,8 @@ export default function Chat({
     m.toLowerCase().includes(modelSearch.toLowerCase())
   );
 
-  const runningTool = activities.find((a) => a.ok === null);
+  const currentTurnActivities = turnActivities[currentAssistantId.current] ?? [];
+  const runningTool = currentTurnActivities.find((a) => a.ok === null);
 
 
   useEffect(() => {
@@ -183,38 +410,72 @@ export default function Chat({
     if (isAutoScrollEnabled.current) {
       scrollToBottom(false);
     }
-  }, [messages, activities, thinking]);
+  }, [messages, turnActivities, thinking]);
 
   useEffect(() => {
+    if (hoveringToolCard) {
+      isAutoScrollEnabled.current = false;
+    }
+  }, [hoveringToolCard]);
+
+  // Persist transcript changes upward once hydration has settled.
+  useEffect(() => {
+    if (!didHydrate.current) {
+      didHydrate.current = true;
+      return;
+    }
+    onTranscriptChange?.(transcript);
+  }, [transcript, onTranscriptChange]);
+
+  useEffect(() => {
+    let disposed = false;
     const fns: Array<() => void> = [];
-    listen<ToolStart>("tool-start", (e) => {
-      const t = e.payload;
-      setActivities((a) => [
-        ...a,
-        { id: t.id, name: t.name, arguments: t.arguments, log: "", ok: null },
-      ]);
-    }).then((f) => fns.push(f));
-    listen<ToolOutputEvent>("tool-output", (e) => {
-      const t = e.payload;
-      setActivities((a) =>
-        a.map((x) => (x.id === t.id ? { ...x, log: x.log + t.data } : x)),
-      );
-    }).then((f) => fns.push(f));
-    listen<ToolEnd>("tool-end", (e) => {
-      const t = e.payload;
-      setActivities((a) =>
-        a.map((x) =>
+    const addListener = <T,>(event: string, handler: (payload: T) => void) => {
+      listen<T>(event, (e) => {
+        if (!disposed) handler(e.payload);
+      }).then((unlisten) => {
+        if (disposed) unlisten();
+        else fns.push(unlisten);
+      });
+    };
+    addListener<ToolStart>("tool-start", (t) => {
+      const targetId = currentAssistantId.current;
+      setTurnActivities((map) => ({
+        ...map,
+        [targetId]: [
+          ...(map[targetId] ?? []),
+          { id: t.id, name: t.name, arguments: t.arguments, log: "", ok: null },
+        ],
+      }));
+    });
+    addListener<ToolOutputEvent>("tool-output", (t) => {
+      const targetId = currentAssistantId.current;
+      setTurnActivities((map) => ({
+        ...map,
+        [targetId]: (map[targetId] ?? []).map((x) =>
+          x.id === t.id ? { ...x, log: x.log + t.data } : x,
+        ),
+      }));
+    });
+    addListener<ToolEnd>("tool-end", (t) => {
+      const targetId = currentAssistantId.current;
+      setTurnActivities((map) => ({
+        ...map,
+        [targetId]: (map[targetId] ?? []).map((x) =>
           x.id === t.id ? { ...x, ok: t.ok, log: x.log || t.summary } : x,
         ),
-      );
-    }).then((f) => fns.push(f));
-    listen<{ text: string }>("thinking-delta", (e) => {
+      }));
+    });
+    addListener<{ text: string }>("thinking-delta", (d) => {
       setThinking((t) => ({
         id: t?.id ?? currentAssistantId.current,
-        text: (t?.text ?? "") + e.payload.text,
+        text: (t?.text ?? "") + d.text,
       }));
-    }).then((f) => fns.push(f));
-    return () => fns.forEach((f) => f());
+    });
+    return () => {
+      disposed = true;
+      fns.forEach((f) => f());
+    };
   }, []);
 
   const buildSystem = async (): Promise<string> => {
@@ -360,9 +621,13 @@ export default function Chat({
 
   const clearChat = () => {
     if (busy) return;
+    if (onClearSessionTrigger) {
+      onClearSessionTrigger();
+      return;
+    }
     setMessages([]);
     setTranscript([]);
-    setActivities([]);
+    setTurnActivities({});
     setThinking(null);
     setAttachments([]);
   };
@@ -444,7 +709,6 @@ export default function Chat({
     }
 
     setBusy(true);
-    setActivities([]);
     setThinking(null);
     isAutoScrollEnabled.current = true;
 
@@ -452,8 +716,8 @@ export default function Chat({
     const newTranscript = [...transcript, userMsg];
     setTranscript(newTranscript);
 
-    const userDisplayId = Date.now();
-    const assistantId = userDisplayId + 1;
+    const userDisplayId = nextId();
+    const assistantId = nextId();
     currentAssistantId.current = assistantId;
     setMessages((m) => [
       ...m,
@@ -486,12 +750,10 @@ export default function Chat({
       );
     } catch (err) {
       const errText = `Error: ${err}`;
+      const finalErr = acc ? `${acc}\n\n⚠️ ${errText}` : errText;
+      setTranscript((t) => [...t, { role: "assistant", content: finalErr }]);
       setMessages((m) =>
-        m.map((x) =>
-          x.id === assistantId
-            ? { ...x, text: acc ? `${acc}\n\n⚠️ ${errText}` : errText }
-            : x,
-        ),
+        m.map((x) => (x.id === assistantId ? { ...x, text: finalErr } : x)),
       );
     } finally {
       unlistenDelta();
@@ -657,6 +919,8 @@ export default function Chat({
           const isCurrentAssistant = m.role === "assistant" && m.id === currentAssistantId.current;
           const isBusyCurrent = isCurrentAssistant && busy;
           const hasThinking = thinking && thinking.id === m.id && thinking.text.trim().length > 0;
+          const msgActivities = m.role === "assistant" ? turnActivities[m.id] ?? [] : [];
+          const msgRunning = msgActivities.some((a) => a.ok === null);
 
           return (
             <div key={m.id} className={"msg msg-" + m.role}>
@@ -733,7 +997,7 @@ export default function Chat({
                         <span className="ai-working-detail font-mono">
                           {runningTool
                             ? runningTool.arguments.slice(0, 75)
-                            : `${activities.length} operaciones realizadas`}
+                            : `${currentTurnActivities.length} operaciones realizadas`}
                         </span>
                       </div>
                     </div>
@@ -747,74 +1011,25 @@ export default function Chat({
               ) : (
                 <div className="msg-text">{m.text}</div>
               )}
+
+              {/* Tool Activity Card: colapsable, asociada a este turno del agente */}
+              {msgActivities.length > 0 && (
+                <ToolActivityCard
+                  activities={msgActivities}
+                  running={msgRunning}
+                  copiedLogId={copiedLogId}
+                  onCopyLog={(id, log) => {
+                    navigator.clipboard.writeText(log).then(() => {
+                      setCopiedLogId(id);
+                      setTimeout(() => setCopiedLogId(null), 1400);
+                    });
+                  }}
+                  onHoverChange={setHoveringToolCard}
+                />
+              )}
             </div>
           );
         })}
-        {activities.length > 0 && (
-          <details
-            className="agent-activity"
-            open={busy && runningTool !== undefined}
-            onMouseEnter={() => {
-              isAutoScrollEnabled.current = false;
-            }}
-            onMouseLeave={() => {
-              isAutoScrollEnabled.current = true;
-            }}
-          >
-            <summary className="activity-summary">
-              <div className="activity-summary-left">
-                <span className={`activity-status-dot ${runningTool ? "running" : "done"}`} />
-                <span className="activity-icon-wrap">{runningTool ? "⚙" : "✓"}</span>
-                <span className="activity-title">
-                  {runningTool
-                    ? `Ejecutando herramienta: ${runningTool.name}`
-                    : `${activities.length} operaciones ejecutadas`}
-                </span>
-              </div>
-              <div className="activity-summary-right">
-                {runningTool ? (
-                  <span className="activity-args font-mono">
-                    {runningTool.arguments.slice(0, 65)}
-                  </span>
-                ) : (
-                  <span className="activity-counter-pill">
-                    {activities.filter((a) => a.ok === true).length} exitosas
-                    {activities.some((a) => a.ok === false) &&
-                      ` · ${activities.filter((a) => a.ok === false).length} fallidas`}
-                  </span>
-                )}
-              </div>
-            </summary>
-            <div className="activity-list">
-              {activities.map((a) => (
-                <div
-                  key={a.id}
-                  className={`activity-item ${a.ok === null ? "running" : a.ok ? "success" : "failed"}`}
-                >
-                  <div className="activity-item-header">
-                    <span
-                      className={
-                        "activity-item-icon " +
-                        (a.ok === null ? "run" : a.ok ? "ok" : "err")
-                      }
-                    >
-                      {a.ok === null ? "⚙" : a.ok ? "✓" : "✗"}
-                    </span>
-                    <code className="activity-item-name">{a.name}</code>
-                    <span className="activity-item-args font-mono" title={a.arguments}>
-                      {a.arguments.slice(0, 80)}
-                    </span>
-                  </div>
-                  {a.log && (
-                    <div className="activity-log-wrap">
-                      <pre className="activity-log">{a.log.slice(-3000)}</pre>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </details>
-        )}
       </div>
 
 
@@ -1001,13 +1216,9 @@ export default function Chat({
               <button
                 type="button"
                 className="icon-btn-micro"
-                onClick={() => {
-                  setMessages([]);
-                  setTranscript([]);
-                  setActivities([]);
-                  setThinking(null);
-                }}
-                title="Limpiar conversación actual"
+                onClick={clearChat}
+                disabled={busy}
+                title="Vaciar chat y comenzar una nueva conversación"
               >
                 <Trash2 size={11} />
               </button>
