@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { THEME_LIST } from "../themes";
+import { useI18n, LANGUAGE_LIST } from "../i18n";
 import {
   FolderPlus,
   Trash2,
@@ -11,6 +12,7 @@ import {
   History,
   ChevronDown,
   Check,
+  Globe,
 } from "lucide-react";
 import type { ThemeId } from "../types";
 
@@ -47,22 +49,29 @@ export default function Header({
   currentTheme,
   onSelectTheme,
 }: HeaderProps) {
+  const { language, setLanguage, t } = useI18n();
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
+  const [langDropdownOpen, setLangDropdownOpen] = useState(false);
   const themeRef = useRef<HTMLDivElement>(null);
+  const langRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (themeRef.current && !themeRef.current.contains(e.target as Node)) {
         setThemeDropdownOpen(false);
       }
+      if (langRef.current && !langRef.current.contains(e.target as Node)) {
+        setLangDropdownOpen(false);
+      }
     }
-    if (themeDropdownOpen) {
+    if (themeDropdownOpen || langDropdownOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [themeDropdownOpen]);
+  }, [themeDropdownOpen, langDropdownOpen]);
 
   const activeThemeObj = THEME_LIST.find((t) => t.id === currentTheme);
+  const activeLangObj = LANGUAGE_LIST.find((l) => l.id === language);
 
   return (
     <header className="header">
@@ -72,7 +81,7 @@ export default function Header({
           <button
             className={`icon-btn toggle-sidebar-btn ${explorerOpen ? "active" : ""}`}
             onClick={onToggleExplorer}
-            title={`${explorerOpen ? "Ocultar" : "Mostrar"} Explorador de Archivos (Ctrl+B)`}
+            title={t.header.toggleExplorer}
           >
             <PanelLeft size={14} />
           </button>
@@ -92,19 +101,19 @@ export default function Header({
         <button
           className="header-search-btn"
           onClick={onOpenPalette}
-          title="Buscar archivos y comandos (Ctrl+P / Ctrl+K)"
+          title={`${t.header.searchPlaceholder} (${t.header.searchKbd})`}
         >
           <Search size={13} className="search-icon" />
           <span className="search-placeholder">
-            Buscar archivo o comando...
+            {t.header.searchPlaceholder}
           </span>
-          <kbd className="search-kbd">Ctrl+P</kbd>
+          <kbd className="search-kbd">{t.header.searchKbd}</kbd>
         </button>
       </div>
 
       {/* Right Actions & Workspace Controls */}
       <div className="header-right">
-        <div className="ws-input-wrap" title="Nombre del workspace">
+        <div className="ws-input-wrap" title="Workspace">
           <input
             className="ws-name"
             value={workspaceName}
@@ -112,27 +121,63 @@ export default function Header({
             placeholder="Workspace"
           />
           <span className="folder-count-badge">
-            {folderCount} {folderCount === 1 ? "dir" : "dirs"}
+            {folderCount} {t.header.workspaceDirs}
           </span>
         </div>
 
         <button
           className="btn btn-subtle"
           onClick={onAddFolder}
-          title="Añadir carpeta de proyecto al workspace"
+          title={t.header.addFolder}
         >
           <FolderPlus size={13} />
-          <span>Añadir Carpeta</span>
+          <span>{t.header.addFolder}</span>
         </button>
 
         <button
           className="btn btn-subtle"
           onClick={onNewWorkspace}
-          title="Reiniciar espacio de trabajo"
+          title={t.header.cleanWorkspace}
         >
           <Trash2 size={13} />
-          <span>Limpiar</span>
+          <span>{t.header.cleanWorkspace}</span>
         </button>
+
+        {/* Custom Language Dropdown */}
+        <div className="theme-picker-wrap" ref={langRef}>
+          <button
+            type="button"
+            className={`theme-picker-trigger ${langDropdownOpen ? "active" : ""}`}
+            onClick={() => setLangDropdownOpen((o) => !o)}
+            title={t.header.selectLanguage}
+          >
+            <Globe size={13} className="theme-icon-indicator" />
+            <span className="theme-current-name">{activeLangObj?.flag} {activeLangObj?.nativeName}</span>
+            <ChevronDown size={11} className={`theme-chevron ${langDropdownOpen ? "open" : ""}`} />
+          </button>
+          {langDropdownOpen && (
+            <div className="theme-dropdown-menu lang-dropdown-menu">
+              <div className="theme-dropdown-header">{t.header.selectLanguage}</div>
+              {LANGUAGE_LIST.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  className={`theme-dropdown-item ${l.id === language ? "selected" : ""}`}
+                  onClick={() => {
+                    setLanguage(l.id);
+                    setLangDropdownOpen(false);
+                  }}
+                >
+                  <div className="theme-item-text">
+                    <span className="theme-item-name">{l.flag} {l.nativeName}</span>
+                    <span className="theme-item-desc">{l.name}</span>
+                  </div>
+                  {l.id === language && <Check size={12} className="text-cyan" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Custom Theme Dropdown */}
         <div className="theme-picker-wrap" ref={themeRef}>
@@ -140,7 +185,7 @@ export default function Header({
             type="button"
             className={`theme-picker-trigger ${themeDropdownOpen ? "active" : ""}`}
             onClick={() => setThemeDropdownOpen((o) => !o)}
-            title="Seleccionar tema visual ergonómico"
+            title={t.header.selectTheme}
           >
             <Palette size={13} className="theme-icon-indicator" />
             <span className="theme-current-name">{activeThemeObj?.name || "Tema"}</span>
@@ -148,22 +193,22 @@ export default function Header({
           </button>
           {themeDropdownOpen && (
             <div className="theme-dropdown-menu">
-              <div className="theme-dropdown-header">Temas Visuales Ergonómicos</div>
-              {THEME_LIST.map((t) => (
+              <div className="theme-dropdown-header">{t.header.selectTheme}</div>
+              {THEME_LIST.map((th) => (
                 <button
-                  key={t.id}
+                  key={th.id}
                   type="button"
-                  className={`theme-dropdown-item ${t.id === currentTheme ? "selected" : ""}`}
+                  className={`theme-dropdown-item ${th.id === currentTheme ? "selected" : ""}`}
                   onClick={() => {
-                    onSelectTheme(t.id);
+                    onSelectTheme(th.id);
                     setThemeDropdownOpen(false);
                   }}
                 >
                   <div className="theme-item-text">
-                    <span className="theme-item-name">{t.name}</span>
-                    <span className="theme-item-desc">{t.description}</span>
+                    <span className="theme-item-name">{th.name}</span>
+                    <span className="theme-item-desc">{th.description}</span>
                   </div>
-                  {t.id === currentTheme && <Check size={12} className="text-cyan" />}
+                  {th.id === currentTheme && <Check size={12} className="text-cyan" />}
                 </button>
               ))}
             </div>
@@ -174,7 +219,7 @@ export default function Header({
           <button
             className={`icon-btn toggle-panel-btn ${panelOpen ? "active" : ""}`}
             onClick={onTogglePanel}
-            title={`${panelOpen ? "Ocultar" : "Mostrar"} Panel de Parámetros y Consumo`}
+            title={t.header.togglePanel}
           >
             <PanelRight size={14} />
           </button>
@@ -182,7 +227,7 @@ export default function Header({
 
         <button
           className="icon-btn"
-          title="Historial de Chats (Ctrl+H)"
+          title={t.header.chatHistory}
           onClick={onOpenHistory}
         >
           <History size={14} />
@@ -190,7 +235,7 @@ export default function Header({
 
         <button
           className="icon-btn"
-          title="Configuración de Modelos, Tokens, Skills y MCPs (Ctrl+,)"
+          title={t.header.settings}
           onClick={onOpenSettings}
         >
           <Settings size={14} />
@@ -199,3 +244,4 @@ export default function Header({
     </header>
   );
 }
+

@@ -18,6 +18,7 @@ import {
   Plus,
 } from "lucide-react";
 import type { DiffInfo, OpenFile } from "../types";
+import { useI18n } from "../i18n";
 
 interface UnifiedWorkspaceProps {
   openFiles: OpenFile[];
@@ -93,6 +94,7 @@ export default function UnifiedWorkspace({
   chatElement,
   onNewChat,
 }: UnifiedWorkspaceProps) {
+  const { t } = useI18n();
   const isChatTabActive = activePath === null;
 
   // Determine active file for editor (fallback to last open file if in split mode with chat selected)
@@ -106,7 +108,7 @@ export default function UnifiedWorkspace({
     if (!targetFile) {
       return (
         <div className="editor-empty muted">
-          <p>Selecciona un archivo del explorador o presiona <kbd className="hint-kbd">Ctrl+P</kbd></p>
+          <p>{t.workspace.emptyEditorHint}</p>
         </div>
       );
     }
@@ -170,7 +172,7 @@ export default function UnifiedWorkspace({
                   onActivateFile(null);
                   onNewChat();
                 }}
-                title="Nueva conversación limpia (Ctrl+L)"
+                title={t.workspace.newChatTooltip}
               >
                 <Plus size={13} />
               </button>
@@ -178,13 +180,13 @@ export default function UnifiedWorkspace({
             <div
               className={`master-chat-tab ${isChatTabActive ? "active" : ""}`}
               onClick={() => onActivateFile(null)}
-              title="Abrir Chat del Agente Makora"
+              title={t.workspace.masterChat}
             >
               <Sparkles size={12} className="master-tab-icon" />
-              <span className="master-tab-title">MAKORA CHAT</span>
+              <span className="master-tab-title">{t.workspace.masterChat}</span>
               <span
                 className={`master-status-dot ${agentBusy ? "pulse-dot" : "idle-dot"}`}
-                title={agentBusy ? (runningToolName ? `Ejecutando ${runningToolName}` : "Razonando...") : "Listo"}
+                title={agentBusy ? (runningToolName ? `${t.chat.toolsRunning} (${runningToolName})` : t.chat.thinking) : "Ready"}
               />
             </div>
           </div>
@@ -203,14 +205,14 @@ export default function UnifiedWorkspace({
               >
                 <span className="tab-file-icon">{getFileIcon(name)}</span>
                 <span className="tab-title">{name}</span>
-                {file.isDirty && <span className="tab-dirty-dot" title="Cambios no guardados">●</span>}
+                {file.isDirty && <span className="tab-dirty-dot" title={t.workspace.unsavedChanges}>●</span>}
                 <button
                   className="tab-close-btn"
                   onClick={(e) => {
                     e.stopPropagation();
                     onCloseFile(file.path);
                   }}
-                  title="Cerrar pestaña (Ctrl+W)"
+                  title={t.workspace.closeTab}
                 >
                   <X size={11} />
                 </button>
@@ -224,19 +226,19 @@ export default function UnifiedWorkspace({
           <button
             className={`tab-control-btn ${isSplit ? "active" : ""}`}
             onClick={onToggleSplit}
-            title={isSplit ? "Desactivar vista dividida" : "Dividir vista: Chat y Editor lado a lado"}
+            title={t.workspace.splitView}
           >
             <Columns2 size={12} />
-            <span>Split</span>
+            <span>{t.workspace.splitView}</span>
           </button>
 
           <button
             className={`tab-control-btn ${zenMode ? "active" : ""}`}
             onClick={onToggleZenMode}
-            title={zenMode ? "Salir de Modo Zen" : "Modo Zen: Enfoque total"}
+            title={t.workspace.zenMode}
           >
             {zenMode ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-            <span>{zenMode ? "Salir Zen" : "Zen"}</span>
+            <span>{t.workspace.zenMode}</span>
           </button>
         </div>
       </div>

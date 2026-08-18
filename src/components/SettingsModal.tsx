@@ -3,6 +3,7 @@ import { THINKING_LEVELS } from "../defaults";
 import { THEME_LIST } from "../themes";
 import { PROVIDERS, presetById } from "../providers";
 import { detectOllama, keyringGet, keyringSet } from "../api";
+import { useI18n, LANGUAGE_LIST } from "../i18n";
 import {
   Key,
   Cpu,
@@ -68,6 +69,7 @@ export default function SettingsModal({
   onSelectTheme,
   onClose,
 }: Props) {
+  const { language, setLanguage } = useI18n();
   const [tab, setTab] = useState<Tab>("providers");
   const [showApiKey, setShowApiKey] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
@@ -719,9 +721,29 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* TAB 6: APPEARANCE & THEMES */}
+          {/* TAB 6: APPEARANCE & LANGUAGE */}
           {tab === "appearance" && (
             <div className="cfg-section">
+              <h4 className="section-title">Idioma del Entorno / Interface Language</h4>
+              <div className="theme-grid mb-20">
+                {LANGUAGE_LIST.map((l) => {
+                  const isActive = l.id === language;
+                  return (
+                    <div
+                      key={l.id}
+                      className={`theme-option-card ${isActive ? "active" : ""}`}
+                      onClick={() => setLanguage(l.id)}
+                    >
+                      <div className="theme-card-head">
+                        <strong>{l.flag} {l.nativeName}</strong>
+                        {isActive && <Check size={13} className="text-cyan" />}
+                      </div>
+                      <p className="muted micro" style={{ margin: "4px 0 0" }}>{l.name}</p>
+                    </div>
+                  );
+                })}
+              </div>
+
               <h4 className="section-title">Paleta de Color & Contraste (WCAG 2.2 AAA)</h4>
               <div className="theme-grid">
                 {THEME_LIST.map((th) => {
@@ -753,3 +775,4 @@ export default function SettingsModal({
     </div>
   );
 }
+

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { searchPaths } from "../api";
 import { THEME_LIST } from "../themes";
+import { useI18n } from "../i18n";
 import type { CommandItem, ThemeId } from "../types";
 
 interface CommandPaletteProps {
@@ -42,6 +43,7 @@ export default function CommandPalette({
   onClearChat,
   onOpenHistory,
 }: CommandPaletteProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [fileResults, setFileResults] = useState<string[]>([]);
@@ -295,16 +297,16 @@ export default function CommandPalette({
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
-            placeholder="Buscar archivos por nombre o acciones (Ctrl+P / Ctrl+K)..."
+            placeholder={t.palette.searchPlaceholder}
           />
           {searching && <span className="palette-spinner">⟳</span>}
-          <span className="palette-hint">ESC para cerrar</span>
+          <span className="palette-hint">ESC ({t.common.close})</span>
         </div>
 
         <div className="palette-list">
           {combinedItems.length === 0 ? (
             <div className="palette-empty muted small">
-              No se encontraron coincidencias para "{query}"
+              {t.palette.noResults} "{query}"
             </div>
           ) : (
             combinedItems.map((item, index) => {
@@ -322,10 +324,10 @@ export default function CommandPalette({
                       <span className="palette-item-title">{item.title}</span>
                       <span className={`palette-badge badge-${item.category}`}>
                         {item.category === "file"
-                          ? "ARCHIVO"
+                          ? t.palette.fileCategory
                           : item.category === "theme"
-                            ? "TEMA"
-                            : "ACCIÓN"}
+                            ? t.palette.themeCategory
+                            : t.palette.actionCategory}
                       </span>
                     </div>
                     {item.subtitle && (

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../i18n";
 import {
   Coins,
   Cpu,
@@ -36,6 +37,7 @@ export default function AnalyticsModal({
   onRefreshBalance,
   onClose,
 }: Props) {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<"overview" | "breakdown" | "limits">("overview");
 
   const totalTokens = usage.inputTokens + usage.outputTokens;
@@ -83,7 +85,7 @@ export default function AnalyticsModal({
           <div className="analytics-header-left">
             <Coins size={16} className="text-gold" />
             <div>
-              <h3>Telemetría de Tokens & Crédito Universal</h3>
+              <h3>{t.analytics.title}</h3>
               <span className="analytics-sub">Métricas de consumo, eficiencia de caché y presupuesto</span>
             </div>
           </div>
@@ -92,7 +94,7 @@ export default function AnalyticsModal({
               <Download size={12} />
               <span>Exportar JSON</span>
             </button>
-            <button className="icon-btn" onClick={onClose} title="Cerrar (Esc)">
+            <button className="icon-btn" onClick={onClose} title={`${t.common.close} (Esc)`}>
               <X size={13} />
             </button>
           </div>

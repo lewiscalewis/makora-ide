@@ -19,6 +19,7 @@ import {
   gitFetch,
   gitInit,
 } from "../api";
+import { useI18n } from "../i18n";
 import {
   GitBranch,
   GitCommit,
@@ -49,6 +50,7 @@ interface Props {
 }
 
 export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props) {
+  const { t } = useI18n();
   const [status, setStatus] = useState<GitStatusInfo | null>(null);
   const [files, setFiles] = useState<GitFileItem[]>([]);
   const [commits, setCommits] = useState<GitCommitInfo[]>([]);
@@ -115,9 +117,9 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
     setSelectedFile(file);
     try {
       const diff = await gitDiff(folder, file.path, file.isStaged);
-      setDiffText(diff || "(Sin cambios detectados en el diff)");
+      setDiffText(diff || "(Diff empty)");
     } catch (e) {
-      setDiffText(`Error obteniendo diff: ${e}`);
+      setDiffText(`Error: ${e}`);
     }
   };
 
@@ -149,10 +151,10 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handleDiscard = async (path: string) => {
-    if (!confirm(`¿Descartar los cambios no guardados en '${path}'? Esta acción no se puede deshacer.`)) return;
+    if (!confirm(t.git.discardConfirm)) return;
     try {
       await gitDiscard(folder, path);
-      setMessage(`Cambios descartados en ${path}`);
+      setMessage(`Discarded: ${path}`);
       await refreshGit();
       onRefreshWorkspace?.();
     } catch (e) {
@@ -165,7 +167,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
     try {
       setLoading(true);
       const out = await gitCommit(folder, commitMsg.trim());
-      setMessage(`Commit realizado con éxito:\n${out}`);
+      setMessage(`Commit OK:\n${out}`);
       setCommitMsg("");
       await refreshGit();
       onRefreshWorkspace?.();
@@ -181,7 +183,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
       setPushing(true);
       setError(null);
       const out = await gitPush(folder);
-      setMessage(`Push completado con éxito:\n${out}`);
+      setMessage(`Push OK:\n${out}`);
       await refreshGit();
     } catch (e) {
       setError(String(e));
@@ -195,7 +197,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
       setPulling(true);
       setError(null);
       const out = await gitPull(folder);
-      setMessage(`Pull completado:\n${out}`);
+      setMessage(`Pull OK:\n${out}`);
       await refreshGit();
       onRefreshWorkspace?.();
     } catch (e) {
@@ -210,7 +212,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
       setFetching(true);
       setError(null);
       const out = await gitFetch(folder);
-      setMessage(`Fetch completado:\n${out || "Referencias actualizadas"}`);
+      setMessage(`Fetch OK:\n${out || "Updated references"}`);
       await refreshGit();
     } catch (e) {
       setError(String(e));
@@ -224,7 +226,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
       setLoading(true);
       const cleanBranch = branchName.replace(/^remotes\/[^/]+\//, "");
       const out = await gitCheckout(folder, cleanBranch);
-      setMessage(`Cambiado a rama '${cleanBranch}':\n${out}`);
+      setMessage(`Branch: '${cleanBranch}':\n${out}`);
       setBranchDropdownOpen(false);
       await refreshGit();
       onRefreshWorkspace?.();
@@ -240,7 +242,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
     try {
       setLoading(true);
       const out = await gitBranchCreate(folder, newBranchName.trim());
-      setMessage(`Nueva rama creada y activada '${newBranchName.trim()}':\n${out}`);
+      setMessage(`Created: '${newBranchName.trim()}':\n${out}`);
       setNewBranchName("");
       setShowNewBranch(false);
       await refreshGit();
@@ -270,7 +272,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
     try {
       setLoading(true);
       const out = await gitInit(folder);
-      setMessage(`Repositorio inicializado:\n${out}`);
+      setMessage(`Git init OK:\n${out}`);
       await refreshGit();
       onRefreshWorkspace?.();
     } catch (e) {
@@ -291,14 +293,14 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
           <div className="git-header-left">
             <GitBranch size={16} className="text-cyan" />
             <div className="git-header-title">
-              <h3>Control de Versiones Git</h3>
+              <h3>{t.git.title}</h3>
               {status && (
                 <div className="git-branch-selector-wrap">
                   <button
                     type="button"
                     className="git-branch-badge-btn"
                     onClick={() => setBranchDropdownOpen((o) => !o)}
-                    title="Seleccionar o cambiar rama"
+                    title={t.git.branch}
                   >
                     <span>{status.branch || "HEAD"}</span>
                     <ChevronDown size={11} />
@@ -306,7 +308,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                   {branchDropdownOpen && (
                     <div className="git-branch-dropdown">
                       <div className="git-branch-dropdown-header">
-                        <span>Ramas Locales & Remotas</span>
+                        <span>{t.git.branch}</span>
                         <button
                           type="button"
                           className="git-text-btn"
@@ -315,7 +317,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                             setShowNewBranch(true);
                           }}
                         >
-                          + Nueva
+                          {t.git.newBranch}
                         </button>
                       </div>
                       <div className="git-branch-list">
@@ -343,33 +345,33 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
               className="btn btn-subtle"
               onClick={handleFetch}
               disabled={fetching || isNotGitRepo}
-              title="Descargar referencias remotas (git fetch --all)"
+              title="git fetch --all"
             >
               <DownloadCloud size={12} className={fetching ? "animate-spin" : ""} />
-              <span>{fetching ? "Fetching..." : "Fetch"}</span>
+              <span>{fetching ? "..." : t.git.fetch}</span>
             </button>
             <button
               className="btn btn-subtle"
               onClick={handlePull}
               disabled={pulling || isNotGitRepo}
-              title="Descargar cambios remotos (git pull)"
+              title="git pull"
             >
               <ArrowDown size={12} className={pulling ? "animate-bounce" : ""} />
-              <span>{pulling ? "Descargando..." : "Pull"}</span>
+              <span>{pulling ? "..." : t.git.pull}</span>
             </button>
             <button
               className="btn btn-subtle btn-primary"
               onClick={handlePush}
               disabled={pushing || isNotGitRepo}
-              title="Publicar cambios locales en remoto (git push)"
+              title="git push"
             >
               <ArrowUp size={12} className={pushing ? "animate-bounce" : ""} />
-              <span>{pushing ? "Subiendo..." : "Push"}</span>
+              <span>{pushing ? "..." : t.git.push}</span>
             </button>
-            <button className="icon-btn" onClick={refreshGit} title="Refrescar estado Git">
+            <button className="icon-btn" onClick={refreshGit} title={t.common.refresh}>
               <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
             </button>
-            <button className="icon-btn" onClick={onClose} title="Cerrar (Esc)">
+            <button className="icon-btn" onClick={onClose} title={`${t.common.close} (Esc)`}>
               <X size={13} />
             </button>
           </div>
@@ -382,21 +384,21 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
             onClick={() => setActiveTab("changes")}
           >
             <FileDiff size={13} />
-            <span>Cambios ({files.length})</span>
+            <span>{t.git.changes} ({files.length})</span>
           </button>
           <button
             className={`tab ${activeTab === "history" ? "active" : ""}`}
             onClick={() => setActiveTab("history")}
           >
             <Clock size={13} />
-            <span>Historial ({commits.length})</span>
+            <span>{t.git.history} ({commits.length})</span>
           </button>
           <button
             className={`tab ${activeTab === "remotes" ? "active" : ""}`}
             onClick={() => setActiveTab("remotes")}
           >
             <Globe size={13} />
-            <span>Remotos & Conexión ({remotes.length})</span>
+            <span>{t.git.remotes} ({remotes.length})</span>
           </button>
         </div>
 
@@ -404,7 +406,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
         <div className="modal-body git-modal-body">
           {error && (
             <div className="git-alert git-alert-error">
-              <strong>Error Git:</strong> {error}
+              <strong>{t.common.error}:</strong> {error}
             </div>
           )}
           {message && (
@@ -416,13 +418,11 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
           {isNotGitRepo ? (
             <div className="git-uninit-card">
               <FolderGit2 size={36} className="text-cyan" />
-              <h4>Este directorio no es un repositorio Git</h4>
-              <p className="muted small">
-                Inicializa un repositorio Git local para realizar control de versiones, crear ramas y conectar con GitHub o GitLab.
-              </p>
+              <h4>{t.git.initTitle}</h4>
+              <p className="muted small">{t.git.initDesc}</p>
               <button className="btn btn-primary" onClick={handleInitRepo} disabled={loading}>
                 <Plus size={13} />
-                <span>Inicializar Repositorio Git (git init)</span>
+                <span>{t.git.initBtn}</span>
               </button>
             </div>
           ) : activeTab === "changes" ? (
@@ -431,19 +431,19 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
               <div className="git-files-pane">
                 {/* Staged Section */}
                 <div className="git-section-header">
-                  <span>Preparados para Commit ({stagedFiles.length})</span>
+                  <span>{t.git.stagedFiles} ({stagedFiles.length})</span>
                   {stagedFiles.length > 0 && (
                     <button
                       className="git-text-btn"
                       onClick={() => stagedFiles.forEach((f) => handleUnstage(f.path))}
                     >
-                      Quitar todos
+                      {t.git.unstageAll}
                     </button>
                   )}
                 </div>
                 <div className="git-file-list">
                   {stagedFiles.length === 0 ? (
-                    <div className="git-empty-msg muted small">No hay archivos preparados.</div>
+                    <div className="git-empty-msg muted small">{t.git.noStaged}</div>
                   ) : (
                     stagedFiles.map((f) => (
                       <div
@@ -459,7 +459,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                             e.stopPropagation();
                             handleUnstage(f.path);
                           }}
-                          title="Despreparar (Unstage)"
+                          title="Unstage"
                         >
                           <Minus size={10} />
                         </button>
@@ -470,16 +470,16 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
 
                 {/* Unstaged Section */}
                 <div className="git-section-header">
-                  <span>Cambios en el Área de Trabajo ({unstagedFiles.length})</span>
+                  <span>{t.git.unstagedFiles} ({unstagedFiles.length})</span>
                   {unstagedFiles.length > 0 && (
                     <button className="git-text-btn" onClick={handleStageAll}>
-                      Preparar todos (+)
+                      {t.git.stageAll}
                     </button>
                   )}
                 </div>
                 <div className="git-file-list">
                   {unstagedFiles.length === 0 ? (
-                    <div className="git-empty-msg muted small">Árbol de trabajo limpio.</div>
+                    <div className="git-empty-msg muted small">{t.git.cleanTree}</div>
                   ) : (
                     unstagedFiles.map((f) => (
                       <div
@@ -496,7 +496,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                               e.stopPropagation();
                               handleDiscard(f.path);
                             }}
-                            title="Descartar cambios en este archivo"
+                            title={t.git.discardFile}
                           >
                             <Trash2 size={10} className="text-red" />
                           </button>
@@ -506,7 +506,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                               e.stopPropagation();
                               handleStage(f.path);
                             }}
-                            title="Preparar para commit (Stage)"
+                            title="Stage"
                           >
                             <Plus size={10} />
                           </button>
@@ -521,7 +521,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                   <textarea
                     className="git-commit-input"
                     rows={3}
-                    placeholder="Mensaje del commit... (ej. feat: add universal telemetry viewer)"
+                    placeholder={t.git.commitPlaceholder}
                     value={commitMsg}
                     onChange={(e) => setCommitMsg(e.target.value)}
                     onKeyDown={(e) => {
@@ -531,14 +531,14 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                     }}
                   />
                   <div className="git-commit-action-row">
-                    <span className="muted micro">Ctrl+Enter para commit</span>
+                    <span className="muted micro">Ctrl+Enter</span>
                     <button
                       className="btn btn-primary git-commit-btn"
                       disabled={stagedFiles.length === 0 || !commitMsg.trim() || loading}
                       onClick={handleCommit}
                     >
                       <CheckCheck size={12} />
-                      <span>Commit ({stagedFiles.length})</span>
+                      <span>{t.git.commitBtn} ({stagedFiles.length})</span>
                     </button>
                   </div>
                 </div>
@@ -548,7 +548,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
               <div className="git-diff-pane">
                 <div className="git-diff-header">
                   <span className="git-diff-filename">
-                    {selectedFile ? `${selectedFile.path} (${selectedFile.isStaged ? "Preparado" : "Sin preparar"})` : "Selecciona un archivo para ver el diff"}
+                    {selectedFile ? `${selectedFile.path} (${selectedFile.isStaged ? "Staged" : "Unstaged"})` : "Select a file to inspect diff"}
                   </span>
                 </div>
                 <div className="git-diff-content">
@@ -600,11 +600,11 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
             <div className="git-remotes-pane">
               <div className="cfg-card">
                 <div className="cfg-head">
-                  <strong>Repositorios Remotos Conectados</strong>
-                  <span className="badge-pill active">{remotes.length} Configurado(s)</span>
+                  <strong>{t.git.connectedRemotes}</strong>
+                  <span className="badge-pill active">{remotes.length}</span>
                 </div>
                 {remotes.length === 0 ? (
-                  <p className="muted small">No hay repositorios remotos configurados todavía.</p>
+                  <p className="muted small">No remote repositories configured.</p>
                 ) : (
                   <div className="git-remote-list">
                     {remotes.map((r, idx) => (
@@ -622,11 +622,11 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
 
               <div className="cfg-card">
                 <div className="cfg-head">
-                  <strong>Conectar o Actualizar Repositorio Remoto (GitHub / GitLab)</strong>
+                  <strong>{t.git.connectRemoteTitle}</strong>
                 </div>
                 <div className="git-remote-form">
                   <div className="field">
-                    <label>Nombre del Remoto</label>
+                    <label>{t.git.remoteName}</label>
                     <input
                       type="text"
                       value={remoteName}
@@ -635,12 +635,12 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                     />
                   </div>
                   <div className="field">
-                    <label>URL del Repositorio Remoto (HTTPS / SSH)</label>
+                    <label>{t.git.remoteUrl}</label>
                     <input
                       type="text"
                       value={remoteUrl}
                       onChange={(e) => setRemoteUrl(e.target.value)}
-                      placeholder="https://github.com/usuario/repositorio.git"
+                      placeholder="https://github.com/user/repo.git"
                     />
                   </div>
                   <button
@@ -650,7 +650,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                     disabled={!remoteUrl.trim() || loading}
                   >
                     <Globe size={13} />
-                    <span>Guardar y Conectar Remoto</span>
+                    <span>{t.git.saveRemoteBtn}</span>
                   </button>
                 </div>
               </div>
@@ -662,14 +662,14 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
         {showNewBranch && (
           <div className="git-new-branch-overlay" onClick={() => setShowNewBranch(false)}>
             <div className="git-new-branch-box" onClick={(e) => e.stopPropagation()}>
-              <h4>Crear Nueva Rama Git</h4>
-              <p className="small muted">Se creará una rama nueva basada en la rama actual ({status?.branch || "HEAD"}).</p>
+              <h4>{t.git.newBranch}</h4>
+              <p className="small muted">Base: {status?.branch || "HEAD"}</p>
               <input
                 type="text"
                 autoFocus
                 value={newBranchName}
                 onChange={(e) => setNewBranchName(e.target.value)}
-                placeholder="feature/nombre-de-rama"
+                placeholder={t.git.branchNamePlaceholder}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleCreateBranch();
                   if (e.key === "Escape") setShowNewBranch(false);
@@ -677,7 +677,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
               />
               <div className="git-new-branch-actions">
                 <button type="button" className="btn btn-subtle" onClick={() => setShowNewBranch(false)}>
-                  Cancelar
+                  {t.common.cancel}
                 </button>
                 <button
                   type="button"
@@ -685,7 +685,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
                   onClick={handleCreateBranch}
                   disabled={!newBranchName.trim()}
                 >
-                  Crear y Cambiar
+                  {t.git.createBranch}
                 </button>
               </div>
             </div>
@@ -695,4 +695,3 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
     </div>
   );
 }
-

@@ -25,6 +25,7 @@ import {
   Search,
   Plus,
 } from "lucide-react";
+import { useI18n } from "../i18n";
 
 
 
@@ -374,6 +375,7 @@ export default function Chat({
   initialTranscript = [],
   onTranscriptChange,
 }: ChatProps) {
+  const { t } = useI18n();
   const [messages, setMessages] = useState<UiMessage[]>(() =>
     transcriptToUi(initialTranscript),
   );
@@ -959,17 +961,17 @@ export default function Chat({
             <p className="chat-empty-title">MakoraIDE · Desarrollo Agéntico</p>
             <p className="chat-empty-sub">
               {ready
-                ? `Modo actual: ${agentMode === "plan" ? "📋 Planificación (Pide aprobación)" : "⚡ Acción directa"}. Usa @ para archivos o Ctrl+P para comandos.`
-                : "Conecta un proveedor en el panel derecho o abre el Asistente de Inicio para comenzar."}
+                ? t.chat.readyHint
+                : t.chat.notReadyHint}
             </p>
             <div className="chat-quickstart-actions">
-              <button className="btn btn-subtle" onClick={clearChat} title="Comenzar una nueva conversación limpia">
+              <button className="btn btn-subtle" onClick={clearChat} title={t.chat.newConversation}>
                 <Plus size={12} />
-                <span>Nueva Conversación</span>
+                <span>{t.chat.newConversation}</span>
               </button>
               <button className="btn btn-subtle" onClick={triggerAutoTestAndRepair}>
                 <FlaskConical size={12} />
-                <span>Ejecutar Auto-Tests y Reparar</span>
+                <span>{t.chat.autoTest}</span>
               </button>
             </div>
           </div>
@@ -1274,7 +1276,7 @@ export default function Chat({
                 className="icon-btn-micro"
                 onClick={clearChat}
                 disabled={busy}
-                title="Vaciar chat y comenzar una nueva conversación"
+                title={t.chat.clearChat}
               >
                 <Trash2 size={11} />
               </button>
@@ -1285,20 +1287,20 @@ export default function Chat({
                 type="button"
                 className="btn btn-danger btn-sm"
                 onClick={() => chatCancel()}
-                title="Detener el turno actual"
+                title={t.chat.stop}
               >
                 <Square size={11} />
-                <span>Detener</span>
+                <span>{t.chat.stop}</span>
               </button>
             ) : (
               <button
                 className="btn btn-primary btn-sm"
                 type="submit"
                 disabled={busy || !ready}
-                title="Enviar mensaje (Enter)"
+                title={`${t.chat.send} (Enter)`}
               >
                 <Send size={11} />
-                <span>Enviar</span>
+                <span>{t.chat.send}</span>
               </button>
             )}
           </div>
