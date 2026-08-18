@@ -59,12 +59,16 @@ interface ChatProps {
   folders: string[];
   skillsContent: string;
   thinkingLevel: ThinkingLevel;
+  onSelectThinkingLevel?: (level: ThinkingLevel) => void;
   includeWorkspace: boolean;
   visionEnabled: boolean;
   blocked: boolean;
   blockReason: string;
   agentMode?: AgentMode;
   onToggleMode?: (mode: AgentMode) => void;
+  models?: string[];
+  activeModel?: string;
+  onSelectModel?: (model: string) => void;
   onUsage: (usage: ChatUsage) => void;
   onApplyArtifact: (path: string, content: string) => void;
   onStatusChange?: (busy: boolean, runningToolName: string | null) => void;
@@ -77,12 +81,16 @@ export default function Chat({
   folders,
   skillsContent,
   thinkingLevel,
+  onSelectThinkingLevel,
   includeWorkspace,
   visionEnabled,
   blocked,
   blockReason,
   agentMode = "act",
   onToggleMode,
+  models = [],
+  activeModel,
+  onSelectModel,
   onUsage,
   onApplyArtifact,
   onStatusChange,
@@ -93,6 +101,7 @@ export default function Chat({
   const [busy, setBusy] = useState(false);
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [thinking, setThinking] = useState<{ id: number; text: string } | null>(null);
+
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mention, setMention] = useState<{
     query: string;
@@ -709,35 +718,111 @@ export default function Chat({
           placeholder={
             ready
               ? `[Modo ${agentMode === "plan" ? "Plan" : "Acción"}] Instrucción para Makora… (@ para archivos)`
-              : "Conecta un proveedor en el panel derecho primero"
+              : "Selecciona o conecta un modelo abajo primero"
           }
           rows={3}
           disabled={!ready}
           onKeyDown={handleKeyDown}
         />
-        <div className="chat-actions">
-          {busy && (
-            <button
-              type="button"
-              className="btn btn-danger"
-              onClick={() => chatCancel()}
-              title="Detener el turno actual"
-            >
-              <Square size={11} />
-              <span>Detener</span>
-            </button>
-          )}
-          <button
-            className="btn btn-primary"
-            type="submit"
-            disabled={busy || !ready}
-            title="Enviar mensaje (Enter)"
-          >
-            <Send size={11} />
-            <span>{busy ? "Pensando…" : "Enviar"}</span>
-          </button>
+
+        {/* Dynamic In-Chat Bottom Toolbar */}
+        <div className="chat-input-toolbar">
+          <div className="chat-toolbar-left">
+            {/* Direct Model Picker Dropdown */}
+            <div className="chat-model-picker" title="Modelo de IA activo (Clic para cambiar)">
+              <Zap size={11} className="text-cyan" />
+              <select
+                value={activeModel || config.model || ""}
+                onChange={(e) => onSelectModel?.(e.target.value)}
+                className="chat-model-select"
+              >
+                {models && models.length > 0 ? (
+                  models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))
+                ) : (
+                  <option value={activeModel || config.model || ""}>
+                    {activeModel || config.model || "Sin modelo"}
+                  </option>
+                )}
+              </select>
+            </div>
+
+            {/* Mode Switcher Pill */}
+            {onToggleMode && (
+              <button
+                type="button"
+                className={`chat-pill-btn mode-pill ${agentMode === "plan" ? "plan-active" : "act-active"}`}
+                onClick={() => onToggleMode(agentMode === "plan" ? "act" : "plan")}
+                title={agentMode === "plan" ? "Modo Plan: Diseña e investiga" : "Modo Acción: Edita código directamente"}
+              >
+                {agentMode === "plan" ? <ScrollText size={10} /> : <Zap size={10} />}
+                <span>{agentMode === "plan" ? "Plan" : "Act"}</span>
+              </button>
+            )}
+
+            {/* Thinking Level Switcher Pill */}
+            {onSelectThinkingLevel && (
+              <button
+                type="button"
+                className="chat-pill-btn thinking-pill"
+                onClick={() => {
+                  const levels: ThinkingLevel[] = ["none", "low", "medium", "high"];
+                  const nextIdx = (levels.indexOf(thinkingLevel) + 1) % levels.length;
+                  onSelectThinkingLevel(levels[nextIdx]);
+                }}
+                title={`Nivel de pensamiento API: ${thinkingLevel} (Clic para cambiar)`}
+              >
+                <FlaskConical size={10} className="text-purple" />
+                <span style={{ textTransform: "capitalize" }}>{thinkingLevel}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="chat-toolbar-right">
+            {messages.length > 0 && (
+              <button
+                type="button"
+                className="icon-btn-micro"
+                onClick={() => {
+                  setMessages([]);
+                  setTranscript([]);
+                  setActivities([]);
+                  setThinking(null);
+                }}
+                title="Limpiar conversación actual"
+              >
+                <Trash2 size={11} />
+              </button>
+            )}
+
+            {busy ? (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => chatCancel()}
+                title="Detener el turno actual"
+              >
+                <Square size={11} />
+                <span>Detener</span>
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary btn-sm"
+                type="submit"
+                disabled={busy || !ready}
+                title="Enviar mensaje (Enter)"
+              >
+                <Send size={11} />
+                <span>Enviar</span>
+              </button>
+            )}
+          </div>
         </div>
       </form>
+
 
     </section>
   );

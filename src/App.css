@@ -1348,23 +1348,25 @@ svg {
 
 .chat-input {
   display: flex;
-  gap: 6px;
-  padding: 8px 10px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
   border-top: 1px solid var(--glass-border);
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .chat-input textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
   border-radius: 6px;
   border: 1px solid var(--glass-border);
   background: var(--bg-select);
   color: var(--text-main);
-  padding: 6px 8px;
+  padding: 8px 10px;
   font-family: inherit;
   font-size: 12.5px;
-  line-height: 1.4;
+  line-height: 1.45;
+  box-sizing: border-box;
 }
 
 .chat-input textarea:focus {
@@ -1372,17 +1374,103 @@ svg {
   border-color: var(--cyan);
 }
 
-.chat-actions {
+.chat-input-toolbar {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-model-picker {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-  justify-content: flex-end;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-select);
+  padding: 0 6px 0 8px;
+}
+
+.chat-model-select {
+  border: none;
+  background: transparent;
+  color: var(--cyan);
+  font-family: Consolas, "Fira Code", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  max-width: 190px;
+  text-overflow: ellipsis;
+}
+
+.chat-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.12s ease;
+}
+
+.chat-pill-btn:hover {
+  color: var(--text-main);
+  background: var(--glass-bg-hover);
+  border-color: var(--cyan);
+}
+
+.chat-pill-btn.plan-active {
+  background: rgba(0, 200, 214, 0.12);
+  color: var(--cyan);
+  border-color: rgba(0, 200, 214, 0.3);
+}
+
+.chat-pill-btn.act-active {
+  background: rgba(41, 121, 255, 0.15);
+  color: #82b1ff;
+  border-color: rgba(41, 121, 255, 0.35);
+}
+
+.chat-pill-btn.thinking-pill {
+  background: rgba(179, 136, 255, 0.1);
+  color: var(--purple);
+  border-color: rgba(179, 136, 255, 0.25);
+}
+
+.btn-sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
 }
 
 .attachment-bar {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
+
   padding: 4px 10px 0;
 }
 

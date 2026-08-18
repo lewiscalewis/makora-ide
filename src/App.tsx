@@ -483,6 +483,10 @@ function App() {
       folders={effectiveFolders}
       skillsContent={skillsContent}
       thinkingLevel={thinkingLevel}
+      onSelectThinkingLevel={(t) => updateModelConfig({ thinkingLevel: t })}
+      models={models}
+      activeModel={settings.model}
+      onSelectModel={(m) => setSettings((s) => ({ ...s, model: m }))}
       includeWorkspace={config.context.includeWorkspace}
       visionEnabled={modelConfig?.visionEnabled ?? false}
       blocked={balanceBlocked}
@@ -497,6 +501,7 @@ function App() {
       }}
     />
   );
+
 
   const showLeftSidebar = explorerOpen && !zenMode;
   const showRightPanel = panelOpen && !zenMode;
