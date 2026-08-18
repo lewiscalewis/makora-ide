@@ -480,6 +480,127 @@ fn truncate_head_tail(s: &str, head: usize, tail: usize) -> String {
     out
 }
 
+fn summarize_old_tool_result(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("").trim();
+    let lines = content.lines().count();
+    if content.starts_with("parche aplicado:") {
+        format!("[{first_line}]")
+    } else if content.starts_with("archivo escrito:") {
+        format!("[{first_line}]")
+    } else if content.starts_with("ERROR:") {
+        let err_snippet = truncate(content, 120);
+        format!("[Resultado previo con error: {err_snippet}]")
+    } else if content.contains("coincidencias") {
+        format!("[Búsqueda previa grep completada: {lines} líneas]")
+    } else {
+        format!("[Resultado previo de herramienta: {lines} líneas]")
+    }
+}
+
+fn check_file_syntax(path: &str, content: &str) -> Option<String> {
+    let lower = path.to_lowercase();
+    if lower.ends_with(".json") {
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(content) {
+            return Some(format!("JSON inválido: {e}"));
+        }
+    } else if lower.ends_with(".ts")
+        || lower.ends_with(".tsx")
+        || lower.ends_with(".js")
+        || lower.ends_with(".jsx")
+        || lower.ends_with(".rs")
+    {
+        let mut curly = 0i32;
+        let mut paren = 0i32;
+        let mut square = 0i32;
+        let mut in_str: Option<char> = None;
+        let mut escape = false;
+        let mut in_line_comment = false;
+        let mut in_block_comment = false;
+        let chars: Vec<char> = content.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+
+        while i < len {
+            let c = chars[i];
+            let next_c = if i + 1 < len { chars[i + 1] } else { '\0' };
+
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+            if in_block_comment {
+                if c == '*' && next_c == '/' {
+                    in_block_comment = false;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_str.is_some() {
+                if escape {
+                    escape = false;
+                } else if c == '\\' {
+                    escape = true;
+                } else if Some(c) == in_str {
+                    in_str = None;
+                }
+                i += 1;
+                continue;
+            }
+
+            if c == '/' && next_c == '/' {
+                in_line_comment = true;
+                i += 2;
+                continue;
+            }
+            if c == '/' && next_c == '*' {
+                in_block_comment = true;
+                i += 2;
+                continue;
+            }
+
+            if c == '"' || c == '\'' || (c == '`' && !lower.ends_with(".rs")) {
+                in_str = Some(c);
+                i += 1;
+                continue;
+            }
+
+            match c {
+                '{' => curly += 1,
+                '}' => curly -= 1,
+                '(' => paren += 1,
+                ')' => paren -= 1,
+                '[' => square += 1,
+                ']' => square -= 1,
+                _ => {}
+            }
+            i += 1;
+        }
+
+        if in_str.is_some() {
+            return Some("Literal de texto/comillas no cerrado al final del archivo".into());
+        }
+        if in_block_comment {
+            return Some("Comentario de bloque /* ... */ no cerrado".into());
+        }
+        if curly != 0 {
+            return Some(format!("Desbalance en llaves {{ }}: diferencia de {curly}"));
+        }
+        if paren != 0 {
+            return Some(format!("Desbalance en paréntesis ( ): diferencia de {paren}"));
+        }
+        if square != 0 {
+            return Some(format!("Desbalance en corchetes [ ]: diferencia de {square}"));
+        }
+    }
+    None
+}
+
 fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
     let tool_positions: Vec<usize> = msgs
         .iter()
@@ -502,10 +623,9 @@ fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
                     .map(|p| p < threshold)
                     .unwrap_or(false);
             if is_old {
-                let lines = m.content.lines().count();
                 ChatMessage {
                     role: "tool".into(),
-                    content: format!("[Resultado previo resumido: {lines} líneas]"),
+                    content: summarize_old_tool_result(&m.content),
                     images: vec![],
                     tool_calls: None,
                     tool_call_id: m.tool_call_id.clone(),
@@ -567,12 +687,17 @@ async fn execute_tool(
             let path = resolve_path(folders, &s("path"), false)?;
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let (new_text, blocks) = apply_patch_to(&text, &s("patch"))?;
-            std::fs::write(&path, new_text).map_err(|e| e.to_string())?;
-            Ok(format!("parche aplicado: {blocks} bloque(s) modificados en {path}"))
+            std::fs::write(&path, &new_text).map_err(|e| e.to_string())?;
+            let mut msg = format!("parche aplicado: {blocks} bloque(s) modificados en {path}");
+            if let Some(syntax_err) = check_file_syntax(&path, &new_text) {
+                msg.push_str(&format!("\n⚠️ ALERTA DE SINTAXIS: {syntax_err}"));
+            }
+            Ok(msg)
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
             let mut out = String::new();
+
             let mut entries: Vec<_> =
                 std::fs::read_dir(&path).map_err(|e| e.to_string())?.flatten().collect();
             entries.sort_by(|a, b| {
@@ -618,9 +743,14 @@ async fn execute_tool(
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            std::fs::write(&path, content).map_err(|e| e.to_string())?;
-            Ok(format!("archivo escrito: {path}"))
+            std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+            let mut msg = format!("archivo escrito: {path}");
+            if let Some(syntax_err) = check_file_syntax(&path, &content) {
+                msg.push_str(&format!("\n⚠️ ALERTA DE SINTAXIS: {syntax_err}"));
+            }
+            Ok(msg)
         }
+
         _ if name.starts_with("mcp__") => mcp::call(registry, name, arguments),
         _ => Err(format!("herramienta desconocida: {name}")),
     }

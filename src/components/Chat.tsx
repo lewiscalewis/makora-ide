@@ -256,18 +256,55 @@ export default function Chat({
     return sys;
   };
 
+  const compressAndResizeImage = async (file: File, maxDim = 1024, quality = 0.85): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const rawUrl = String(reader.result ?? "");
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(rawUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL("image/jpeg", quality);
+          resolve(compressed);
+        };
+        img.onerror = () => resolve(rawUrl);
+        img.src = rawUrl;
+      };
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
+    });
+  };
+
   const addFiles = (files: File[]) => {
-    files.forEach((f) => {
+    files.forEach(async (f) => {
       const id = ++lastAttachmentId.current + Date.now();
       if (f.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = () => {
+        const dataUrl = await compressAndResizeImage(f);
+        if (dataUrl) {
           setAttachments((a) => [
             ...a,
-            { id, name: f.name, kind: "image", dataUrl: String(reader.result ?? "") },
+            { id, name: f.name, kind: "image", dataUrl },
           ]);
-        };
-        reader.readAsDataURL(f);
+        }
       } else if (
         f.type.startsWith("text/") ||
         /\.(ts|tsx|js|jsx|json|rs|py|md|txt|log|html|css|csv|toml|yaml|yml)$/i.test(f.name)
@@ -281,6 +318,7 @@ export default function Chat({
       }
     });
   };
+
 
   const handleInputChange = (value: string, caret: number) => {
     setInput(value);
