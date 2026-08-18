@@ -1634,16 +1634,144 @@ input {
 }
 
 /* ==========================================================================
-   Antigravity-Style Subtle Tool Collapsible Dropdown (Inside Message Card)
+   Antigravity-Style Subtle Meta Pills (Grouped Tools & Thinking)
    ========================================================================== */
 
-.ag-tools-container {
+.ag-meta-pills-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 0 10px 0;
+  width: 100%;
+}
+
+.ag-meta-item {
+  width: fit-content;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+}
+
+.ag-meta-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 6px;
+  user-select: none;
+  list-style: none;
+  transition: all 0.15s ease;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.ag-meta-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ag-meta-summary:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.ag-meta-item.running .ag-meta-summary {
+  color: var(--cyan);
+  background: rgba(0, 200, 214, 0.08);
+  border-color: rgba(0, 200, 214, 0.25);
+}
+
+.ag-meta-item.failed .ag-meta-summary {
+  color: var(--accent-red);
+  background: rgba(255, 61, 0, 0.08);
+  border-color: rgba(255, 61, 0, 0.25);
+}
+
+.ag-meta-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent-green);
+  opacity: 0.85;
+}
+
+.ag-meta-dot.running {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+  animation: pulse 1.2s infinite;
+}
+
+.ag-meta-dot.failed {
+  background: var(--accent-red);
+}
+
+.ag-meta-dot.thinking {
+  background: #a855f7;
+}
+
+.ag-meta-dot.thinking.running {
+  background: #c084fc;
+  box-shadow: 0 0 6px #c084fc;
+}
+
+.ag-meta-title {
+  font-family: Consolas, "Fira Code", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-meta-chevron {
+  color: var(--text-muted);
+  transition: transform 0.18s ease;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.ag-meta-item[open] > .ag-meta-summary .ag-meta-chevron {
+  transform: rotate(180deg);
+}
+
+.ag-meta-content {
+  margin-top: 6px;
+  margin-bottom: 6px;
+  animation: fadeIn 0.15s ease;
+  width: 100%;
+}
+
+.ag-tools-stack {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 2px 0 8px 0;
+  padding-left: 8px;
+  border-left: 2px solid rgba(255, 255, 255, 0.07);
 }
 
+.ag-thinking-pre {
+  margin: 0;
+  padding: 10px 12px;
+  background: #070911;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Antigravity Individual Tool Item inside stack */
 .ag-tool-item {
   width: fit-content;
   max-width: 100%;
@@ -1655,16 +1783,16 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 2px 7px;
+  border-radius: 5px;
   user-select: none;
   list-style: none;
   transition: all 0.15s ease;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   width: fit-content;
   max-width: 100%;
 }
@@ -1675,8 +1803,8 @@ input {
 
 .ag-tool-summary:hover {
   color: #fff;
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .ag-tool-item.running .ag-tool-summary {
@@ -1692,8 +1820,8 @@ input {
 }
 
 .ag-tool-status-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--accent-green);
@@ -1712,7 +1840,7 @@ input {
 
 .ag-tool-title {
   font-family: Consolas, "Fira Code", monospace;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1726,7 +1854,7 @@ input {
   margin-left: 2px;
 }
 
-.ag-tool-item[open] .ag-tool-chevron {
+.ag-tool-item[open] > .ag-tool-summary .ag-tool-chevron {
   transform: rotate(180deg);
 }
 

@@ -164,6 +164,13 @@ function getAntigravityToolTitle(activity: ToolActivity): string {
   return `${action} finished`;
 }
 
+function summarizeToolNames(activities: ToolActivity[]): string {
+  const names = Array.from(new Set(activities.map((a) => a.name.replace(/^mcp__[^_]+__/, ""))));
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]}, ${names[1]}`;
+  return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+
 function AntigravityToolItem({
   activity,
   copied,
@@ -193,7 +200,7 @@ function AntigravityToolItem({
       <summary className="ag-tool-summary">
         <span className="ag-tool-status-dot" />
         <span className="ag-tool-title">{title}</span>
-        <ChevronDown size={12} className="ag-tool-chevron" />
+        <ChevronDown size={11} className="ag-tool-chevron" />
       </summary>
       <div className="ag-tool-content">
         <div className="ag-tool-terminal">
@@ -230,6 +237,90 @@ function AntigravityToolItem({
           )}
           <pre className="ag-tool-log font-mono">{outputLog}</pre>
         </div>
+      </div>
+    </details>
+  );
+}
+
+function GroupedToolsDropdown({
+  activities,
+  copiedLogId,
+  onCopyLog,
+}: {
+  activities: ToolActivity[];
+  copiedLogId: string | null;
+  onCopyLog: (id: string, log: string) => void;
+}) {
+  const runningTool = activities.find((a) => a.ok === null);
+  const isRunning = Boolean(runningTool);
+  const hasFailed = activities.some((a) => a.ok === false);
+  const [open, setOpen] = useState(isRunning);
+
+  useEffect(() => {
+    if (isRunning) {
+      setOpen(true);
+    }
+  }, [isRunning]);
+
+  const count = activities.length;
+  const summary = isRunning
+    ? `Ejecutando ${runningTool!.name}...`
+    : count === 1
+      ? getAntigravityToolTitle(activities[0])
+      : `${count} herramientas ejecutadas (${summarizeToolNames(activities)})`;
+
+  return (
+    <details
+      className={`ag-meta-item ${isRunning ? "running" : hasFailed ? "failed" : "success"}`}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary className="ag-meta-summary">
+        <span className={`ag-meta-dot ${isRunning ? "running" : hasFailed ? "failed" : "success"}`} />
+        <span className="ag-meta-title">{summary}</span>
+        <ChevronDown size={11} className="ag-meta-chevron" />
+      </summary>
+      <div className="ag-meta-content">
+        <div className="ag-tools-stack">
+          {activities.map((a) => (
+            <AntigravityToolItem
+              key={a.id}
+              activity={a}
+              copied={copiedLogId === a.id}
+              onCopyLog={(log) => onCopyLog(a.id, log)}
+            />
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function ThinkingDropdown({
+  text,
+  isStreaming,
+}: {
+  text: string;
+  isStreaming?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+
+  return (
+    <details
+      className={`ag-meta-item thinking ${isStreaming ? "running" : ""}`}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary className="ag-meta-summary">
+        <span className={`ag-meta-dot thinking ${isStreaming ? "running" : ""}`} />
+        <span className="ag-meta-title">
+          {isStreaming ? "Razonando..." : `Razonamiento interno (${wordCount} palabras)`}
+        </span>
+        <ChevronDown size={11} className="ag-meta-chevron" />
+      </summary>
+      <div className="ag-meta-content">
+        <pre className="ag-thinking-pre font-mono">{text}</pre>
       </div>
     </details>
   );
@@ -923,39 +1014,29 @@ export default function Chat({
 
               {m.role === "assistant" ? (
                 <>
-                  {/* 1. Antigravity-Style Discreet Tool Dropdowns at Top of Message Card */}
-                  {allActivities.length > 0 && (
-                    <div className="ag-tools-container">
-                      {allActivities.map((a) => (
-                        <AntigravityToolItem
-                          key={a.id}
-                          activity={a}
-                          copied={copiedLogId === a.id}
-                          onCopyLog={(log) => {
+                  {/* Meta Pills (Grouped Tools & Thinking - collapsed by default) */}
+                  {(allActivities.length > 0 || hasThinking) && (
+                    <div className="ag-meta-pills-row">
+                      {allActivities.length > 0 && (
+                        <GroupedToolsDropdown
+                          activities={allActivities}
+                          copiedLogId={copiedLogId}
+                          onCopyLog={(id, log) => {
                             navigator.clipboard.writeText(log).then(() => {
-                              setCopiedLogId(a.id);
+                              setCopiedLogId(id);
                               setTimeout(() => setCopiedLogId(null), 1400);
                             });
                           }}
                         />
-                      ))}
-                    </div>
-                  )}
+                      )}
 
-                  {/* 2. Discreet Thinking Collapsible Drawer */}
-                  {hasThinking && (
-                    <details className="thinking-discrete" open={isBusyCurrent && !m.text}>
-                      <summary className="thinking-discrete-summary">
-                        <span className="thinking-icon-dot" />
-                        <span className="thinking-discrete-title">
-                          Razonamiento interno ({thinkingText.trim().split(/\s+/).length} palabras)
-                        </span>
-                        <ChevronDown size={11} className="thinking-chevron" />
-                      </summary>
-                      <div className="thinking-discrete-body font-mono">
-                        {thinkingText}
-                      </div>
-                    </details>
+                      {hasThinking && (
+                        <ThinkingDropdown
+                          text={thinkingText}
+                          isStreaming={isBusyCurrent && !m.text}
+                        />
+                      )}
+                    </div>
                   )}
 
                   {/* 3. Assistant Response Markdown Text or Reassuring Working State */}
