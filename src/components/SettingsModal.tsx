@@ -296,7 +296,9 @@ export default function SettingsModal({
                             ? "sk-..."
                             : settings.providerId === "openrouter"
                               ? "sk-or-v1-..."
-                              : "sk-..."
+                              : settings.providerId === "gemini"
+                                ? "AIzaSy..."
+                                : "sk-..."
                         }
                         onChange={(e) => handleApiKeyChange(e.target.value)}
                       />
@@ -309,6 +311,15 @@ export default function SettingsModal({
                         {showApiKey ? <EyeOff size={11} /> : <Eye size={11} />}
                       </button>
                     </div>
+                    {settings.providerId === "gemini" && (
+                      <div className="small muted" style={{ marginTop: 4 }}>
+                        💡 Obtén tu API Key 100% gratuita con 1M tokens/min en{" "}
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--cyan)", textDecoration: "underline" }}>
+                          Google AI Studio
+                        </a>.
+                      </div>
+                    )}
+
                   </div>
                 ) : (
                   <div className="local-llm-banner">
