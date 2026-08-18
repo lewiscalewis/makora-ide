@@ -1,4 +1,4 @@
-﻿use std::collections::BTreeMap;
+use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -65,8 +65,37 @@ where
     }
 }
 
-fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
-    let mut obj = json!({"role": m.role, "content": m.content});
+fn prune_tool_output(content: &str, is_recent: bool) -> String {
+    if is_recent || content.len() <= 350 {
+        return content.to_string();
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() <= 8 {
+        return content.to_string();
+    }
+    let head = &lines[..3];
+    let tail = &lines[lines.len() - 2..];
+    let omitted = lines.len() - 5;
+    format!(
+        "{}\n... [{} líneas / {} bytes de salida previa omitidos para ahorro de tokens] ...\n{}",
+        head.join("\n"),
+        omitted,
+        content.len(),
+        tail.join("\n")
+    )
+}
+
+fn is_recent_message(idx: usize, total_messages: usize) -> bool {
+    idx + 6 >= total_messages
+}
+
+fn to_wire(m: &ChatMessage, cfg: &ChatConfig, is_recent: bool) -> Value {
+    let content_to_send = if m.role == "tool" {
+        prune_tool_output(&m.content, is_recent)
+    } else {
+        m.content.clone()
+    };
+    let mut obj = json!({"role": m.role, "content": content_to_send});
     if !m.images.is_empty() && m.role == "user" {
         if cfg.vision_enabled {
             let mut parts = vec![json!({"type": "text", "text": m.content})];
@@ -75,7 +104,7 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
             }
             obj["content"] = json!(parts);
         } else {
-            // Provider Shield: modelo de solo texto â†’ guardar a disco y referenciar
+            // Provider Shield: modelo de solo texto -> guardar a disco y referenciar
             let mut content = m.content.clone();
             for img in &m.images {
                 match save_image_temp(img) {
@@ -124,8 +153,10 @@ pub async fn openai_turn(
     if !system.trim().is_empty() {
         msgs.push(json!({"role": "system", "content": system}));
     }
-    for m in messages {
-        msgs.push(to_wire(m, cfg));
+    let total_len = messages.len();
+    for (idx, m) in messages.iter().enumerate() {
+        let is_recent = is_recent_message(idx, total_len);
+        msgs.push(to_wire(m, cfg, is_recent));
     }
 
     let mut body = json!({
@@ -327,7 +358,9 @@ pub async fn anthropic_turn(
     let url = format!("{base}/messages");
 
     let mut msgs: Vec<Value> = Vec::new();
-    for m in messages {
+    let total_len = messages.len();
+    for (idx, m) in messages.iter().enumerate() {
+        let is_recent = is_recent_message(idx, total_len);
         match m.role.as_str() {
             "user" => {
                 if !m.images.is_empty() {
@@ -381,12 +414,13 @@ pub async fn anthropic_turn(
                 msgs.push(json!({"role": "assistant", "content": blocks}));
             }
             "tool" => {
+                let pruned = prune_tool_output(&m.content, is_recent);
                 msgs.push(json!({
                     "role": "user",
                     "content": [{
                         "type": "tool_result",
                         "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
-                        "content": m.content
+                        "content": pruned
                     }]
                 }));
             }
