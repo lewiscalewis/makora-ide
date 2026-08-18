@@ -847,6 +847,7 @@ function App() {
             zenMode={zenMode}
             onToggleZenMode={() => setZenMode((z) => !z)}
             chatElement={chatNode}
+            onNewChat={handleNewSession}
           />
 
 
@@ -921,6 +922,8 @@ function App() {
         onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenOnboarding={() => setShowOnboarding(true)}
+        onOpenGit={() => setShowGitModal(true)}
+        onOpenAnalytics={() => setShowAnalyticsModal(true)}
         onToggleMode={() => setAgentMode((m) => (m === "act" ? "plan" : "act"))}
         onAddFolder={() => addFolder()}
         onNewWorkspace={newWorkspace}

@@ -85,5 +85,22 @@ export const gitPush = (folder: string) =>
   invoke<string>("git_push", { folder });
 export const gitPull = (folder: string) =>
   invoke<string>("git_pull", { folder });
+export const gitBranches = (folder: string) =>
+  invoke<string[]>("git_branches", { folder });
+export const gitCheckout = (folder: string, branch: string) =>
+  invoke<string>("git_checkout", { folder, branch });
+export const gitBranchCreate = (folder: string, branch: string) =>
+  invoke<string>("git_branch_create", { folder, branch });
+export const gitDiscard = (folder: string, path: string) =>
+  invoke<void>("git_discard", { folder, path });
+export const gitRemoteGet = (folder: string) =>
+  invoke<import("./types").GitRemoteInfo[]>("git_remote_get", { folder });
+export const gitRemoteSet = (folder: string, name: string, url: string) =>
+  invoke<string>("git_remote_set", { folder, name, url });
+export const gitFetch = (folder: string) =>
+  invoke<string>("git_fetch", { folder });
+export const gitInit = (folder: string) =>
+  invoke<string>("git_init", { folder });
+
 
 

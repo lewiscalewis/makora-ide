@@ -857,6 +857,14 @@ fn git_push(folder: String) -> Result<String, String> {
     }
 }
 
+#[derive(Clone, serde::Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteInfo {
+    pub name: String,
+    pub url: String,
+    pub fetch_or_push: String,
+}
+
 #[tauri::command]
 #[specta::specta]
 fn git_pull(folder: String) -> Result<String, String> {
@@ -868,6 +876,206 @@ fn git_pull(folder: String) -> Result<String, String> {
         cmd.creation_flags(0x08000000);
     }
     cmd.arg("pull");
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_branches(folder: String) -> Result<Vec<String>, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("branch").arg("-a");
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let list: Vec<String> = text
+            .lines()
+            .map(|l| l.trim_start_matches('*').trim().to_string())
+            .filter(|l| !l.is_empty() && !l.contains("->"))
+            .collect();
+        Ok(list)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_checkout(folder: String, branch: String) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("checkout").arg(&branch);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        Ok(if stdout.trim().is_empty() { stderr } else { stdout })
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_branch_create(folder: String, branch: String) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("checkout").arg("-b").arg(&branch);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        Ok(if stdout.trim().is_empty() { stderr } else { stdout })
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_discard(folder: String, path: String) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("restore").arg("--").arg(&path);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let mut cmd2 = std::process::Command::new("git");
+        cmd2.current_dir(&folder);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd2.creation_flags(0x08000000);
+        }
+        cmd2.arg("clean").arg("-f").arg(&path);
+        let _ = cmd2.output();
+        Ok(())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_remote_get(folder: String) -> Result<Vec<GitRemoteInfo>, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("remote").arg("-v");
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut list = Vec::new();
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                list.push(GitRemoteInfo {
+                    name: parts[0].to_string(),
+                    url: parts[1].to_string(),
+                    fetch_or_push: parts[2].trim_matches(|c| c == '(' || c == ')').to_string(),
+                });
+            }
+        }
+        Ok(list)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_remote_set(folder: String, name: String, url: String) -> Result<String, String> {
+    let mut check_cmd = std::process::Command::new("git");
+    check_cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        check_cmd.creation_flags(0x08000000);
+    }
+    check_cmd.arg("remote").arg("get-url").arg(&name);
+    let check_out = check_cmd.output();
+    let exists = check_out.map(|o| o.status.success()).unwrap_or(false);
+
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    if exists {
+        cmd.arg("remote").arg("set-url").arg(&name).arg(&url);
+    } else {
+        cmd.arg("remote").arg("add").arg(&name).arg(&url);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(format!("Remoto '{name}' configurado correctamente con URL: {url}"))
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_fetch(folder: String) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("fetch").arg("--all");
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        Ok(if stdout.trim().is_empty() { stderr } else { stdout })
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn git_init(folder: String) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&folder);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("init");
     let out = cmd.output().map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
@@ -917,11 +1125,16 @@ pub fn run() {
             git_stage_all,
             git_commit,
             git_push,
-            git_pull
+            git_pull,
+            git_branches,
+            git_checkout,
+            git_branch_create,
+            git_discard,
+            git_remote_get,
+            git_remote_set,
+            git_fetch,
+            git_init
         ])
-
-
-
         .events(collect_events![StreamEvent, ChatDeltaEvent]);
 
     tauri::Builder::default()

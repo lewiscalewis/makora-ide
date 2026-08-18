@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { THEME_LIST } from "../themes";
 import {
   FolderPlus,
@@ -8,6 +9,8 @@ import {
   PanelRight,
   Palette,
   History,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 import type { ThemeId } from "../types";
 
@@ -44,6 +47,23 @@ export default function Header({
   currentTheme,
   onSelectTheme,
 }: HeaderProps) {
+  const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
+  const themeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (themeRef.current && !themeRef.current.contains(e.target as Node)) {
+        setThemeDropdownOpen(false);
+      }
+    }
+    if (themeDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [themeDropdownOpen]);
+
+  const activeThemeObj = THEME_LIST.find((t) => t.id === currentTheme);
+
   return (
     <header className="header">
       {/* Brand & Left Actions */}
@@ -114,22 +134,41 @@ export default function Header({
           <span>Limpiar</span>
         </button>
 
-        <div className="theme-picker-wrap">
-          <Palette size={13} className="theme-icon-indicator" />
-          <select
-            className="theme-select"
-            value={currentTheme}
-            onChange={(e) => onSelectTheme(e.target.value as ThemeId)}
+        {/* Custom Theme Dropdown */}
+        <div className="theme-picker-wrap" ref={themeRef}>
+          <button
+            type="button"
+            className={`theme-picker-trigger ${themeDropdownOpen ? "active" : ""}`}
+            onClick={() => setThemeDropdownOpen((o) => !o)}
             title="Seleccionar tema visual ergonómico"
           >
-            {THEME_LIST.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+            <Palette size={13} className="theme-icon-indicator" />
+            <span className="theme-current-name">{activeThemeObj?.name || "Tema"}</span>
+            <ChevronDown size={11} className={`theme-chevron ${themeDropdownOpen ? "open" : ""}`} />
+          </button>
+          {themeDropdownOpen && (
+            <div className="theme-dropdown-menu">
+              <div className="theme-dropdown-header">Temas Visuales Ergonómicos</div>
+              {THEME_LIST.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`theme-dropdown-item ${t.id === currentTheme ? "selected" : ""}`}
+                  onClick={() => {
+                    onSelectTheme(t.id);
+                    setThemeDropdownOpen(false);
+                  }}
+                >
+                  <div className="theme-item-text">
+                    <span className="theme-item-name">{t.name}</span>
+                    <span className="theme-item-desc">{t.description}</span>
+                  </div>
+                  {t.id === currentTheme && <Check size={12} className="text-cyan" />}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-
 
         {onTogglePanel && (
           <button

@@ -23,6 +23,7 @@ import {
   X,
   ChevronDown,
   Search,
+  Plus,
 } from "lucide-react";
 
 
@@ -962,8 +963,13 @@ export default function Chat({
                 : "Conecta un proveedor en el panel derecho o abre el Asistente de Inicio para comenzar."}
             </p>
             <div className="chat-quickstart-actions">
+              <button className="btn btn-subtle" onClick={clearChat} title="Comenzar una nueva conversación limpia">
+                <Plus size={12} />
+                <span>Nueva Conversación</span>
+              </button>
               <button className="btn btn-subtle" onClick={triggerAutoTestAndRepair}>
-                🧪 Ejecutar Auto-Tests y Reparar
+                <FlaskConical size={12} />
+                <span>Ejecutar Auto-Tests y Reparar</span>
               </button>
             </div>
           </div>

@@ -15,6 +15,8 @@ interface CommandPaletteProps {
   onOpenOnboarding?: () => void;
   onToggleMode?: () => void;
   onAutoTest?: () => void;
+  onOpenGit?: () => void;
+  onOpenAnalytics?: () => void;
   onAddFolder: () => void;
   onNewWorkspace: () => void;
   onClearChat: () => void;
@@ -33,6 +35,8 @@ export default function CommandPalette({
   onOpenOnboarding,
   onToggleMode,
   onAutoTest,
+  onOpenGit,
+  onOpenAnalytics,
   onAddFolder,
   onNewWorkspace,
   onClearChat,
@@ -100,6 +104,29 @@ export default function CommandPalette({
       category: "action",
       action: () => {
         onToggleExplorer();
+        onClose();
+      },
+    },
+    {
+      id: "action-git",
+      title: "Control de Versiones Git",
+      subtitle: "Inspeccionar cambios, commits, ramas y repositorios remotos",
+      icon: "🌿",
+      shortcut: "Ctrl+G",
+      category: "action",
+      action: () => {
+        onOpenGit?.();
+        onClose();
+      },
+    },
+    {
+      id: "action-analytics",
+      title: "Telemetría de Tokens y Eficiencia de Caché",
+      subtitle: "Consultar hit rate de KV-Cache, saldo y costes de inferencia",
+      icon: "📊",
+      category: "action",
+      action: () => {
+        onOpenAnalytics?.();
         onClose();
       },
     },

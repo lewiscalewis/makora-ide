@@ -15,6 +15,7 @@ import {
   Image,
   Table,
   Code2,
+  Plus,
 } from "lucide-react";
 import type { DiffInfo, OpenFile } from "../types";
 
@@ -37,6 +38,7 @@ interface UnifiedWorkspaceProps {
   onToggleZenMode: () => void;
 
   chatElement: ReactNode;
+  onNewChat?: () => void;
 }
 
 function getFileIcon(filename: string) {
@@ -89,6 +91,7 @@ export default function UnifiedWorkspace({
   zenMode,
   onToggleZenMode,
   chatElement,
+  onNewChat,
 }: UnifiedWorkspaceProps) {
   const isChatTabActive = activePath === null;
 
@@ -128,15 +131,7 @@ export default function UnifiedWorkspace({
     }
 
     if (lower.endsWith(".svg")) {
-      return (
-        <SvgViewer
-          content={targetFile.content}
-          path={path}
-          isDirty={targetFile.isDirty}
-          onUpdateContent={(c) => onUpdateContent(path, c)}
-          onSave={() => onSaveFile(path)}
-        />
-      );
+      return <SvgViewer content={targetFile.content} path={path} />;
     }
 
     if (/\.(png|jpg|jpeg|webp|gif|avif)$/i.test(lower)) {
@@ -164,18 +159,35 @@ export default function UnifiedWorkspace({
       {/* Unified Tab Bar */}
       <div className="unified-tab-bar">
         <div className="tab-bar-tabs">
-          {/* Sticky Master Chat Tab */}
-          <div
-            className={`master-chat-tab ${isChatTabActive ? "active" : ""}`}
-            onClick={() => onActivateFile(null)}
-            title="Abrir Chat del Agente Makora"
-          >
-            <Sparkles size={12} className="master-tab-icon" />
-            <span className="master-tab-title">MAKORA CHAT</span>
-            <span
-              className={`master-status-dot ${agentBusy ? "pulse-dot" : "idle-dot"}`}
-              title={agentBusy ? (runningToolName ? `Ejecutando ${runningToolName}` : "Razonando...") : "Listo"}
-            />
+          {/* Sticky Master Chat Tab with Accessible New Chat Button */}
+          <div className="master-chat-tab-container">
+            <div
+              className={`master-chat-tab ${isChatTabActive ? "active" : ""}`}
+              onClick={() => onActivateFile(null)}
+              title="Abrir Chat del Agente Makora"
+            >
+              <Sparkles size={12} className="master-tab-icon" />
+              <span className="master-tab-title">MAKORA CHAT</span>
+              <span
+                className={`master-status-dot ${agentBusy ? "pulse-dot" : "idle-dot"}`}
+                title={agentBusy ? (runningToolName ? `Ejecutando ${runningToolName}` : "Razonando...") : "Listo"}
+              />
+            </div>
+            {onNewChat && (
+              <button
+                type="button"
+                className="tab-new-chat-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onActivateFile(null);
+                  onNewChat();
+                }}
+                title="Comenzar una nueva conversación limpia (Ctrl+L)"
+              >
+                <Plus size={12} />
+                <span>Nuevo Chat</span>
+              </button>
+            )}
           </div>
 
           {/* Open File Tabs */}

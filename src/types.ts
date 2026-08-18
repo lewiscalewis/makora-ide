@@ -261,6 +261,12 @@ export interface GitFileItem {
   isStaged: boolean;
 }
 
+export interface GitRemoteInfo {
+  name: string;
+  url: string;
+  fetchOrPush: string;
+}
+
 export interface UniversalTelemetry {
   totalInputTokens: number;
   totalOutputTokens: number;

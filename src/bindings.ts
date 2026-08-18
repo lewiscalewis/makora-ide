@@ -52,6 +52,14 @@ export const commands = {
 	gitCommit: (folder: string, message: string) => typedError<string, string>(__TAURI_INVOKE("git_commit", { folder, message })),
 	gitPush: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_push", { folder })),
 	gitPull: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_pull", { folder })),
+	gitBranches: (folder: string) => typedError<string[], string>(__TAURI_INVOKE("git_branches", { folder })),
+	gitCheckout: (folder: string, branch: string) => typedError<string, string>(__TAURI_INVOKE("git_checkout", { folder, branch })),
+	gitBranchCreate: (folder: string, branch: string) => typedError<string, string>(__TAURI_INVOKE("git_branch_create", { folder, branch })),
+	gitDiscard: (folder: string, path: string) => typedError<null, string>(__TAURI_INVOKE("git_discard", { folder, path })),
+	gitRemoteGet: (folder: string) => typedError<GitRemoteInfo[], string>(__TAURI_INVOKE("git_remote_get", { folder })),
+	gitRemoteSet: (folder: string, name: string, url: string) => typedError<string, string>(__TAURI_INVOKE("git_remote_set", { folder, name, url })),
+	gitFetch: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_fetch", { folder })),
+	gitInit: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_init", { folder })),
 };
 
 /** Events */
@@ -115,6 +123,12 @@ export type GitFileItem = {
 	path: string,
 	status: string,
 	isStaged: boolean,
+};
+
+export type GitRemoteInfo = {
+	name: string,
+	url: string,
+	fetchOrPush: string,
 };
 
 export type GitStatusInfo = {
