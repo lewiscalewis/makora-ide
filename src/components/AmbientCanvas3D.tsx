@@ -563,24 +563,28 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       group.add(skyrimGroup);
     } else if (currentTheme === "dragons_dogma") {
       // =======================================================================
-      // 4. DRAGON'S DOGMA: OFFICIAL WYRM DRAGON (GRIGORI) & PULSATING HEART
+      // 4. DRAGON'S DOGMA: OFFICIAL WYRM DRAGON (GRIGORI) & FULL-SCREEN EMBERS
       // =======================================================================
       const ddGroup = new THREE.Group();
       ddGroup.position.set(0, 0, -10);
 
-      // --- Ambient & Accent Wyrmfire Lighting ---
-      const ddAmbLight = new THREE.AmbientLight(0x280e12, 1.4);
+      // --- Ambient & Accent Wyrmfire Lighting for High Contrast Visibility ---
+      const ddAmbLight = new THREE.AmbientLight(0x40141a, 2.2);
       ddGroup.add(ddAmbLight);
 
-      const wyrmLight1 = new THREE.PointLight(0xff7733, 2.8, 30);
-      wyrmLight1.position.set(3.5, 3.5, 3.5);
+      const wyrmLight1 = new THREE.PointLight(0xff9944, 4.8, 45);
+      wyrmLight1.position.set(4.0, 4.0, 4.5);
       ddGroup.add(wyrmLight1);
 
-      const wyrmLight2 = new THREE.PointLight(0xff1100, 2.2, 25);
-      wyrmLight2.position.set(-3.5, -2.5, 3.0);
+      const wyrmLight2 = new THREE.PointLight(0xff2200, 3.8, 40);
+      wyrmLight2.position.set(-4.0, -3.0, 4.0);
       ddGroup.add(wyrmLight2);
 
-      // --- Official Dragon's Dogma Dragon SVG Extrusion ---
+      const wyrmRimLight = new THREE.PointLight(0xf59e0b, 3.2, 35);
+      wyrmRimLight.position.set(0, 5.0, 2.5);
+      ddGroup.add(wyrmRimLight);
+
+      // --- Official Dragon's Dogma Dragon SVG Extrusion (Bigger, Bolder & Highly Visible) ---
       const ddDragonLogo = new THREE.Group();
       ddDragonLogo.position.set(0, 1.8, 0);
 
@@ -593,31 +597,31 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       }
 
       const dragonExtrudeGeo = new THREE.ExtrudeGeometry(shapes, {
-        depth: 8,
+        depth: 10,
         bevelEnabled: true,
-        bevelThickness: 1.5,
-        bevelSize: 1.0,
+        bevelThickness: 2.0,
+        bevelSize: 1.2,
         bevelSegments: 3,
       });
       dragonExtrudeGeo.center();
 
       const dragonWyrmMat = new THREE.MeshStandardMaterial({
-        color: 0x4a181c,
-        metalness: 0.85,
+        color: 0xb82e36,
+        metalness: 0.82,
         roughness: 0.28,
-        emissive: 0x22080a,
-        emissiveIntensity: 0.4,
+        emissive: 0x5a1218,
+        emissiveIntensity: 0.6,
         side: THREE.DoubleSide,
       });
 
       const dragonMesh = new THREE.Mesh(dragonExtrudeGeo, dragonWyrmMat);
-      dragonMesh.scale.set(0.035, -0.035, 0.035);
+      dragonMesh.scale.set(0.052, -0.052, 0.052);
       ddDragonLogo.add(dragonMesh);
 
       // --- Pulsating Glowing Heart in the Dragon's Chest ---
-      const heartPos = new THREE.Vector3(-0.4, 0.15, 0.25);
+      const heartPos = new THREE.Vector3(-0.58, 0.22, 0.35);
 
-      const heartLight = new THREE.PointLight(0xff3311, 4.2, 16);
+      const heartLight = new THREE.PointLight(0xff3311, 5.0, 22);
       heartLight.position.copy(heartPos);
       ddDragonLogo.add(heartLight);
       ddHeartLightRef = heartLight;
@@ -630,7 +634,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
-      const heartCore = makeSprite(heartCoreMat, heartPos.x, heartPos.y, heartPos.z + 0.05, 0.9, 0.9);
+      const heartCore = makeSprite(heartCoreMat, heartPos.x, heartPos.y, heartPos.z + 0.08, 1.2, 1.2);
       ddDragonLogo.add(heartCore);
       ddHeartCoreRef = heartCore;
 
@@ -638,26 +642,26 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const heartHaloMat = new THREE.SpriteMaterial({
         map: makeGlowTexture("rgba(255,140,50,0.9)", "rgba(220,40,10,0.5)", "rgba(180,10,0,0)"),
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.7,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
-      const heartHalo = makeSprite(heartHaloMat, heartPos.x, heartPos.y, heartPos.z, 2.2, 2.2);
+      const heartHalo = makeSprite(heartHaloMat, heartPos.x, heartPos.y, heartPos.z, 2.8, 2.8);
       ddDragonLogo.add(heartHalo);
       ddHeartGlowRef = heartHalo;
 
       ddDragonMeshRef = ddDragonLogo;
       ddGroup.add(ddDragonLogo);
 
-      // --- Rising Molten Embers covering the WHOLE IDE (five depth layers) ---
+      // --- Rising Molten Embers covering the ENTIRE SCREEN (Wide-spread parallax layers) ---
       ddEmberSystemsRef = [];
       const emberTexture = makeSoftDotTexture("rgba(255,255,235,1)", "rgba(255,170,80,0.85)");
       const emberLayers = [
-        { count: 620, size: 0.055, colors: [0xffb066, 0xff7a2a], min: 0.0035, max: 0.009, spread: 19.0, yMin: -9.5, yMax: 13.5, zMin: -3.5, zMax: 1.5, opacity: 0.55, flicker: 2.3 },
-        { count: 430, size: 0.1, colors: [0xff8c42, 0xff5a1f], min: 0.0045, max: 0.011, spread: 18.0, yMin: -9.5, yMax: 13.5, zMin: -3.0, zMax: 2.0, opacity: 0.8, flicker: 1.7 },
-        { count: 240, size: 0.19, colors: [0xff6b2a, 0xffb84d], min: 0.008, max: 0.017, spread: 16.5, yMin: -9.5, yMax: 13.5, zMin: -2.5, zMax: 2.5, opacity: 0.9, flicker: 1.3 },
-        { count: 110, size: 0.34, colors: [0xffa04d, 0xffd066], min: 0.012, max: 0.024, spread: 14.5, yMin: -9.5, yMax: 13.5, zMin: -2.0, zMax: 2.8, opacity: 0.85, flicker: 1.0 },
-        { count: 380, size: 0.04, colors: [0xffe0a0, 0xffc46b], min: 0.02, max: 0.035, spread: 17.0, yMin: -9.5, yMax: 13.5, zMin: -3.0, zMax: 2.0, opacity: 0.65, flicker: 3.1 },
+        { count: 750, size: 0.065, colors: [0xffb066, 0xff7a2a], min: 0.004, max: 0.011, spread: 46.0, yMin: -14.0, yMax: 16.0, zMin: -5.5, zMax: 2.0, opacity: 0.65, flicker: 2.3 },
+        { count: 480, size: 0.12, colors: [0xff8c42, 0xff5a1f], min: 0.005, max: 0.013, spread: 42.0, yMin: -14.0, yMax: 16.0, zMin: -4.0, zMax: 3.0, opacity: 0.85, flicker: 1.7 },
+        { count: 260, size: 0.24, colors: [0xff6b2a, 0xffb84d], min: 0.009, max: 0.019, spread: 38.0, yMin: -14.0, yMax: 16.0, zMin: -2.5, zMax: 4.5, opacity: 0.92, flicker: 1.3 },
+        { count: 120, size: 0.45, colors: [0xffa04d, 0xffd066], min: 0.014, max: 0.026, spread: 34.0, yMin: -14.0, yMax: 16.0, zMin: -1.0, zMax: 6.0, opacity: 0.88, flicker: 1.0 },
+        { count: 450, size: 0.045, colors: [0xffe0a0, 0xffc46b], min: 0.018, max: 0.032, spread: 48.0, yMin: -14.0, yMax: 16.0, zMin: -6.0, zMax: 2.0, opacity: 0.72, flicker: 3.1 },
       ];
       for (const layer of emberLayers) {
         const geo = new THREE.BufferGeometry();

@@ -6007,11 +6007,16 @@ select:focus {
    8. THEME: DRAGON'S DOGMA ARISEN (The Rift & Grigori Wyrmfire)
    ========================================================================== */
 [data-theme="dragons_dogma"] {
-  --cyan: #06b6d4;
+  --bg: #040102;
+  --bg-card: rgba(18, 9, 10, 0.78);
+  --cyan: #f97316;
   --gold: #f59e0b;
   --accent-blue: #60a5fa;
   --accent-green: #10b981;
   --accent-red: #ef4444;
+  --border-color: rgba(239, 68, 68, 0.35);
+  --text-main: #fef2f2;
+  --text-muted: #c4a4a4;
   font-family: "MedievalSharp", "Spectral", Georgia, serif;
 }
 
@@ -6028,26 +6033,26 @@ select:focus {
 }
 
 [data-theme="dragons_dogma"] .header {
-  background: linear-gradient(180deg, rgba(22, 13, 13, 0.96) 0%, rgba(11, 7, 7, 0.92) 100%);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.28);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 1px 12px rgba(239, 68, 68, 0.12);
+  background: linear-gradient(180deg, rgba(28, 12, 14, 0.97) 0%, rgba(14, 6, 7, 0.94) 100%);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.38);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7), 0 1px 16px rgba(239, 68, 68, 0.18);
 }
 
 [data-theme="dragons_dogma"] .app-brand-logo {
-  filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6)) drop-shadow(0 0 22px rgba(245, 158, 11, 0.4));
+  filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.7)) drop-shadow(0 0 24px rgba(245, 158, 11, 0.5));
 }
 
 [data-theme="dragons_dogma"] .btn-primary {
   background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
   color: #fef2f2;
   font-weight: 700;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  box-shadow: 0 0 18px rgba(239, 68, 68, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.55);
 }
 
 [data-theme="dragons_dogma"] .btn-primary:hover {
   background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
-  box-shadow: 0 0 26px rgba(239, 68, 68, 0.75);
+  box-shadow: 0 0 28px rgba(239, 68, 68, 0.85);
   transform: translateY(-1px);
 }
 
@@ -6057,30 +6062,33 @@ select:focus {
 
 [data-theme="dragons_dogma"] .ws-tab.active::after {
   background: #ef4444;
-  box-shadow: 0 0 10px #ef4444;
+  box-shadow: 0 0 12px #ef4444;
 }
 
 [data-theme="dragons_dogma"] .chat-msg-user {
-  background: rgba(239, 68, 68, 0.06);
-  border: 1px solid rgba(239, 68, 68, 0.28);
+  background: rgba(249, 115, 22, 0.08);
+  border: 1px solid rgba(249, 115, 22, 0.38);
+  color: #fff7ed;
 }
 
 [data-theme="dragons_dogma"] .chat-msg-assistant {
-  background: rgba(22, 13, 13, 0.95);
-  border: 1px solid rgba(239, 68, 68, 0.22);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 0 14px rgba(239, 68, 68, 0.03);
+  background: rgba(22, 10, 11, 0.96);
+  border: 1px solid rgba(239, 68, 68, 0.32);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.65), inset 0 0 16px rgba(239, 68, 68, 0.05);
+  color: #fef2f2;
 }
 
 [data-theme="dragons_dogma"] .chat-msg-assistant .chat-msg-role {
-  color: #ef4444;
-  text-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  color: #f87171;
+  text-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+  font-weight: 700;
 }
 
 [data-theme="dragons_dogma"] input:focus, 
 [data-theme="dragons_dogma"] textarea:focus, 
 [data-theme="dragons_dogma"] select:focus {
   border-color: #ef4444 !important;
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2), 0 0 18px rgba(239, 68, 68, 0.25) !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25), 0 0 20px rgba(239, 68, 68, 0.35) !important;
 }
 
 
