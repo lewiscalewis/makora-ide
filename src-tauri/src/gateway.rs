@@ -209,6 +209,7 @@ pub async fn openai_turn(
     let mut text = String::new();
     let mut output_chars = 0usize;
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
+    let mut global_extra_content: Option<Value> = None;
 
     for_each_sse_event(resp, |_event, data| {
         if data == "[DONE]" {
@@ -220,6 +221,9 @@ pub async fn openai_turn(
         };
         if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
             if let Some(delta) = choices.first().and_then(|c| c.get("delta")) {
+                if let Some(ec) = delta.get("extra_content") {
+                    global_extra_content = Some(ec.clone());
+                }
                 if let Some(rc) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
                     if !rc.is_empty() {
                         let _ = app.emit(
@@ -257,7 +261,7 @@ pub async fn openai_turn(
                                 entry.2.push_str(a);
                             }
                         }
-                        if let Some(ec) = call.get("extra_content") {
+                        if let Some(ec) = call.get("extra_content").or(global_extra_content.as_ref()) {
                             entry.3 = Some(ec.clone());
                         }
                     }
@@ -290,9 +294,12 @@ pub async fn openai_turn(
     let tool_calls: Vec<ToolCall> = tcs
         .into_values()
         .enumerate()
-        .map(|(i, (mut id, name, arguments, extra_content))| {
+        .map(|(i, (mut id, name, arguments, mut extra_content))| {
             if id.trim().is_empty() {
                 id = format!("call_{i}_{now_ts}");
+            }
+            if extra_content.is_none() {
+                extra_content = global_extra_content.clone();
             }
             ToolCall {
                 id,
