@@ -568,25 +568,25 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const ddGroup = new THREE.Group();
       ddGroup.position.set(0, 0, -10);
 
-      // --- Ambient & Accent Wyrmfire Lighting for Soft Cinematic Atmosphere ---
-      const ddAmbLight = new THREE.AmbientLight(0x351016, 2.0);
+      // --- Ambient & Accent Wyrmfire Lighting (Subtle, Dark & Atmospheric) ---
+      const ddAmbLight = new THREE.AmbientLight(0x160708, 1.4);
       ddGroup.add(ddAmbLight);
 
-      const wyrmLight1 = new THREE.PointLight(0xff8833, 4.0, 45);
-      wyrmLight1.position.set(4.0, 4.0, 4.5);
+      const wyrmLight1 = new THREE.PointLight(0xff6622, 2.2, 35);
+      wyrmLight1.position.set(3.5, 3.0, 4.0);
       ddGroup.add(wyrmLight1);
 
-      const wyrmLight2 = new THREE.PointLight(0xff1a00, 3.2, 40);
-      wyrmLight2.position.set(-4.0, -3.0, 4.0);
+      const wyrmLight2 = new THREE.PointLight(0x991100, 1.5, 30);
+      wyrmLight2.position.set(-3.5, -2.0, 3.5);
       ddGroup.add(wyrmLight2);
 
-      const wyrmRimLight = new THREE.PointLight(0xf59e0b, 2.8, 35);
-      wyrmRimLight.position.set(0, 5.0, 3.0);
+      const wyrmRimLight = new THREE.PointLight(0xd97706, 1.2, 25);
+      wyrmRimLight.position.set(0, 4.0, 2.5);
       ddGroup.add(wyrmRimLight);
 
-      // --- Official Dragon's Dogma Dragon SVG Extrusion (Complete 100% Full Wyrm) ---
+      // --- Official Dragon's Dogma Dragon SVG Extrusion (Centered & Subtle Dark Wyrm) ---
       const ddDragonLogo = new THREE.Group();
-      ddDragonLogo.position.set(0, 1.6, 0);
+      ddDragonLogo.position.set(0, 0.25, 0);
 
       const loader = new SVGLoader();
       const svgData = loader.parse(dddaFullDragonRaw);
@@ -607,15 +607,15 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       });
       dragonExtrudeGeo.center();
 
-      // Shadowed Obsidian Wyrmscale Material (soft, dark crimson, hides polygonal artifacts)
+      // Shadowed Stealth Obsidian Wyrmscale Material (Dark, soft, low-contrast)
       const dragonWyrmMat = new THREE.MeshStandardMaterial({
-        color: 0x6e1820,
-        metalness: 0.65,
-        roughness: 0.55,
-        emissive: 0x2a080d,
-        emissiveIntensity: 0.45,
+        color: 0x1a080a,
+        metalness: 0.25,
+        roughness: 0.85,
+        emissive: 0x0a0304,
+        emissiveIntensity: 0.25,
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.88,
         side: THREE.DoubleSide,
       });
 
@@ -623,11 +623,10 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       dragonMesh.scale.set(0.048, -0.048, 0.048);
       ddDragonLogo.add(dragonMesh);
 
-      // --- Pulsating Glowing Heart in the Dragon's Chest (NO Clipping, depthTest: false) ---
-      // In centered coordinates: chest is right below the neck at (0.05, 0.55, 0.45)
-      const heartPos = new THREE.Vector3(0.05, 0.55, 0.45);
+      // --- Pulsating Glowing Heart in the Dragon's Chest (Centered with the Chest) ---
+      const heartPos = new THREE.Vector3(0.0, 0.70, 0.45);
 
-      const heartLight = new THREE.PointLight(0xff3311, 4.8, 22);
+      const heartLight = new THREE.PointLight(0xff3311, 4.0, 18);
       heartLight.position.copy(heartPos);
       ddDragonLogo.add(heartLight);
       ddHeartLightRef = heartLight;
@@ -636,12 +635,12 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const heartCoreMat = new THREE.SpriteMaterial({
         map: makeGlowTexture("rgba(255,255,230,1)", "rgba(255,100,20,0.85)", "rgba(230,20,10,0)"),
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.9,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         depthTest: false,
       });
-      const heartCore = makeSprite(heartCoreMat, heartPos.x, heartPos.y, heartPos.z + 0.1, 1.25, 1.25);
+      const heartCore = makeSprite(heartCoreMat, heartPos.x, heartPos.y, heartPos.z + 0.1, 1.2, 1.2);
       heartCore.renderOrder = 1000;
       ddDragonLogo.add(heartCore);
       ddHeartCoreRef = heartCore;
@@ -650,12 +649,12 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const heartHaloMat = new THREE.SpriteMaterial({
         map: makeGlowTexture("rgba(255,140,50,0.9)", "rgba(220,40,10,0.5)", "rgba(180,10,0,0)"),
         transparent: true,
-        opacity: 0.72,
+        opacity: 0.65,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         depthTest: false,
       });
-      const heartHalo = makeSprite(heartHaloMat, heartPos.x, heartPos.y, heartPos.z, 3.0, 3.0);
+      const heartHalo = makeSprite(heartHaloMat, heartPos.x, heartPos.y, heartPos.z, 2.8, 2.8);
       heartHalo.renderOrder = 999;
       ddDragonLogo.add(heartHalo);
       ddHeartGlowRef = heartHalo;
@@ -785,7 +784,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         if (ddDragonMeshRef) {
           ddDragonMeshRef.rotation.y = Math.sin(elapsed * 0.35) * 0.12 + mouseX * 0.08;
           ddDragonMeshRef.rotation.x = Math.cos(elapsed * 0.25) * 0.04 + mouseY * 0.04;
-          ddDragonMeshRef.position.y = 1.8 + Math.sin(elapsed * 0.5) * 0.06;
+          ddDragonMeshRef.position.y = 0.25 + Math.sin(elapsed * 0.4) * 0.05;
           ddDragonMeshRef.scale.set(1.0 + beat * 0.02, 1.0 + beat * 0.02, 1.0);
         }
 
