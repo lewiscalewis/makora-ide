@@ -70,14 +70,33 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x08000000);
         }
-        let mut child = cmd
+        let mut child = match cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| format!("no se pudo iniciar {}: {}", spec.name, e))?;
-        let stdin = child.stdin.take().ok_or("sin stdin")?;
-        let stdout = child.stdout.take().ok_or("sin stdout")?;
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[MCP] Error iniciando {}: {}", spec.name, e);
+                continue;
+            }
+        };
+
+        let stdin = match child.stdin.take() {
+            Some(si) => si,
+            None => {
+                let _ = child.kill();
+                continue;
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(so) => so,
+            None => {
+                let _ = child.kill();
+                continue;
+            }
+        };
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -95,7 +114,7 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
             lines: rx,
         };
 
-        send_request(
+        let init_res = send_request(
             &mut server.stdin,
             &server.lines,
             1,
@@ -105,15 +124,26 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
                 "capabilities": {},
                 "clientInfo": { "name": "makora-ide", "version": "0.1.0" }
             }),
-        )
-        .map_err(|e| format!("{}: {e}", spec.name))?;
+        );
+        if let Err(e) = init_res {
+            eprintln!("[MCP] Error en handshake initialize para {}: {}", spec.name, e);
+            let _ = server.child.kill();
+            continue;
+        }
 
         let mut note = json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string();
         note.push('\n');
         let _ = server.stdin.write_all(note.as_bytes());
 
-        let resp = send_request(&mut server.stdin, &server.lines, 2, "tools/list", json!({}))
-            .map_err(|e| format!("{}: {e}", spec.name))?;
+        let list_res = send_request(&mut server.stdin, &server.lines, 2, "tools/list", json!({}));
+        let resp = match list_res {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[MCP] Error listando tools de {}: {}", spec.name, e);
+                let _ = server.child.kill();
+                continue;
+            }
+        };
 
         let mut names: Vec<String> = Vec::new();
         if let Some(arr) = resp.get("tools").and_then(|t| t.as_array()) {

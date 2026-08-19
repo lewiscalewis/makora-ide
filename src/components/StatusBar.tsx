@@ -71,12 +71,15 @@ export default function StatusBar({
             <button
               className="status-item status-clickable git-status-item"
               onClick={onOpenGit}
-              title={`Git: ${t.statusbar.branch} ${gitInfo.branch} | ${totalGitChanges} ${t.statusbar.changesPending}`}
+              title={`Git: ${t.statusbar.branch} ${gitInfo.branch} | ${totalGitChanges} ${t.statusbar.changesPending} (${gitInfo.staged} staged, ${gitInfo.modified} modified, ${gitInfo.untracked} untracked)`}
             >
               <GitBranch size={12} className="status-icon" />
               <span className="status-text font-mono">{gitInfo.branch}</span>
               {totalGitChanges > 0 && (
-                <span className="git-changes-badge" title={`${totalGitChanges} ${t.statusbar.changesPending}`}>
+                <span
+                  className="git-changes-badge"
+                  title={`${totalGitChanges} ${t.statusbar.changesPending} (${gitInfo.staged} staged, ${gitInfo.modified} modified, ${gitInfo.untracked} untracked)`}
+                >
                   ● {totalGitChanges}
                 </span>
               )}

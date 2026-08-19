@@ -141,6 +141,24 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
     obj
 }
 
+fn format_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
+    let clean = raw_body.trim();
+    let detail = if clean.is_empty() {
+        "(sin respuesta adicional del servidor)"
+    } else {
+        clean
+    };
+
+    match status.as_u16() {
+        401 => format!("Error de Autenticación (401): API Key no válida o revocada. Revisa la clave en Configuración.\nDetalles: {detail}"),
+        403 => format!("Acceso Denegado (403): Tu API Key no tiene permisos para acceder a este modelo o región.\nDetalles: {detail}"),
+        404 => format!("Modelo no encontrado (404): El identificador de modelo o endpoint no existe en este proveedor.\nDetalles: {detail}"),
+        429 => format!("Límite de Cuota o Saldo Agotado (429): Se ha superado el rate limit o tu cuenta no dispone de créditos suficientes.\nDetalles: {detail}"),
+        500..=599 => format!("Fallo Temporal del Proveedor ({status}): El servidor de IA experimenta sobrecarga o mantenimiento. Intenta de nuevo en unos instantes.\nDetalles: {detail}"),
+        _ => format!("HTTP {status}: {detail}"),
+    }
+}
+
 pub async fn openai_turn(
     app: &AppHandle,
     cfg: &ChatConfig,
@@ -217,7 +235,7 @@ pub async fn openai_turn(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {status}: {text}"));
+        return Err(format_http_error(status, &text));
     }
 
     let mut usage = ChatUsage::default();
@@ -633,7 +651,7 @@ pub async fn anthropic_turn(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {status}: {text}"));
+        return Err(format_http_error(status, &text));
     }
 
     let mut usage = ChatUsage::default();

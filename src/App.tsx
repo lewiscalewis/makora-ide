@@ -415,8 +415,8 @@ function App() {
     [folders, homePath],
   );
 
-  // Poll Git Status for active folder
-  useEffect(() => {
+  // Live Git Status synchronization (Interval + Focus + Events)
+  const checkGitStatus = useCallback(() => {
     if (effectiveFolders.length > 0) {
       gitStatus(effectiveFolders[0])
         .then(setGitInfo)
@@ -424,7 +424,23 @@ function App() {
     } else {
       setGitInfo(null);
     }
-  }, [effectiveFolders, refreshTick]);
+  }, [effectiveFolders]);
+
+  useEffect(() => {
+    checkGitStatus();
+
+    // 1. Live interval polling every 3.5 seconds
+    const interval = setInterval(checkGitStatus, 3500);
+
+    // 2. Window focus listener
+    const onFocus = () => checkGitStatus();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [checkGitStatus, refreshTick]);
 
   const preset = presetById(settings.providerId);
   const modelConfig =
@@ -1516,8 +1532,15 @@ function App() {
         {showGitModal && (
           <GitModal
             folder={effectiveFolders[0] || ""}
-            onClose={() => setShowGitModal(false)}
-            onRefreshWorkspace={() => setRefreshTick((t) => t + 1)}
+            onClose={() => {
+              setShowGitModal(false);
+              setRefreshTick((t) => t + 1);
+              checkGitStatus();
+            }}
+            onRefreshWorkspace={() => {
+              setRefreshTick((t) => t + 1);
+              checkGitStatus();
+            }}
           />
         )}
 

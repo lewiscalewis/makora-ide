@@ -517,14 +517,18 @@ fn search_walk(dir: &str, q: &str, out: &mut Vec<String>, count: &mut u32) {
 
 #[tauri::command]
 #[specta::specta]
-fn search_paths(folders: Vec<String>, query: String) -> Result<Vec<String>, String> {
-    let q = query.to_lowercase();
-    let mut out = Vec::new();
-    let mut count = 0u32;
-    for f in effective_folders(folders) {
-        search_walk(&f, &q, &mut out, &mut count);
-    }
-    Ok(out)
+async fn search_paths(folders: Vec<String>, query: String) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let q = query.to_lowercase();
+        let mut out = Vec::new();
+        let mut count = 0u32;
+        for f in effective_folders(folders) {
+            search_walk(&f, &q, &mut out, &mut count);
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn summarize_dir(
@@ -569,20 +573,24 @@ fn summarize_dir(
 
 #[tauri::command]
 #[specta::specta]
-fn workspace_summary(folders: Vec<String>) -> Result<String, String> {
-    let mut out = String::new();
-    let mut counter = 0u32;
-    let max_entries = 600u32;
-    let max_depth = 5u32;
-    for f in effective_folders(folders) {
-        let name = std::path::Path::new(&f)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| f.clone());
-        out.push_str(&format!("{}/\n", name));
-        summarize_dir(&f, 1, max_depth, &mut out, &mut counter, max_entries);
-    }
-    Ok(out)
+async fn workspace_summary(folders: Vec<String>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut out = String::new();
+        let mut counter = 0u32;
+        let max_entries = 600u32;
+        let max_depth = 5u32;
+        for f in effective_folders(folders) {
+            let name = std::path::Path::new(&f)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| f.clone());
+            out.push_str(&format!("{}/\n", name));
+            summarize_dir(&f, 1, max_depth, &mut out, &mut counter, max_entries);
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -707,167 +715,183 @@ pub struct GitFileItem {
 
 #[tauri::command]
 #[specta::specta]
-fn git_status(folder: String) -> Result<Option<GitStatusInfo>, String> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.current_dir(&folder);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    let branch_out = match cmd.arg("branch").arg("--show-current").output() {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => return Ok(None),
-    };
+async fn git_status(folder: String) -> Result<Option<GitStatusInfo>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(&folder);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        let branch_out = match cmd.arg("branch").arg("--show-current").output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => return Ok(None),
+        };
 
-    let mut status_cmd = std::process::Command::new("git");
-    status_cmd.current_dir(&folder);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        status_cmd.creation_flags(0x08000000);
-    }
-    let status_out = match status_cmd.arg("status").arg("--porcelain").output() {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return Ok(None),
-    };
+        let mut status_cmd = std::process::Command::new("git");
+        status_cmd.current_dir(&folder);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            status_cmd.creation_flags(0x08000000);
+        }
+        let status_out = match status_cmd.arg("status").arg("--porcelain").output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return Ok(None),
+        };
 
-    let mut staged = 0u32;
-    let mut modified = 0u32;
-    let mut untracked = 0u32;
+        let mut staged = 0u32;
+        let mut modified = 0u32;
+        let mut untracked = 0u32;
 
-    for line in status_out.lines() {
-        if line.starts_with("??") {
-            untracked += 1;
-        } else {
-            let bytes = line.as_bytes();
-            if bytes.len() >= 2 {
-                if bytes[0] != b' ' && bytes[0] != b'?' {
-                    staged += 1;
-                }
-                if bytes[1] != b' ' && bytes[1] != b'?' {
-                    modified += 1;
+        for line in status_out.lines() {
+            if line.starts_with("??") {
+                untracked += 1;
+            } else {
+                let bytes = line.as_bytes();
+                if bytes.len() >= 2 {
+                    if bytes[0] != b' ' && bytes[0] != b'?' {
+                        staged += 1;
+                    }
+                    if bytes[1] != b' ' && bytes[1] != b'?' {
+                        modified += 1;
+                    }
                 }
             }
         }
-    }
 
-    Ok(Some(GitStatusInfo {
-        branch: if branch_out.is_empty() { "HEAD".to_string() } else { branch_out },
-        staged,
-        modified,
-        untracked,
-    }))
+        Ok(Some(GitStatusInfo {
+            branch: if branch_out.is_empty() { "HEAD".to_string() } else { branch_out },
+            staged,
+            modified,
+            untracked,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
-fn git_diff(folder: String, path: Option<String>, staged: bool) -> Result<String, String> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.current_dir(&folder);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    cmd.arg("diff");
-    if staged {
-        cmd.arg("--staged");
-    }
-    if let Some(p) = path {
-        cmd.arg("--").arg(p);
-    }
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-fn git_log(folder: String, limit: Option<u32>) -> Result<Vec<GitCommitInfo>, String> {
-    let lim = limit.unwrap_or(25);
-    let mut cmd = std::process::Command::new("git");
-    cmd.current_dir(&folder);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    cmd.arg("log")
-        .arg(format!("-n{}", lim))
-        .arg("--pretty=format:%H|%h|%an|%cr|%s");
-    let out = match cmd.output() {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return Ok(Vec::new()),
-    };
-
-    let mut list = Vec::new();
-    for line in out.lines() {
-        let parts: Vec<&str> = line.splitn(5, '|').collect();
-        if parts.len() == 5 {
-            list.push(GitCommitInfo {
-                hash: parts[0].to_string(),
-                short_hash: parts[1].to_string(),
-                author: parts[2].to_string(),
-                date: parts[3].to_string(),
-                message: parts[4].to_string(),
-            });
+async fn git_diff(folder: String, path: Option<String>, staged: bool) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(&folder);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
         }
-    }
-    Ok(list)
+        cmd.arg("diff");
+        if staged {
+            cmd.arg("--staged");
+        }
+        if let Some(p) = path {
+            cmd.arg("--").arg(p);
+        }
+        let out = cmd.output().map_err(|e| e.to_string())?;
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
-fn git_files(folder: String) -> Result<Vec<GitFileItem>, String> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.current_dir(&folder);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    cmd.arg("status").arg("--porcelain");
-    let out = match cmd.output() {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return Ok(Vec::new()),
-    };
-
-    let mut files = Vec::new();
-    for line in out.lines() {
-        if line.len() < 4 {
-            continue;
+async fn git_log(folder: String, limit: Option<u32>) -> Result<Vec<GitCommitInfo>, String> {
+    tokio::task::spawn_blocking(move || {
+        let lim = limit.unwrap_or(25);
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(&folder);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
         }
-        let status_code = &line[0..2];
-        let path = line[3..].trim().to_string();
+        cmd.arg("log")
+            .arg(format!("-n{}", lim))
+            .arg("--pretty=format:%H|%h|%an|%cr|%s");
+        let out = match cmd.output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return Ok(Vec::new()),
+        };
 
-        if status_code == "??" {
-            files.push(GitFileItem {
-                path,
-                status: "?".to_string(),
-                is_staged: false,
-            });
-        } else {
-            let bytes = status_code.as_bytes();
-            let staged_char = bytes[0] as char;
-            let unstaged_char = bytes[1] as char;
-
-            if staged_char != ' ' && staged_char != '?' {
-                files.push(GitFileItem {
-                    path: path.clone(),
-                    status: staged_char.to_string(),
-                    is_staged: true,
+        let mut list = Vec::new();
+        for line in out.lines() {
+            let parts: Vec<&str> = line.splitn(5, '|').collect();
+            if parts.len() == 5 {
+                list.push(GitCommitInfo {
+                    hash: parts[0].to_string(),
+                    short_hash: parts[1].to_string(),
+                    author: parts[2].to_string(),
+                    date: parts[3].to_string(),
+                    message: parts[4].to_string(),
                 });
             }
-            if unstaged_char != ' ' && unstaged_char != '?' {
+        }
+        Ok(list)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn git_files(folder: String) -> Result<Vec<GitFileItem>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(&folder);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        cmd.arg("status").arg("--porcelain");
+        let out = match cmd.output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return Ok(Vec::new()),
+        };
+
+        let mut files = Vec::new();
+        for line in out.lines() {
+            if line.len() < 4 {
+                continue;
+            }
+            let status_code = &line[0..2];
+            let path = line[3..].trim().to_string();
+
+            if status_code == "??" {
                 files.push(GitFileItem {
                     path,
-                    status: unstaged_char.to_string(),
+                    status: "?".to_string(),
                     is_staged: false,
                 });
+            } else {
+                let bytes = status_code.as_bytes();
+                let staged_char = bytes[0] as char;
+                let unstaged_char = bytes[1] as char;
+
+                if staged_char != ' ' && staged_char != '?' {
+                    files.push(GitFileItem {
+                        path: path.clone(),
+                        status: staged_char.to_string(),
+                        is_staged: true,
+                    });
+                }
+                if unstaged_char != ' ' && unstaged_char != '?' {
+                    files.push(GitFileItem {
+                        path,
+                        status: unstaged_char.to_string(),
+                        is_staged: false,
+                    });
+                }
             }
         }
-    }
-    Ok(files)
+        Ok(files)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
