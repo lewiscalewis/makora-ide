@@ -77,7 +77,7 @@ svg {
   background: var(--bg-card);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
-  backdrop-filter: blur(14px);
+  backdrop-filter: none;
   gap: 12px;
   flex-shrink: 0;
   height: 42px;
@@ -404,10 +404,10 @@ svg {
   pointer-events: none;
 }
 
-/* ===== 3D Background Clarity & Glass Modes ===== */
-/* Normal balanced glass: Highly visible 3D background with sleek frosted acrylic */
+/* ===== 3D Background Clarity & Glass Modes (Zero-dither crisp glass) ===== */
+/* Normal balanced glass: Highly visible 3D background with clean translucent glass */
 .app[data-glass="normal"] {
-  --bg-card: rgba(12, 16, 26, 0.48);
+  --bg-card: rgba(10, 14, 24, 0.55);
 }
 
 .app[data-glass="normal"] .sidebar-explorer,
@@ -416,8 +416,8 @@ svg {
 .app[data-glass="normal"] .bottom-terminal-drawer,
 .app[data-glass="normal"] .header,
 .app[data-glass="normal"] .statusbar {
-  background: rgba(12, 16, 26, 0.48) !important;
-  backdrop-filter: blur(8px) !important;
+  background: rgba(10, 14, 24, 0.55) !important;
+  backdrop-filter: none !important;
 }
 
 .app[data-glass="normal"] .chat-messages,
@@ -431,17 +431,17 @@ svg {
 
 .app[data-glass="normal"] .chat-msg-user {
   background: rgba(0, 200, 214, 0.12) !important;
-  backdrop-filter: blur(6px);
+  backdrop-filter: none !important;
 }
 
 .app[data-glass="normal"] .chat-msg-assistant {
-  background: rgba(14, 18, 28, 0.55) !important;
-  backdrop-filter: blur(8px);
+  background: rgba(14, 18, 28, 0.6) !important;
+  backdrop-filter: none !important;
 }
 
 /* Vivid ultra-translucent glass: Maximum 3D background clarity */
 .app[data-glass="vivid"] {
-  --bg-card: rgba(8, 12, 20, 0.22);
+  --bg-card: rgba(6, 10, 18, 0.28);
 }
 
 .app[data-glass="vivid"] .sidebar-explorer,
@@ -450,8 +450,8 @@ svg {
 .app[data-glass="vivid"] .bottom-terminal-drawer,
 .app[data-glass="vivid"] .header,
 .app[data-glass="vivid"] .statusbar {
-  background: rgba(8, 12, 20, 0.22) !important;
-  backdrop-filter: blur(4px) !important;
+  background: rgba(6, 10, 18, 0.28) !important;
+  backdrop-filter: none !important;
 }
 
 .app[data-glass="vivid"] .chat-messages,
@@ -465,12 +465,12 @@ svg {
 
 .app[data-glass="vivid"] .chat-msg-user {
   background: rgba(0, 200, 214, 0.15) !important;
-  backdrop-filter: blur(4px);
+  backdrop-filter: none !important;
 }
 
 .app[data-glass="vivid"] .chat-msg-assistant {
-  background: rgba(10, 14, 22, 0.32) !important;
-  backdrop-filter: blur(6px);
+  background: rgba(8, 12, 20, 0.38) !important;
+  backdrop-filter: none !important;
 }
 
 /* Solid opaque mode */

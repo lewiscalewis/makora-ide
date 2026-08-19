@@ -260,6 +260,19 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
     }> = [];
     let ddSmokeRefs: Array<{ sprite: THREE.Sprite; speed: number; baseX: number; phase: number; opacity: number }> = [];
     let skyMistRefs: Array<{ sprite: THREE.Sprite; speed: number; baseY: number; phase: number; opacity: number }> = [];
+    let skyFrostRefs: Array<{
+      positions: Float32Array;
+      speeds: Float32Array;
+      drift: Float32Array;
+      geo: THREE.BufferGeometry;
+      count: number;
+      mat: THREE.PointsMaterial;
+      baseOpacity: number;
+      freq: number;
+      phase: number;
+      floor: number;
+      ceiling: number;
+    }> = [];
     let samuraiMaskRef: THREE.Group | null = null;
 
     if (currentTheme === "cyberpunk") {
@@ -578,6 +591,55 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
           baseY: mist.position.y,
           phase: Math.random() * Math.PI * 2,
           opacity: mistMat.opacity,
+        });
+      }
+
+      // --- Organic Falling Frost & Snow Flakes (Realistic soft drifting atmospheric frost) ---
+      skyFrostRefs = [];
+      const realisticFrostTexture = makeSoftDotTexture("rgba(230,245,255,0.9)", "rgba(160,205,250,0.25)");
+      const frostLayers = [
+        // 1. Foreground Bokeh Flakes (Soft, floating close past the camera)
+        { count: 22, size: 0.9, color: 0xebf5ff, min: 0.008, max: 0.016, spread: 28, zMin: 3.5, zMax: 6.5, opacity: 0.45, freq: 1.4 },
+        // 2. Mid-Foreground Soft Frost Motes
+        { count: 90, size: 0.45, color: 0xd2e8ff, min: 0.006, max: 0.012, spread: 34, zMin: 0.5, zMax: 3.2, opacity: 0.55, freq: 1.8 },
+        // 3. Background Depth Flakes
+        { count: 180, size: 0.22, color: 0xbcd8f8, min: 0.004, max: 0.009, spread: 38, zMin: -5.0, zMax: 0.0, opacity: 0.48, freq: 1.2 },
+      ];
+      for (const layer of frostLayers) {
+        const geo = new THREE.BufferGeometry();
+        const pos = new Float32Array(layer.count * 3);
+        const speeds = new Float32Array(layer.count);
+        const drift = new Float32Array(layer.count);
+        for (let i = 0; i < layer.count; i++) {
+          pos[i * 3] = (Math.random() - 0.5) * layer.spread;
+          pos[i * 3 + 1] = (Math.random() - 0.5) * 24;
+          pos[i * 3 + 2] = layer.zMin + Math.random() * (layer.zMax - layer.zMin);
+          speeds[i] = layer.min + Math.random() * (layer.max - layer.min);
+          drift[i] = Math.random() * Math.PI * 2;
+        }
+        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const mat = new THREE.PointsMaterial({
+          size: layer.size,
+          map: realisticFrostTexture,
+          color: layer.color,
+          transparent: true,
+          opacity: layer.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        skyrimGroup.add(new THREE.Points(geo, mat));
+        skyFrostRefs.push({
+          positions: pos,
+          speeds,
+          drift,
+          geo,
+          count: layer.count,
+          mat,
+          baseOpacity: layer.opacity,
+          freq: layer.freq,
+          phase: Math.random() * Math.PI * 2,
+          floor: -12,
+          ceiling: 12,
         });
       }
 
@@ -922,6 +984,19 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
           w.sprite.position.y = w.baseY + Math.sin(elapsed * 0.25 + w.phase) * 0.4;
           (w.sprite.material as THREE.SpriteMaterial).opacity =
             w.opacity * (0.75 + 0.25 * Math.sin(elapsed * 0.8 + w.phase));
+        }
+
+        for (const sys of skyFrostRefs) {
+          for (let i = 0; i < sys.count; i++) {
+            sys.positions[i * 3 + 1] -= sys.speeds[i];
+            sys.positions[i * 3] += Math.sin(elapsed * 0.9 + sys.drift[i]) * 0.0035;
+            if (sys.positions[i * 3 + 1] < sys.floor) {
+              sys.positions[i * 3 + 1] = sys.ceiling;
+              sys.positions[i * 3] = (Math.random() - 0.5) * 36;
+            }
+          }
+          sys.geo.attributes.position.needsUpdate = true;
+          sys.mat.opacity = sys.baseOpacity * (0.78 + 0.22 * Math.sin(elapsed * sys.freq + sys.phase));
         }
       }
 
