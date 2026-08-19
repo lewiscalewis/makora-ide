@@ -5925,8 +5925,8 @@ select:focus {
    7. THEME: SKYRIM ELDER FROST (Tamriel Aurora Borealis)
    ========================================================================== */
 [data-theme="skyrim"] {
-  --bg: #020408;
-  --bg-card: rgba(5, 8, 16, 0.75);
+  --bg: #010204;
+  --bg-card: rgba(3, 5, 10, 0.76);
   --cyan: #7dd3fc;
   --gold: #facc15;
   --accent-blue: #38bdf8;
@@ -5948,9 +5948,9 @@ select:focus {
 }
 
 [data-theme="skyrim"] .header {
-  background: linear-gradient(180deg, rgba(12, 18, 28, 0.96) 0%, rgba(7, 10, 16, 0.92) 100%);
-  border-bottom: 1px solid rgba(56, 189, 248, 0.25);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 1px 12px rgba(56, 189, 248, 0.1);
+  background: linear-gradient(180deg, rgba(6, 9, 15, 0.96) 0%, rgba(2, 4, 7, 0.94) 100%);
+  border-bottom: 1px solid rgba(125, 211, 252, 0.25);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7), 0 1px 12px rgba(125, 211, 252, 0.1);
 }
 
 [data-theme="skyrim"] .app-brand-logo {

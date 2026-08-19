@@ -528,95 +528,118 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const skyrimGroup = new THREE.Group();
       skyrimGroup.position.set(0, 0, -10);
 
-      // --- Deep Night Sky Gradient Backdrop (Darker cold frost) ---
+      // --- Deep Midnight Sky Gradient Backdrop (Darker cold frost) ---
       const nightMat = new THREE.MeshBasicMaterial({
         map: makeVerticalGradientTexture([
-          [0, "#020408"],
-          [0.4, "#030610"],
-          [0.75, "#050e1e"],
-          [1, "#081528"],
+          [0, "#010204"],
+          [0.35, "#010307"],
+          [0.7, "#030711"],
+          [1, "#050c1b"],
         ]),
         transparent: true,
-        opacity: 0.98,
+        opacity: 0.99,
         depthWrite: false,
       });
-      const nightGeo = new THREE.PlaneGeometry(80, 56);
+      const nightGeo = new THREE.PlaneGeometry(90, 60);
       const night = new THREE.Mesh(nightGeo, nightMat);
       night.position.set(0, 2, -9);
       skyrimGroup.add(night);
 
       // --- Central Skyrim Imperial Dragon Crest (Seal of Akatosh) ---
       const skyrimLogo = new THREE.Group();
-      skyrimLogo.position.set(0, 0.15, 0);
+      skyrimLogo.position.set(0, 2.0, 0);
 
       const steelMat = new THREE.MeshBasicMaterial({
-        color: 0xd6e2ef,
+        color: 0xcfd8e3,
         side: THREE.DoubleSide,
       });
-      const steelWireMat = new THREE.MeshBasicMaterial({
+      const edgeLineMat = new THREE.LineBasicMaterial({
         color: 0x7dd3fc,
-        wireframe: true,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.95,
       });
 
       const extrudeOpt = {
         depth: 0.22,
         bevelEnabled: true,
-        bevelSegments: 4,
+        bevelSegments: 3,
         steps: 1,
-        bevelSize: 0.05,
-        bevelThickness: 0.06,
+        bevelSize: 0.04,
+        bevelThickness: 0.05,
       };
 
-      // 1. Left Wing Blade (Diamond / Rhombus Outer Wing)
+      // 1. Left Wing Blade (Hollow Diamond Outer Wing Frame)
       const leftWingShape = new THREE.Shape();
       leftWingShape.moveTo(-0.06, 3.8);
-      leftWingShape.lineTo(-0.45, 2.6);
-      leftWingShape.lineTo(-0.75, 1.6);
-      leftWingShape.lineTo(-0.52, 1.25);
-      leftWingShape.lineTo(-0.95, 0.45);
-      leftWingShape.lineTo(-0.65, -0.2);
-      leftWingShape.lineTo(-0.95, -1.2);
-      leftWingShape.lineTo(-0.16, -3.9);
-      leftWingShape.lineTo(-1.3, -1.3);
+      leftWingShape.lineTo(-1.3, 2.2);
       leftWingShape.lineTo(-1.85, 0.7);
-      leftWingShape.lineTo(-1.45, 2.3);
+      leftWingShape.lineTo(-1.3, -1.3);
+      leftWingShape.lineTo(-0.12, -3.9);
+      leftWingShape.lineTo(-0.45, -2.8);
+      leftWingShape.lineTo(-0.85, -1.3);
+      leftWingShape.lineTo(-0.6, -0.4);
+      leftWingShape.lineTo(-0.95, 0.45);
+      leftWingShape.lineTo(-0.52, 1.25);
+      leftWingShape.lineTo(-0.75, 1.6);
+      leftWingShape.lineTo(-0.45, 2.6);
       leftWingShape.closePath();
+
+      const leftHole = new THREE.Path();
+      leftHole.moveTo(-0.55, 2.1);
+      leftHole.lineTo(-1.15, 1.3);
+      leftHole.lineTo(-1.45, 0.6);
+      leftHole.lineTo(-1.05, -0.7);
+      leftHole.lineTo(-0.35, -2.5);
+      leftHole.lineTo(-0.6, -1.1);
+      leftHole.lineTo(-0.75, 0.4);
+      leftHole.lineTo(-0.5, 1.1);
+      leftHole.closePath();
+      leftWingShape.holes.push(leftHole);
 
       const leftWingGeo = new THREE.ExtrudeGeometry(leftWingShape, extrudeOpt);
       leftWingGeo.translate(0, 0, -0.11);
       const leftWing = new THREE.Mesh(leftWingGeo, steelMat);
-      const leftWingWire = new THREE.Mesh(leftWingGeo, steelWireMat);
+      const leftWingEdges = new THREE.EdgesGeometry(leftWingGeo, 20);
+      const leftWingLines = new THREE.LineSegments(leftWingEdges, edgeLineMat);
       skyrimLogo.add(leftWing);
-      skyrimLogo.add(leftWingWire);
+      skyrimLogo.add(leftWingLines);
 
       // 2. Right Wing Blade (Lore-accurate broken / chipped bottom tip!)
       const rightWingShape = new THREE.Shape();
       rightWingShape.moveTo(0.06, 3.8);
-      rightWingShape.lineTo(1.45, 2.3);
+      rightWingShape.lineTo(1.3, 2.2);
       rightWingShape.lineTo(1.85, 0.7);
       rightWingShape.lineTo(1.35, -0.6);
-      // Broken Chipped Fracture Edge
+      // Jagged Broken Edge (Lore-accurate broken Akatosh wing tip!)
       rightWingShape.lineTo(1.15, -1.05);
       rightWingShape.lineTo(0.9, -0.85);
-      rightWingShape.lineTo(0.65, -1.3);
-      // Inner contour back up
-      rightWingShape.lineTo(0.65, -0.2);
+      rightWingShape.lineTo(0.65, -1.35); // Broken off point!
+      rightWingShape.lineTo(0.6, -0.4);
       rightWingShape.lineTo(0.95, 0.45);
       rightWingShape.lineTo(0.52, 1.25);
       rightWingShape.lineTo(0.75, 1.6);
       rightWingShape.lineTo(0.45, 2.6);
       rightWingShape.closePath();
 
+      const rightHole = new THREE.Path();
+      rightHole.moveTo(0.55, 2.1);
+      rightHole.lineTo(1.15, 1.3);
+      rightHole.lineTo(1.45, 0.6);
+      rightHole.lineTo(1.05, -0.5);
+      rightHole.lineTo(0.75, 0.4);
+      rightHole.lineTo(0.5, 1.1);
+      rightHole.closePath();
+      rightWingShape.holes.push(rightHole);
+
       const rightWingGeo = new THREE.ExtrudeGeometry(rightWingShape, extrudeOpt);
       rightWingGeo.translate(0, 0, -0.11);
       const rightWing = new THREE.Mesh(rightWingGeo, steelMat);
-      const rightWingWire = new THREE.Mesh(rightWingGeo, steelWireMat);
+      const rightWingEdges = new THREE.EdgesGeometry(rightWingGeo, 20);
+      const rightWingLines = new THREE.LineSegments(rightWingEdges, edgeLineMat);
       skyrimLogo.add(rightWing);
-      skyrimLogo.add(rightWingWire);
+      skyrimLogo.add(rightWingLines);
 
-      // 3. Central Akatosh Dragon (Head, S-neck, wing folds, zigzag tail)
+      // 3. Central Akatosh Imperial Dragon (Head, S-neck, wing folds, zigzag tail)
       const dragonBodyShape = new THREE.Shape();
       // Dragon Head & Crown Horn
       dragonBodyShape.moveTo(0.0, 2.85);
@@ -627,7 +650,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       dragonBodyShape.lineTo(-0.32, 1.92);
       dragonBodyShape.lineTo(-0.16, 1.75);
       // S-Curved Neck
-      dragonBodyShape.bezierCurveTo(0.35, 1.6, 0.55, 1.15, 0.28, 0.7);
+      dragonBodyShape.bezierCurveTo(0.32, 1.55, 0.52, 1.1, 0.25, 0.7);
       dragonBodyShape.lineTo(0.12, 0.55);
       // Left Wing Fold
       dragonBodyShape.bezierCurveTo(-0.45, 0.6, -1.35, 0.5, -1.5, 0.15);
@@ -652,61 +675,30 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       dragonBodyShape.closePath();
 
       const dragonGeo = new THREE.ExtrudeGeometry(dragonBodyShape, {
-        depth: 0.3,
+        depth: 0.28,
         bevelEnabled: true,
-        bevelSegments: 4,
+        bevelSegments: 3,
         steps: 1,
-        bevelSize: 0.06,
-        bevelThickness: 0.08,
+        bevelSize: 0.05,
+        bevelThickness: 0.06,
       });
-      dragonGeo.translate(0, 0, -0.05);
+      dragonGeo.translate(0, 0, -0.04);
       const dragonMesh = new THREE.Mesh(dragonGeo, steelMat);
-      const dragonWire = new THREE.Mesh(dragonGeo, steelWireMat);
+      const dragonEdges = new THREE.EdgesGeometry(dragonGeo, 18);
+      const dragonLines = new THREE.LineSegments(dragonEdges, edgeLineMat);
       skyrimLogo.add(dragonMesh);
-      skyrimLogo.add(dragonWire);
-
-      // Frost Halo Sprite behind the logo
-      const skyrimHaloMat = new THREE.SpriteMaterial({
-        map: makeGlowTexture("rgba(180,225,255,0.85)", "rgba(56,189,248,0.4)", "rgba(14,165,233,0)"),
-        transparent: true,
-        opacity: 0.45,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const skyrimHalo = makeSprite(skyrimHaloMat, 0, 0, -0.5, 8.5, 8.5);
-      skyrimLogo.add(skyrimHalo);
+      skyrimLogo.add(dragonLines);
 
       skyrimLogoRef = skyrimLogo;
       skyrimGroup.add(skyrimLogo);
-
-      // --- Pale moon with soft halo ---
-      const moonMat = new THREE.SpriteMaterial({
-        map: makeGlowTexture("rgba(240,248,255,1)", "rgba(190,220,250,0.9)", "rgba(140,180,230,0)"),
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const moon = makeSprite(moonMat, 6.6, 4.6, -7, 2.6, 2.6);
-      skyrimGroup.add(moon);
-
-      const moonHaloMat = new THREE.SpriteMaterial({
-        map: makeGlowTexture("rgba(190,220,250,0.7)", "rgba(150,190,235,0.3)", "rgba(120,160,220,0)"),
-        transparent: true,
-        opacity: 0.13,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const moonHalo = makeSprite(moonHaloMat, 6.6, 4.6, -7.2, 6.4, 6.4);
-      skyrimGroup.add(moonHalo);
 
       // --- Twinkling star field (three depth layers) ---
       skyStarRefs = [];
       const starTexture = makeSoftDotTexture("rgba(255,255,255,1)", "rgba(180,210,255,0.7)");
       const starLayers = [
-        { count: 340, size: 0.045, yMin: 1.5, yMax: 13.5, opacity: 0.7, freq: 1.6 },
-        { count: 210, size: 0.07, yMin: 2.5, yMax: 13.0, opacity: 0.55, freq: 1.1 },
-        { count: 90, size: 0.1, yMin: 3.0, yMax: 12.0, opacity: 0.5, freq: 0.7 },
+        { count: 320, size: 0.045, yMin: 1.5, yMax: 13.5, opacity: 0.65, freq: 1.6 },
+        { count: 180, size: 0.07, yMin: 2.5, yMax: 13.0, opacity: 0.5, freq: 1.1 },
+        { count: 80, size: 0.1, yMin: 3.0, yMax: 12.0, opacity: 0.45, freq: 0.7 },
       ];
       for (const layer of starLayers) {
         const geo = new THREE.BufferGeometry();
@@ -742,7 +734,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         const mistMat = new THREE.SpriteMaterial({
           map: mistTexture,
           transparent: true,
-          opacity: 0.03 + Math.random() * 0.04,
+          opacity: 0.025 + Math.random() * 0.035,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         });
@@ -765,13 +757,18 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         });
       }
 
-      // --- Frost falling across the whole IDE (three crystalline layers) ---
+      // --- Prominent Multi-Depth Frost & Snowflakes (Simulating Near & Far Parallax) ---
       skyFrostRefs = [];
       const flakeTexture = makeFlakeTexture();
       const frostLayers = [
-        { count: 520, size: 0.13, color: 0xeaf4ff, min: 0.006, max: 0.012, spread: 40, opacity: 0.7, freq: 2.4 },
-        { count: 360, size: 0.22, color: 0xd9ecff, min: 0.01, max: 0.018, spread: 38, opacity: 0.92, freq: 1.8 },
-        { count: 170, size: 0.4, color: 0xc8ddff, min: 0.017, max: 0.028, spread: 36, opacity: 0.85, freq: 1.2 },
+        // 1. Foreground Mega-Flakes (CercanÃ­a inmediata: floating right past the screen!)
+        { count: 28, size: 1.6, color: 0xffffff, min: 0.012, max: 0.022, spread: 32, zMin: 3.5, zMax: 6.5, opacity: 0.85, freq: 1.8 },
+        // 2. Near Mid-Flakes
+        { count: 160, size: 0.65, color: 0xeaf4ff, min: 0.009, max: 0.016, spread: 36, zMin: 0.5, zMax: 3.2, opacity: 0.92, freq: 2.2 },
+        // 3. Main Emblem Layer Snow
+        { count: 380, size: 0.28, color: 0xd9ecff, min: 0.006, max: 0.012, spread: 40, zMin: -4.0, zMax: 0.0, opacity: 0.88, freq: 1.6 },
+        // 4. Deep Background Frost Dust (LejanÃ­a profunda)
+        { count: 650, size: 0.12, color: 0xc0d8f8, min: 0.004, max: 0.008, spread: 44, zMin: -11.0, zMax: -5.0, opacity: 0.72, freq: 1.0 },
       ];
       for (const layer of frostLayers) {
         const geo = new THREE.BufferGeometry();
@@ -780,8 +777,8 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         const drift = new Float32Array(layer.count);
         for (let i = 0; i < layer.count; i++) {
           pos[i * 3] = (Math.random() - 0.5) * layer.spread;
-          pos[i * 3 + 1] = (Math.random() - 0.5) * 22;
-          pos[i * 3 + 2] = -6 + Math.random() * 5;
+          pos[i * 3 + 1] = (Math.random() - 0.5) * 24;
+          pos[i * 3 + 2] = layer.zMin + Math.random() * (layer.zMax - layer.zMin);
           speeds[i] = layer.min + Math.random() * (layer.max - layer.min);
           drift[i] = Math.random() * Math.PI * 2;
         }
@@ -806,8 +803,8 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
           baseOpacity: layer.opacity,
           freq: layer.freq,
           phase: Math.random() * Math.PI * 2,
-          floor: -11,
-          ceiling: 11,
+          floor: -12,
+          ceiling: 12,
         });
       }
 
@@ -1165,7 +1162,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         if (skyrimLogoRef) {
           skyrimLogoRef.rotation.y = Math.sin(elapsed * 0.4) * 0.08 + mouseX * 0.06;
           skyrimLogoRef.rotation.x = Math.cos(elapsed * 0.3) * 0.04 + mouseY * 0.04;
-          skyrimLogoRef.position.y = 0.15 + Math.sin(elapsed * 0.6) * 0.08;
+          skyrimLogoRef.position.y = 2.0 + Math.sin(elapsed * 0.6) * 0.08;
         }
 
         for (const s of skyStarRefs) {
