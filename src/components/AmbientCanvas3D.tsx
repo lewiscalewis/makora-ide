@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
-import dddaRaw from "../assets/ddda_clean.svg?raw";
+import dddaSilhouetteRaw from "../assets/ddda_silhouette.svg?raw";
 import type { ThemeId } from "../types";
 
 const SKYRIM_SVG_DATA = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 724 1024"><path d="M 311.0 63.5 L 313.5 66.0 L 314.5 70.0 L 314.5 84.0 L 316.5 100.0 L 326.5 118.0 L 329.5 128.0 L 328.0 128.5 L 320.0 120.5 L 314.0 117.5 L 311.0 117.5 L 307.5 121.0 L 304.5 127.0 L 290.5 173.0 L 269.5 259.0 L 262.5 295.0 L 262.5 310.0 L 266.5 317.0 L 285.5 338.0 L 288.5 343.0 L 291.5 354.0 L 277.0 341.5 L 270.0 337.5 L 259.0 335.5 L 247.5 339.0 L 233.5 415.0 L 233.5 434.0 L 236.5 440.0 L 245.0 446.5 L 260.0 449.5 L 274.0 448.5 L 285.0 445.5 L 290.5 440.0 L 291.5 433.0 L 286.5 424.0 L 272.5 411.0 L 284.0 411.5 L 296.0 417.5 L 310.5 431.0 L 319.5 446.0 L 324.0 458.5 L 323.5 444.0 L 320.5 433.0 L 315.5 422.0 L 319.0 422.5 L 327.0 428.5 L 339.5 442.0 L 339.5 438.0 L 326.5 401.0 L 324.5 391.0 L 324.5 367.0 L 330.5 353.0 L 344.0 338.5 L 350.0 334.5 L 364.0 327.5 L 384.0 320.5 L 401.0 311.5 L 408.5 305.0 L 416.5 294.0 L 417.5 279.0 L 415.5 272.0 L 411.5 266.0 L 399.0 255.5 L 379.0 248.5 L 367.0 248.5 L 359.0 250.5 L 344.0 259.5 L 331.5 273.0 L 325.0 289.5 L 318.5 283.0 L 315.5 273.0 L 315.5 267.0 L 323.5 255.0 L 325.5 234.0 L 337.5 209.0 L 337.5 182.0 L 336.5 181.0 L 337.5 168.0 L 346.0 153.5 L 347.5 154.0 L 345.5 164.0 L 346.5 177.0 L 353.5 197.0 L 360.0 207.5 L 369.0 209.5 L 396.0 208.5 L 410.0 203.5 L 415.5 198.0 L 414.5 203.0 L 407.0 210.5 L 387.0 223.5 L 382.5 228.0 L 381.5 233.0 L 387.0 236.5 L 398.0 239.5 L 413.0 247.5 L 422.5 256.0 L 427.5 263.0 L 431.5 272.0 L 431.5 297.0 L 427.5 307.0 L 421.5 316.0 L 415.0 322.5 L 405.0 329.5 L 367.0 350.5 L 359.5 358.0 L 356.5 366.0 L 357.5 379.0 L 363.5 390.0 L 389.5 426.0 L 395.5 438.0 L 401.5 459.0 L 403.5 457.0 L 405.5 449.0 L 410.5 440.0 L 423.0 426.5 L 431.0 421.5 L 432.5 422.0 L 424.5 443.0 L 424.0 457.5 L 431.5 439.0 L 438.5 429.0 L 454.0 415.5 L 468.0 410.5 L 475.5 411.0 L 459.5 426.0 L 457.5 430.0 L 456.5 439.0 L 461.0 444.5 L 475.0 448.5 L 498.0 448.5 L 505.0 445.5 L 512.5 437.0 L 514.5 432.0 L 514.5 416.0 L 500.5 339.0 L 491.0 335.5 L 484.0 335.5 L 478.0 337.5 L 470.0 342.5 L 456.5 354.0 L 458.5 345.0 L 464.5 335.0 L 483.5 314.0 L 485.5 309.0 L 485.5 296.0 L 477.5 255.0 L 462.5 193.0 L 449.5 145.0 L 442.5 125.0 L 437.0 117.5 L 433.0 117.5 L 427.0 120.5 L 418.5 129.0 L 420.5 120.0 L 431.5 101.0 L 433.5 71.0 L 436.0 63.5 L 437.5 64.0 L 446.5 82.0 L 609.5 437.0 L 440.0 805.5 L 438.5 790.0 L 438.5 667.0 L 452.0 661.5 L 464.0 652.5 L 477.5 637.0 L 487.5 620.0 L 480.5 578.0 L 478.5 536.0 L 477.0 535.5 L 464.0 542.5 L 449.5 555.0 L 440.5 570.0 L 435.0 588.5 L 432.5 583.0 L 431.5 574.0 L 432.0 546.5 L 426.0 549.5 L 412.5 563.0 L 406.5 574.0 L 403.5 588.0 L 404.5 618.0 L 407.5 641.0 L 406.5 664.0 L 399.5 681.0 L 371.5 724.0 L 360.5 745.0 L 360.5 754.0 L 369.5 786.0 L 370.5 797.0 L 339.5 846.0 L 339.5 853.0 L 347.5 868.0 L 356.0 876.5 L 362.0 879.5 L 387.0 878.5 L 395.0 875.5 L 413.0 861.5 L 414.5 862.0 L 376.5 947.0 L 372.0 953.5 L 365.5 942.0 L 335.5 876.0 L 325.5 850.0 L 325.5 841.0 L 327.5 837.0 L 348.5 806.0 L 353.5 796.0 L 353.5 789.0 L 351.5 783.0 L 339.5 755.0 L 338.5 742.0 L 351.5 715.0 L 373.5 675.0 L 376.5 664.0 L 376.5 650.0 L 374.5 634.0 L 368.5 608.0 L 361.5 587.0 L 353.5 574.0 L 343.0 562.5 L 331.0 553.5 L 316.0 546.5 L 315.5 581.0 L 314.5 587.0 L 313.0 588.5 L 307.5 570.0 L 298.5 555.0 L 284.0 542.5 L 269.5 536.0 L 267.5 576.0 L 261.5 614.0 L 261.5 621.0 L 267.5 633.0 L 280.0 649.5 L 296.0 661.5 L 309.5 667.0 L 309.5 782.0 L 308.5 783.0 L 308.0 805.5 L 138.5 438.0 L 141.5 429.0 L 258.5 177.0 L 297.5 90.0 L 311.0 63.5 Z"/></svg>`;
@@ -568,49 +568,54 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const ddGroup = new THREE.Group();
       ddGroup.position.set(0, 0, -10);
 
-      // --- Ambient & Accent Wyrmfire Lighting for High Contrast Visibility ---
-      const ddAmbLight = new THREE.AmbientLight(0x40141a, 2.2);
+      // --- Ambient & Accent Wyrmfire Lighting for Soft Cinematic Atmosphere ---
+      const ddAmbLight = new THREE.AmbientLight(0x351016, 2.0);
       ddGroup.add(ddAmbLight);
 
-      const wyrmLight1 = new THREE.PointLight(0xff9944, 4.8, 45);
+      const wyrmLight1 = new THREE.PointLight(0xff8833, 4.0, 45);
       wyrmLight1.position.set(4.0, 4.0, 4.5);
       ddGroup.add(wyrmLight1);
 
-      const wyrmLight2 = new THREE.PointLight(0xff2200, 3.8, 40);
+      const wyrmLight2 = new THREE.PointLight(0xff1a00, 3.2, 40);
       wyrmLight2.position.set(-4.0, -3.0, 4.0);
       ddGroup.add(wyrmLight2);
 
-      const wyrmRimLight = new THREE.PointLight(0xf59e0b, 3.2, 35);
-      wyrmRimLight.position.set(0, 5.0, 2.5);
+      const wyrmRimLight = new THREE.PointLight(0xf59e0b, 2.8, 35);
+      wyrmRimLight.position.set(0, 5.0, 3.0);
       ddGroup.add(wyrmRimLight);
 
-      // --- Official Dragon's Dogma Dragon SVG Extrusion (Bigger, Bolder & Highly Visible) ---
+      // --- Official Dragon's Dogma Dragon SVG Extrusion (Seamless Silhouette) ---
       const ddDragonLogo = new THREE.Group();
       ddDragonLogo.position.set(0, 1.8, 0);
 
       const loader = new SVGLoader();
-      const svgData = loader.parse(dddaRaw);
+      const svgData = loader.parse(dddaSilhouetteRaw);
       const shapes: THREE.Shape[] = [];
       for (const path of svgData.paths) {
         const s = SVGLoader.createShapes(path);
         shapes.push(...s);
       }
 
+      // Smooth beveled extrusion without internal coplanar seams
       const dragonExtrudeGeo = new THREE.ExtrudeGeometry(shapes, {
-        depth: 10,
+        depth: 6,
         bevelEnabled: true,
-        bevelThickness: 2.0,
+        bevelThickness: 1.6,
         bevelSize: 1.2,
-        bevelSegments: 3,
+        bevelSegments: 4,
+        curveSegments: 16,
       });
       dragonExtrudeGeo.center();
 
+      // Shadowed Obsidian Wyrmscale Material (soft, dark crimson, hides polygonal artifacts)
       const dragonWyrmMat = new THREE.MeshStandardMaterial({
-        color: 0xb82e36,
-        metalness: 0.82,
-        roughness: 0.28,
-        emissive: 0x5a1218,
-        emissiveIntensity: 0.6,
+        color: 0x5a141b,
+        metalness: 0.52,
+        roughness: 0.65,
+        emissive: 0x24060a,
+        emissiveIntensity: 0.45,
+        transparent: true,
+        opacity: 0.94,
         side: THREE.DoubleSide,
       });
 
@@ -618,10 +623,10 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       dragonMesh.scale.set(0.052, -0.052, 0.052);
       ddDragonLogo.add(dragonMesh);
 
-      // --- Pulsating Glowing Heart in the Dragon's Chest ---
-      const heartPos = new THREE.Vector3(-0.58, 0.22, 0.35);
+      // --- Pulsating Glowing Heart in the Dragon's Chest (NO Clipping, depthTest: false) ---
+      const heartPos = new THREE.Vector3(-0.60, 0.12, 0.45);
 
-      const heartLight = new THREE.PointLight(0xff3311, 5.0, 22);
+      const heartLight = new THREE.PointLight(0xff3311, 4.8, 20);
       heartLight.position.copy(heartPos);
       ddDragonLogo.add(heartLight);
       ddHeartLightRef = heartLight;
@@ -633,20 +638,24 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         opacity: 0.95,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        depthTest: false,
       });
-      const heartCore = makeSprite(heartCoreMat, heartPos.x, heartPos.y, heartPos.z + 0.08, 1.2, 1.2);
+      const heartCore = makeSprite(heartCoreMat, heartPos.x, heartPos.y, heartPos.z + 0.1, 1.3, 1.3);
+      heartCore.renderOrder = 1000;
       ddDragonLogo.add(heartCore);
       ddHeartCoreRef = heartCore;
 
-      // Outer Heart Halo Sprite
+      // Outer Heart Halo Sprite (Soft wide radiant bloom)
       const heartHaloMat = new THREE.SpriteMaterial({
         map: makeGlowTexture("rgba(255,140,50,0.9)", "rgba(220,40,10,0.5)", "rgba(180,10,0,0)"),
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.72,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        depthTest: false,
       });
-      const heartHalo = makeSprite(heartHaloMat, heartPos.x, heartPos.y, heartPos.z, 2.8, 2.8);
+      const heartHalo = makeSprite(heartHaloMat, heartPos.x, heartPos.y, heartPos.z, 3.2, 3.2);
+      heartHalo.renderOrder = 999;
       ddDragonLogo.add(heartHalo);
       ddHeartGlowRef = heartHalo;
 
