@@ -181,6 +181,12 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
     renderer.domElement.className = "ambient-bg-canvas";
     container.appendChild(renderer.domElement);
 
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      cancelAnimationFrame(animId);
+    };
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost, false);
+
     let mouseX = 0;
     let mouseY = 0;
     const onMouseMove = (e: MouseEvent) => {
@@ -846,6 +852,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
     return () => {
       isDisposed = true;
       cancelAnimationFrame(animId);
+      renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("visibilitychange", onVisibilityChange);

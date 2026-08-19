@@ -27,7 +27,9 @@ pub struct TurnOutcome {
 
 pub static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .connect_timeout(std::time::Duration::from_secs(45))
+        .timeout(std::time::Duration::from_secs(900))
+        .tcp_keepalive(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_default()
 });
