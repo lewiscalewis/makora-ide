@@ -383,15 +383,65 @@ svg {
   height: 2px;
 }
 
-/* ===== 3D Background Clarity & Glass Modes ===== */
-/* Normal balanced glass */
-.app[data-glass="normal"] {
-  --bg-card: rgba(14, 18, 28, 0.78);
+/* ===== 3D Canvas Ambient Backdrop Positioning ===== */
+.ambient-3d-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
 }
 
-/* Vivid ultra-translucent glass: 3D background characters & scenes (Grigori, Dovahkiin, Samurai Oni, Northern Lights) are fully visible through the panels! */
+.ambient-bg-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none;
+}
+
+/* ===== 3D Background Clarity & Glass Modes ===== */
+/* Normal balanced glass: Highly visible 3D background with sleek frosted acrylic */
+.app[data-glass="normal"] {
+  --bg-card: rgba(12, 16, 26, 0.48);
+}
+
+.app[data-glass="normal"] .sidebar-explorer,
+.app[data-glass="normal"] .sidebar-usage-panel,
+.app[data-glass="normal"] .unified-workspace,
+.app[data-glass="normal"] .bottom-terminal-drawer,
+.app[data-glass="normal"] .header,
+.app[data-glass="normal"] .statusbar {
+  background: rgba(12, 16, 26, 0.48) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.app[data-glass="normal"] .chat-messages,
+.app[data-glass="normal"] .chat-thread,
+.app[data-glass="normal"] .canvas-pane,
+.app[data-glass="normal"] .editor-panel,
+.app[data-glass="normal"] .cm-editor,
+.app[data-glass="normal"] .cm-gutters {
+  background: transparent !important;
+}
+
+.app[data-glass="normal"] .chat-msg-user {
+  background: rgba(0, 200, 214, 0.12) !important;
+  backdrop-filter: blur(6px);
+}
+
+.app[data-glass="normal"] .chat-msg-assistant {
+  background: rgba(14, 18, 28, 0.55) !important;
+  backdrop-filter: blur(8px);
+}
+
+/* Vivid ultra-translucent glass: Maximum 3D background clarity */
 .app[data-glass="vivid"] {
-  --bg-card: rgba(10, 14, 22, 0.42);
+  --bg-card: rgba(8, 12, 20, 0.22);
 }
 
 .app[data-glass="vivid"] .sidebar-explorer,
@@ -400,18 +450,27 @@ svg {
 .app[data-glass="vivid"] .bottom-terminal-drawer,
 .app[data-glass="vivid"] .header,
 .app[data-glass="vivid"] .statusbar {
-  background: rgba(10, 14, 22, 0.42) !important;
-  backdrop-filter: blur(8px) !important;
+  background: rgba(8, 12, 20, 0.22) !important;
+  backdrop-filter: blur(4px) !important;
+}
+
+.app[data-glass="vivid"] .chat-messages,
+.app[data-glass="vivid"] .chat-thread,
+.app[data-glass="vivid"] .canvas-pane,
+.app[data-glass="vivid"] .editor-panel,
+.app[data-glass="vivid"] .cm-editor,
+.app[data-glass="vivid"] .cm-gutters {
+  background: transparent !important;
 }
 
 .app[data-glass="vivid"] .chat-msg-user {
-  background: rgba(0, 200, 214, 0.1) !important;
-  backdrop-filter: blur(6px);
+  background: rgba(0, 200, 214, 0.15) !important;
+  backdrop-filter: blur(4px);
 }
 
 .app[data-glass="vivid"] .chat-msg-assistant {
-  background: rgba(14, 18, 28, 0.55) !important;
-  backdrop-filter: blur(8px);
+  background: rgba(10, 14, 22, 0.32) !important;
+  backdrop-filter: blur(6px);
 }
 
 /* Solid opaque mode */
@@ -426,6 +485,16 @@ svg {
 .app[data-glass="solid"] .header,
 .app[data-glass="solid"] .statusbar {
   background: rgba(14, 18, 28, 0.96) !important;
+}
+
+/* Ensure root app background is transparent on 3D themes so the ThreeJS Canvas is clearly visible */
+[data-theme="cyberpunk"] .app,
+[data-theme="matrix"] .app,
+[data-theme="outrun"] .app,
+[data-theme="makora"] .app,
+[data-theme="skyrim"] .app,
+[data-theme="dragons_dogma"] .app {
+  background: transparent !important;
 }
 
 /* ===== Unified Workspace & Tab Bar ===== */

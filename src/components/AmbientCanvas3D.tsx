@@ -172,15 +172,15 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const cyberGroup = new THREE.Group();
       cyberGroup.position.set(0, 0, -10);
 
-      const yellowMat = new THREE.MeshBasicMaterial({ color: 0xfcee09, wireframe: true, transparent: true, opacity: 0.45 });
-      const cyanMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true, transparent: true, opacity: 0.45 });
-      const redMat = new THREE.MeshBasicMaterial({ color: 0xff003c, wireframe: true, transparent: true, opacity: 0.5 });
+      const yellowMat = new THREE.MeshBasicMaterial({ color: 0xfcee09, wireframe: true, transparent: true, opacity: 0.75 });
+      const cyanMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true, transparent: true, opacity: 0.75 });
+      const redMat = new THREE.MeshBasicMaterial({ color: 0xff003c, wireframe: true, transparent: true, opacity: 0.8 });
       const neonCyanSolid = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
 
       // --- 3D Samurai Oni Cyber-Mask ---
       const maskGroup = new THREE.Group();
       maskGroup.position.set(2.8, 0.4, 2.0);
-      maskGroup.scale.set(0.85, 0.85, 0.85);
+      maskGroup.scale.set(0.95, 0.95, 0.95);
 
       // Faceplate
       const faceGeo = new THREE.CylinderGeometry(0.85, 0.5, 1.5, 6);
@@ -261,9 +261,9 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
 
       const avMat = new THREE.PointsMaterial({
         color: 0x00f0ff,
-        size: 0.18,
+        size: 0.24,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.95,
         blending: THREE.AdditiveBlending,
       });
       const avTraffic = new THREE.Points(avGeo, avMat);
@@ -282,7 +282,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         color: 0xffbe0b,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.8,
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.position.set(0, 0.5, -18);
@@ -298,19 +298,19 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         color: 0xffd700,
         wireframe: true,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.75,
       });
 
       const goldSolidMat = new THREE.MeshBasicMaterial({
         color: 0xffe066,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.9,
       });
 
       const jadeMat = new THREE.MeshBasicMaterial({
         color: 0x00f0ff,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.95,
       });
 
       // Outer Torus Rim
@@ -367,9 +367,9 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       particleGeo.setAttribute("position", new THREE.BufferAttribute(pPositions, 3));
       const particleMat = new THREE.PointsMaterial({
         color: 0xffd700,
-        size: 0.08,
+        size: 0.12,
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.85,
         blending: THREE.AdditiveBlending,
       });
       const particles = new THREE.Points(particleGeo, particleMat);
@@ -383,15 +383,15 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const skyrimGroup = new THREE.Group();
       skyrimGroup.position.set(0, 0, -10);
 
-      const steelWire = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.6 });
-      const darkSteel = new THREE.MeshBasicMaterial({ color: 0x0284c7, wireframe: true, transparent: true, opacity: 0.45 });
-      const goldHorn = new THREE.MeshBasicMaterial({ color: 0xfacc15, wireframe: true, transparent: true, opacity: 0.65 });
+      const steelWire = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.85 });
+      const darkSteel = new THREE.MeshBasicMaterial({ color: 0x0284c7, wireframe: true, transparent: true, opacity: 0.65 });
+      const goldHorn = new THREE.MeshBasicMaterial({ color: 0xfacc15, wireframe: true, transparent: true, opacity: 0.85 });
       const cyanEye = new THREE.MeshBasicMaterial({ color: 0x7dd3fc });
 
       // --- 3D Dovahkiin Horned Helmet ---
       const helmetGroup = new THREE.Group();
       helmetGroup.position.set(-2.6, 0.3, 1.5);
-      helmetGroup.scale.set(0.9, 0.9, 0.9);
+      helmetGroup.scale.set(1.0, 1.0, 1.0);
 
       // Dome
       const domeGeo = new THREE.SphereGeometry(1.0, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2);
@@ -442,7 +442,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
           color: 0x38bdf8,
           side: THREE.DoubleSide,
           transparent: true,
-          opacity: 0.35 - i * 0.1,
+          opacity: 0.5 - i * 0.1,
         });
         const shoutRing = new THREE.Mesh(shoutRingGeo, shoutRingMat);
         shoutRing.position.set(-2.6, 0.0, 1.0);
@@ -451,7 +451,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       }
 
       // Aurora Wave Particles
-      const auroraCount = 360;
+      const auroraCount = 400;
       const aGeo = new THREE.BufferGeometry();
       const aPos = new Float32Array(auroraCount * 3);
       const aCol = new Float32Array(auroraCount * 3);
@@ -476,10 +476,10 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       auroraGeoRef = aGeo;
 
       const aMat = new THREE.PointsMaterial({
-        size: 0.22,
+        size: 0.3,
         vertexColors: true,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.9,
         blending: THREE.AdditiveBlending,
       });
       const aurora = new THREE.Points(aGeo, aMat);
@@ -500,9 +500,9 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
 
       const snowMat = new THREE.PointsMaterial({
         color: 0xf0f9ff,
-        size: 0.08,
+        size: 0.1,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.8,
       });
       const snowfall = new THREE.Points(snowGeo, snowMat);
       skyrimGroup.add(snowfall);
@@ -515,15 +515,15 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const ddGroup = new THREE.Group();
       ddGroup.position.set(0, 0, -10);
 
-      const redWire = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, transparent: true, opacity: 0.6 });
-      const darkRed = new THREE.MeshBasicMaterial({ color: 0x991b1b, wireframe: true, transparent: true, opacity: 0.45 });
-      const goldHornMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.65 });
+      const redWire = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, transparent: true, opacity: 0.85 });
+      const darkRed = new THREE.MeshBasicMaterial({ color: 0x991b1b, wireframe: true, transparent: true, opacity: 0.65 });
+      const goldHornMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.9 });
       const eyeRed = new THREE.MeshBasicMaterial({ color: 0xff0033 });
 
       // --- 3D Grigori Dragon Head ---
       const dragonHead = new THREE.Group();
       dragonHead.position.set(2.4, 0.2, 1.2);
-      dragonHead.scale.set(0.95, 0.95, 0.95);
+      dragonHead.scale.set(1.05, 1.05, 1.05);
 
       // Snout / Upper Jaw
       const snoutGeo = new THREE.CylinderGeometry(0.35, 0.75, 2.2, 6);
@@ -571,15 +571,15 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         dragonHead.add(crest);
 
         // Glowing red eye
-        const eyeGeo = new THREE.SphereGeometry(0.12, 8, 8);
+        const eyeGeo = new THREE.SphereGeometry(0.14, 8, 8);
         const eye = new THREE.Mesh(eyeGeo, eyeRed);
         eye.position.set(side * 0.55, 0.35, 0.5);
         dragonHead.add(eye);
       });
 
       // Dragon's Molten Throat Heart Core
-      const heartGeo = new THREE.OctahedronGeometry(0.42, 0);
-      const heartMat = new THREE.MeshBasicMaterial({ color: 0xff3b30, wireframe: true, transparent: true, opacity: 0.85 });
+      const heartGeo = new THREE.OctahedronGeometry(0.45, 0);
+      const heartMat = new THREE.MeshBasicMaterial({ color: 0xff3b30, wireframe: true, transparent: true, opacity: 0.95 });
       const heart = new THREE.Mesh(heartGeo, heartMat);
       heart.position.set(0, -0.1, 0.1);
       grigoriHeartRef = heart;
@@ -593,7 +593,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         color: 0x818cf8,
         wireframe: true,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.6,
       });
       const pillarGeo = new THREE.CylinderGeometry(0.7, 1.1, 5.0, 6);
       const pillar = new THREE.Mesh(pillarGeo, riftMat);
@@ -605,7 +605,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const riftRingMat1 = new THREE.MeshBasicMaterial({
         color: 0x06b6d4,
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.8,
       });
       const riftRing1 = new THREE.Mesh(riftRingGeo1, riftRingMat1);
       riftRing1.position.set(-2.0, 0, -2.0);
@@ -617,7 +617,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const riftRingMat2 = new THREE.MeshBasicMaterial({
         color: 0xef4444,
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.7,
       });
       const riftRing2 = new THREE.Mesh(riftRingGeo2, riftRingMat2);
       riftRing2.position.set(-2.0, 0, -2.0);
@@ -652,10 +652,10 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       emberGeoRef = emberGeo;
 
       const emberMat = new THREE.PointsMaterial({
-        size: 0.12,
+        size: 0.18,
         vertexColors: true,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.95,
         blending: THREE.AdditiveBlending,
       });
       const embers = new THREE.Points(emberGeo, emberMat);
