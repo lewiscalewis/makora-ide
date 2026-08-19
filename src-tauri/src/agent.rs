@@ -14,20 +14,24 @@ use crate::{ChatConfig, ChatMessage, ChatResult, ChatUsage};
 static CANCELLED: LazyLock<StdMutex<HashSet<String>>> =
     LazyLock::new(|| StdMutex::new(HashSet::new()));
 
+fn guard<T>(m: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn cancel_chat(chat_id: &str) {
     if !chat_id.is_empty() {
-        CANCELLED.lock().unwrap().insert(chat_id.to_string());
+        guard(&CANCELLED).insert(chat_id.to_string());
     }
 }
 
 pub fn clear_cancel(chat_id: &str) {
-    CANCELLED.lock().unwrap().remove(chat_id);
+    guard(&CANCELLED).remove(chat_id);
 }
 
 pub fn is_chat_cancelled(chat_id: &str) -> bool {
     let raw = chat_id.split("__sub_").next().unwrap_or(chat_id);
-    let guard = CANCELLED.lock().unwrap();
-    guard.contains(chat_id) || guard.contains(raw)
+    let g = guard(&CANCELLED);
+    g.contains(chat_id) || g.contains(raw)
 }
 
 const MAKORA_BASE_SKILL: &str = "\
@@ -42,8 +46,9 @@ const MAKORA_BASE_SKILL: &str = "\
 1. Anti-Bloat: NUNCA uses `read_file` en archivos de más de 150 líneas. Usa OBLIGATORIAMENTE `read_file_range` tras ubicar la función con `grep`.
 2. Cirugía Estricta con `apply_patch`: Modifica archivos existentes EXCLUSIVAMENTE con `apply_patch` usando ventanas mínimas de 3 a 5 líneas de anclaje exactas. NUNCA reescribas archivos completos existentes con `write_file` (reserva `write_file` solo para archivos 100% nuevos).
 3. Batching de Herramientas: Agrupa todas las llamadas de lectura o búsqueda independientes en una única ronda de ejecución para minimizar latencia de red.
-4. Aislamiento Efímero: Para exploraciones masivas en múltiples archivos o análisis de logs extensos, usa `explore_subagent` para no polucionar el historial principal (el subagente devuelve solo un briefing condensado de <200 tokens).
-5. Cero Código Duplicado: NUNCA reimprimas el código completo en la respuesta final de texto cuando ya haya sido aplicado con `apply_patch`.
+4. Formato Estricto de Herramientas: Cada llamada a herramienta debe recibir EXACTAMENTE un único objeto JSON válido. Queda terminantemente prohibido concatenar múltiples objetos JSON (ej. NUNCA emitir '{\"pattern\":\"a\"}{\"pattern\":\"b\"}'). Si requieres múltiples búsquedas, usa llamadas separadas.
+5. Aislamiento Efímero: Para exploraciones masivas en múltiples archivos o análisis de logs extensos, usa `explore_subagent` para no polucionar el historial principal (el subagente devuelve solo un briefing condensado de <200 tokens).
+6. Cero Código Duplicado: NUNCA reimprimas el código completo en la respuesta final de texto cuando ya haya sido aplicado con `apply_patch`.
 
 ### III. Directrices de Salida: Concisa, Clara, Objetiva y Sin Redundancias
 1. Respuestas Directas y Precisas: Si el usuario realiza una pregunta conceptual o consulta técnica, responde directamente a la duda de forma clara, concisa y objetiva, sin entrar en redundancias, rodeos teóricos innecesarios ni preámbulos vacíos.
@@ -176,7 +181,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "bash".into(),
-            description: "Ejecuta un comando de terminal/shell en el workspace de forma no interactiva (timeout 60s). Devuelve stdout/stderr y el código de salida. Úsalo ÚNICAMENTE cuando el usuario solicite explícitamente ejecutar un comando o cuando sea estrictamente necesario para compilar, testear o inspeccionar el entorno.".into(),
+            description: "Ejecuta un comando de terminal/shell en el workspace de forma no interactiva (timeout 600s). Devuelve stdout/stderr y el código de salida. Úsalo ÚNICAMENTE cuando el usuario solicite explícitamente ejecutar un comando o cuando sea estrictamente necesario para compilar, testear o inspeccionar el entorno.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -198,6 +203,54 @@ fn core_tools() -> Vec<ToolDef> {
             }),
         },
     ]
+}
+
+fn delegate_tool_def() -> ToolDef {
+    ToolDef {
+        name: "delegate_subagent".into(),
+        description: "Delega una tarea pesada en un subagente efímero especializado que devuelve únicamente un briefing condensado (ahorra tokens y agiliza la respuesta). Roles: explorer (investigación/análisis, solo lectura), coder (implementa cambios con apply_patch), tester (ejecuta pruebas o verificaciones con bash), reviewer (audita cambios y arquitectura). Usa `context` para pasarle hallazgos previos (rutas, símbolos, líneas) y evitar re-exploración.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": ["explorer", "coder", "tester", "reviewer"],
+                    "description": "Rol del subagente a invocar"
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Objetivo técnico concreto que debe resolver el subagente"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Contexto previo opcional: rutas, símbolos y hallazgos ya conocidos para evitar re-exploración"
+                }
+            },
+            "required": ["role", "task"]
+        }),
+    }
+}
+
+fn role_short(role: multiagent::SubagentRole) -> &'static str {
+    match role {
+        multiagent::SubagentRole::Explorer => "explorer",
+        multiagent::SubagentRole::Coder => "coder",
+        multiagent::SubagentRole::Tester => "tester",
+        multiagent::SubagentRole::Reviewer => "reviewer",
+    }
+}
+
+fn role_tools(role: multiagent::SubagentRole) -> Vec<ToolDef> {
+    let allowed: &[&str] = match role {
+        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range"],
+        multiagent::SubagentRole::Coder => &["list_dir", "grep", "read_file_range", "apply_patch", "write_file"],
+        multiagent::SubagentRole::Tester => &["bash", "list_dir", "grep", "read_file_range"],
+        multiagent::SubagentRole::Reviewer => &["list_dir", "grep", "read_file_range"],
+    };
+    core_tools()
+        .into_iter()
+        .filter(|t| allowed.contains(&t.name.as_str()))
+        .collect()
 }
 
 fn normalize_path_str(p: &std::path::Path) -> String {
@@ -474,8 +527,11 @@ async fn run_bash(
             use tokio::io::AsyncBufReadExt;
             let mut reader = tokio::io::BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                combined_out.lock().unwrap().push_str(&line);
-                combined_out.lock().unwrap().push('\n');
+                {
+                    let mut g = guard(&combined_out);
+                    g.push_str(&line);
+                    g.push('\n');
+                }
                 let _ = app_out.emit(
                     "tool-output",
                     ToolOutput {
@@ -498,8 +554,11 @@ async fn run_bash(
             use tokio::io::AsyncBufReadExt;
             let mut reader = tokio::io::BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                combined_err.lock().unwrap().push_str(&line);
-                combined_err.lock().unwrap().push('\n');
+                {
+                    let mut g = guard(&combined_err);
+                    g.push_str(&line);
+                    g.push('\n');
+                }
                 let _ = app_err.emit(
                     "tool-output",
                     ToolOutput {
@@ -514,16 +573,17 @@ async fn run_bash(
     });
 
     // Espera con cancelación por chat: mata también el proceso hijo.
-    let timeout_duration = std::time::Duration::from_secs(60);
+    let timeout_duration = std::time::Duration::from_secs(600);
     let deadline = std::time::Instant::now() + timeout_duration;
-    let exit_code: i32;    loop {
+    let exit_code: i32;
+    loop {
         if is_chat_cancelled(chat_id) {
             let _ = child.kill().await;
             return Err("cancelado por el usuario".into());
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill().await;
-            return Err("timeout (60s) ejecutando el comando bash".into());
+            return Err("timeout (600s) ejecutando el comando bash".into());
         }
         match tokio::time::timeout(std::time::Duration::from_millis(300), child.wait()).await {
             Ok(Ok(status)) => {
@@ -537,7 +597,7 @@ async fn run_bash(
     let _ = stdout_handle.await;
     let _ = stderr_handle.await;
 
-    let out = combined.lock().unwrap().clone();
+    let out = guard(&combined).clone();
     let mut summarized = truncate_head_tail(&out, 40, 40);
     if summarized.chars().count() > 12000 {
         summarized = truncate(&summarized, 12000);
@@ -821,15 +881,63 @@ fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-fn execute_subagent_tool(
+fn sanitize_history(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut started = false;
+    let mut out: Vec<ChatMessage> = Vec::with_capacity(msgs.len());
+    for m in msgs {
+        match m.role.as_str() {
+            "assistant" => {
+                if let Some(tcs) = &m.tool_calls {
+                    for tc in tcs {
+                        if !tc.id.trim().is_empty() {
+                            seen.insert(tc.id.clone());
+                        }
+                    }
+                }
+                let has_content = !m.content.trim().is_empty();
+                if !has_content && m.tool_calls.is_none() {
+                    continue;
+                }
+                started = true;
+                out.push(m.clone());
+            }
+            "tool" => {
+                let id = m.tool_call_id.as_deref().unwrap_or("");
+                if !started || id.is_empty() || !seen.contains(id) {
+                    continue;
+                }
+                out.push(m.clone());
+            }
+            _ => {
+                started = true;
+                out.push(m.clone());
+            }
+        }
+    }
+    out
+}
+
+fn prepare_wire(msgs: &[ChatMessage], cfg: &ChatConfig) -> Vec<ChatMessage> {
+    let counter = token_engine::global();
+    let composer =
+        token_engine::ContextComposer::for_window(cfg.context_window.unwrap_or(128_000), None);
+    let evicted = evict_tool_results(msgs);
+    let fitted = composer.fit_history(counter, &evicted);
+    sanitize_history(&fitted)
+}
+
+async fn execute_subagent_tool(
+    app: &AppHandle,
     name: &str,
     arguments: &str,
     folders: &[String],
+    chat_id: &str,
 ) -> Result<String, String> {
     let args: Value = if arguments.trim().is_empty() {
         json!({})
     } else {
-        serde_json::from_str(arguments).map_err(|e| format!("argumentos JSON inválidos: {e}"))?
+        gateway::parse_tool_args(arguments)
     };
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
@@ -906,107 +1014,175 @@ fn execute_subagent_tool(
             }
             Ok(token_engine::global().truncate(&out, 3000))
         }
-        _ => Err(format!("herramienta no permitida en subagente explorer: {name}")),
+        "apply_patch" => {
+            let path = resolve_path(folders, &s("path"), false)?;
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let (new_text, blocks) = apply_patch_to(&text, &s("patch"))?;
+            std::fs::write(&path, &new_text).map_err(|e| e.to_string())?;
+            let mut msg = format!("parche aplicado: {blocks} bloque(s) en {path}");
+            if let Some(syntax_err) = check_file_syntax(&path, &new_text) {
+                msg.push_str(&format!("\n⚠️ ALERTA DE SINTAXIS: {syntax_err}"));
+            }
+            Ok(msg)
+        }
+        "write_file" => {
+            let path = resolve_path(folders, &s("path"), true)?;
+            let content = s("content");
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+            Ok(format!("archivo escrito: {path}"))
+        }
+        "bash" => run_bash(app, &s("command"), folders, chat_id).await,
+        _ => Err(format!("herramienta no permitida en subagente: {name}")),
     }
 }
 
-async fn run_explore_subagent(
+pub struct SubagentReport {
+    pub summary: String,
+    pub modified_files: Vec<String>,
+    pub success: bool,
+}
+
+async fn run_subagent(
     app: &AppHandle,
     cfg: &ChatConfig,
-    task: &str,
-    folders: &[String],
     chat_id: &str,
-) -> Result<String, String> {
-    let sub_system = format!(
-        "Eres el Subagente Explorer de MakoraIDE. Tu misión exclusiva es investigar y responder con síntesis técnica concisa (100-250 palabras):\n{task}\n\nUsa las herramientas read_file_range, list_dir, grep para localizar la información. Al terminar emite directamente tu conclusión técnica sin rodeos."
+    role: multiagent::SubagentRole,
+    task: &str,
+    context: &str,
+    folders: &[String],
+    usage_acc: &mut ChatUsage,
+) -> Result<SubagentReport, String> {
+    let role_name = role.name();
+    let role_short = role_short(role);
+    let mut sub_system = format!(
+        "{MAKORA_BASE_SKILL}\n\n## Subagente {role_name} (contexto efímero aislado)\n{}\n\n## Tarea delegada\n{task}",
+        role.system_prompt()
     );
-    let mut current_msgs = vec![ChatMessage {
+    if !context.trim().is_empty() {
+        sub_system.push_str(&format!(
+            "\n\n## Contexto aportado por el agente principal\n{context}"
+        ));
+    }
+    sub_system.push_str(&format!(
+        "\n\n## Workspace (raíces)\n{}\n\n## Reglas de salida\n- Trabaja de forma autónoma y termina SIEMPRE con un resumen final conciso (máximo 400 palabras) de lo realizado: hallazgos, archivos modificados y resultados de verificación.\n- No repitas código completo; referencia rutas y líneas exactas.",
+        folders.join("\n")
+    ));
+
+    let mut current = vec![ChatMessage {
         role: "user".into(),
-        content: format!("Objetivo de exploración técnica: {task}"),
+        content: format!("Tarea: {task}"),
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
     }];
-    let sub_tools = vec![
-        ToolDef {
-            name: "read_file_range".into(),
-            description: "Lee un intervalo de líneas [start_line, end_line] de un archivo.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "start_line": { "type": "integer" },
-                    "end_line": { "type": "integer" }
-                },
-                "required": ["path", "start_line", "end_line"]
-            }),
-        },
-        ToolDef {
-            name: "list_dir".into(),
-            description: "Lista archivos en un directorio.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": { "path": { "type": "string" } },
-                "required": ["path"]
-            }),
-        },
-        ToolDef {
-            name: "grep".into(),
-            description: "Busca patrones en archivos del workspace.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": { "pattern": { "type": "string" }, "path": { "type": "string" } },
-                "required": ["pattern"]
-            }),
-        },
-    ];
+    let tools = role_tools(role);
+    let sub_chat_id = format!("{chat_id}__sub_{role_short}");
 
     let mut last_text = String::new();
-    for _ in 0..4 {
+    let mut modified: Vec<String> = Vec::new();
+    let mut ok = true;
+
+    for _step in 0..5 {
         if is_chat_cancelled(chat_id) {
-            return Err("exploración cancelada".into());
+            return Err("cancelado por el usuario".into());
         }
         let outcome = if cfg.kind == "anthropic" {
-            gateway::anthropic_turn(app, cfg, chat_id, &sub_system, &current_msgs, &sub_tools).await?
+            gateway::anthropic_turn(app, cfg, &sub_chat_id, &sub_system, &current, &tools).await?
         } else {
-            gateway::openai_turn(app, cfg, chat_id, &sub_system, &current_msgs, &sub_tools).await?
+            gateway::openai_turn(app, cfg, &sub_chat_id, &sub_system, &current, &tools).await?
         };
+        usage_acc.input_tokens += outcome.usage.input_tokens;
+        usage_acc.output_tokens += outcome.usage.output_tokens;
+        usage_acc.cached_tokens += outcome.usage.cached_tokens;
 
         if !outcome.text.trim().is_empty() {
             last_text = outcome.text.clone();
         }
-
         if outcome.tool_calls.is_empty() {
             break;
         }
 
-        let mut tool_results = Vec::new();
+        current.push(ChatMessage {
+            role: "assistant".into(),
+            content: outcome.text.clone(),
+            images: vec![],
+            tool_calls: Some(outcome.tool_calls.clone()),
+            tool_call_id: None,
+        });
+
         for tc in &outcome.tool_calls {
-            let res = execute_subagent_tool(&tc.name, &tc.arguments, folders)
+            if is_chat_cancelled(chat_id) {
+                return Err("cancelado por el usuario".into());
+            }
+            let display_name = format!("sub:{role_short}:{}", tc.name);
+            let _ = app.emit(
+                "tool-start",
+                ToolStart {
+                    id: tc.id.clone(),
+                    name: display_name.clone(),
+                    arguments: tc.arguments.clone(),
+                    chat_id: chat_id.to_string(),
+                },
+            );
+            let result = execute_subagent_tool(app, &tc.name, &tc.arguments, folders, chat_id)
+                .await
                 .unwrap_or_else(|e| format!("ERROR: {e}"));
-            tool_results.push(ChatMessage {
+            if result.starts_with("ERROR:") {
+                ok = false;
+            }
+            if tc.name == "apply_patch" || tc.name == "write_file" {
+                if let Ok(v) = serde_json::from_str::<Value>(&tc.arguments) {
+                    if let Some(p) = v.get("path").and_then(|x| x.as_str()) {
+                        if !modified.contains(&p.to_string()) {
+                            modified.push(p.to_string());
+                        }
+                    }
+                }
+            }
+            let (tool_ok, summary) = if result.starts_with("ERROR:") {
+                (false, truncate(&result, 400))
+            } else {
+                (true, truncate(&result, 400))
+            };
+            let _ = app.emit(
+                "tool-end",
+                ToolEnd {
+                    id: tc.id.clone(),
+                    ok: tool_ok,
+                    summary,
+                    chat_id: chat_id.to_string(),
+                },
+            );
+            current.push(ChatMessage {
                 role: "tool".into(),
-                content: res,
+                content: result,
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
             });
         }
-        current_msgs.push(ChatMessage {
-            role: "assistant".into(),
-            content: outcome.text,
-            images: vec![],
-            tool_calls: Some(outcome.tool_calls),
-            tool_call_id: None,
-        });
-        current_msgs.extend(tool_results);
     }
 
-    if last_text.trim().is_empty() {
-        Ok("[Subagente Explorer completó la investigación sin texto final]".into())
+    let summary = if last_text.trim().is_empty() {
+        format!(
+            "[Subagente {role_name} completó su trabajo sin texto final{}]",
+            if modified.is_empty() {
+                String::new()
+            } else {
+                format!("; archivos modificados: {}", modified.join(", "))
+            }
+        )
     } else {
-        Ok(format!("[Resultado de Explorer Subagent]:\n{last_text}"))
-    }
+        last_text
+    };
+    Ok(SubagentReport {
+        summary,
+        modified_files: modified,
+        success: ok,
+    })
 }
 
 async fn execute_tool(
@@ -1015,13 +1191,14 @@ async fn execute_tool(
     name: &str,
     arguments: &str,
     folders: &[String],
-    registry: &McpRegistry,
+    registry: &'static McpRegistry,
     chat_id: &str,
+    usage_acc: &mut ChatUsage,
 ) -> Result<String, String> {
     let args: Value = if arguments.trim().is_empty() {
         json!({})
     } else {
-        serde_json::from_str(arguments).map_err(|e| format!("argumentos JSON inválidos: {e}"))?
+        gateway::parse_tool_args(arguments)
     };
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
@@ -1068,12 +1245,38 @@ async fn execute_tool(
             }
             Ok(msg)
         }
-        "explore_subagent" => {
-            let task = s("task");
+        "explore_subagent" | "delegate_subagent" => {
+            let (role, task, ctx) = if name == "delegate_subagent" {
+                let role = match s("role").as_str() {
+                    "coder" => multiagent::SubagentRole::Coder,
+                    "tester" => multiagent::SubagentRole::Tester,
+                    "reviewer" => multiagent::SubagentRole::Reviewer,
+                    _ => multiagent::SubagentRole::Explorer,
+                };
+                (role, s("task"), s("context"))
+            } else {
+                (multiagent::SubagentRole::Explorer, s("task"), String::new())
+            };
             if task.trim().is_empty() {
-                return Err("debes especificar la tarea para explore_subagent".into());
+                return Err("debes especificar la tarea del subagente".into());
             }
-            run_explore_subagent(app, cfg, &task, folders, chat_id).await
+            let mut sub_usage = ChatUsage::default();
+            let report =
+                run_subagent(app, cfg, chat_id, role, &task, &ctx, folders, &mut sub_usage).await?;
+            *usage_acc += sub_usage;
+            let mut out = format!(
+                "[Subagente {} — briefing condensado{}]\n{}",
+                role.name(),
+                if report.success { "" } else { " (con errores)" },
+                report.summary
+            );
+            if !report.modified_files.is_empty() {
+                out.push_str(&format!(
+                    "\nArchivos modificados: {}",
+                    report.modified_files.join(", ")
+                ));
+            }
+            Ok(out)
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -1132,22 +1335,49 @@ async fn execute_tool(
             Ok(msg)
         }
 
-        _ if name.starts_with("mcp__") => mcp::call(registry, name, arguments),
+        _ if name.starts_with("mcp__") => {
+            let reg: &'static McpRegistry = registry;
+            let nm = name.to_string();
+            let args_s = arguments.to_string();
+            tokio::task::spawn_blocking(move || mcp::call(reg, &nm, &args_s))
+                .await
+                .map_err(|e| format!("error ejecutando MCP: {e}"))?
+        }
         _ => Err(format!("herramienta desconocida: {name}")),
     }
 }
 
-pub async fn run(
+fn session_id_of(chat_id: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in chat_id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
+
+fn tools_with_mcp(registry: &'static McpRegistry, mut tools: Vec<ToolDef>) -> Vec<ToolDef> {
+    let map = guard(&registry.tools);
+    for (name, (_, schema)) in map.iter() {
+        tools.push(ToolDef {
+            name: name.clone(),
+            description: format!("Herramienta MCP {name}"),
+            parameters: schema.clone(),
+        });
+    }
+    tools
+}
+
+async fn run_loop(
     app: &AppHandle,
     cfg: &ChatConfig,
     chat_id: &str,
-    system: &str,
+    full_system: &str,
     messages: &[ChatMessage],
     folders: &[String],
-    registry: &McpRegistry,
+    registry: &'static McpRegistry,
+    tools: &[ToolDef],
 ) -> Result<ChatResult, String> {
-    clear_cancel(chat_id);
-    let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
     let mut total = ChatUsage::default();
     let counter = token_engine::global();
@@ -1156,14 +1386,7 @@ pub async fn run(
         .find(|f| !f.is_empty())
         .cloned()
         .unwrap_or_else(|| "default".into());
-    let session_id = {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in chat_id.as_bytes() {
-            h ^= *b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        format!("{h:016x}")
-    };
+    let session_id = session_id_of(chat_id);
     history::upsert_session(&session_id, &workspace, &cfg.model);
     // M4: resume por checkpoint cuando el frontend entrega un transcript vacío.
     if msgs.is_empty() {
@@ -1173,18 +1396,6 @@ pub async fn run(
         }
     }
     let mut turn: u32 = 0;
-    let mut tools = core_tools();
-    {
-        let map = registry.tools.lock().unwrap();
-        for (name, (_, schema)) in map.iter() {
-            tools.push(ToolDef {
-                name: name.clone(),
-                description: format!("Herramienta MCP {name}"),
-                parameters: schema.clone(),
-            });
-        }
-    }
-
     let mut prev_sig: Vec<String> = Vec::new();
     let mut repeats: u32 = 0;
 
@@ -1193,9 +1404,7 @@ pub async fn run(
             return Err("cancelado por el usuario".into());
         }
         // Motor M2 (D2): podado de historia y límite presupuestario por contexto
-        let composer = token_engine::ContextComposer::for_window(cfg.context_window.unwrap_or(128_000), None);
-        msgs = evict_tool_results(&msgs);
-        let wire_msgs = composer.fit_history(counter, &msgs);
+        let wire_msgs = prepare_wire(&msgs, cfg);
         turn += 1;
         let started = std::time::Instant::now();
         let local_tokens = counter.count_messages(&full_system, &wire_msgs);
@@ -1305,10 +1514,11 @@ pub async fn run(
         if sig == prev_sig {
             repeats += 1;
             if repeats >= 2 {
+                let wire = prepare_wire(&msgs, cfg);
                 let forced = if cfg.kind == "anthropic" {
-                    gateway::anthropic_turn(app, cfg, chat_id, &full_system, &msgs, &[]).await?
+                    gateway::anthropic_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
                 } else {
-                    gateway::openai_turn(app, cfg, chat_id, &full_system, &msgs, &[]).await?
+                    gateway::openai_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
                 };
                 total.input_tokens += forced.usage.input_tokens;
                 total.output_tokens += forced.usage.output_tokens;
@@ -1383,8 +1593,10 @@ pub async fn run(
                 let id = tc.id.clone();
                 let chat = chat_id.to_string();
                 async move {
+                    let mut u = ChatUsage::default();
                     let result =
-                        execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat).await;
+                        execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat, &mut u)
+                            .await;
                     let (ok, summary) = match &result {
                         Ok(s) => (true, truncate(s, 400)),
                         Err(e) => (false, e.clone()),
@@ -1428,8 +1640,19 @@ pub async fn run(
                         chat_id: chat_id.to_string(),
                     },
                 );
-                let result =
-                    execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry, chat_id).await;
+                let mut tool_usage = ChatUsage::default();
+                let result = execute_tool(
+                    app,
+                    cfg,
+                    &tc.name,
+                    &tc.arguments,
+                    folders,
+                    registry,
+                    chat_id,
+                    &mut tool_usage,
+                )
+                .await;
+                total += tool_usage;
                 if is_chat_cancelled(chat_id) {
                     return Err("Cancelado por el usuario".into());
                 }
@@ -1454,29 +1677,37 @@ pub async fn run(
                 });
             }
         }
+
+        // Persistencia inmediata paso a paso en SQLite:
+        // Asegura que sesiones largas (>10min) mantengan su progreso intacto ante cualquier interrupción imprevista.
+        history::create_checkpoint(&session_id, turn, &msgs);
     }
 }
 
-fn role_tool_names(role: multiagent::SubagentRole) -> &'static [&'static str] {
-    match role {
-        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range"],
-        multiagent::SubagentRole::Coder => {
-            &["list_dir", "grep", "read_file_range", "apply_patch", "write_file"]
-        }
-        multiagent::SubagentRole::Tester => &["bash", "list_dir", "grep", "read_file_range"],
-        multiagent::SubagentRole::Reviewer => &["list_dir", "grep", "read_file_range"],
-    }
+pub async fn run(
+    app: &AppHandle,
+    cfg: &ChatConfig,
+    chat_id: &str,
+    system: &str,
+    messages: &[ChatMessage],
+    folders: &[String],
+    registry: &'static McpRegistry,
+) -> Result<ChatResult, String> {
+    clear_cancel(chat_id);
+    let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
+    let tools = tools_with_mcp(registry, core_tools());
+    run_loop(app, cfg, chat_id, &full_system, messages, folders, registry, &tools).await
 }
 
-fn emit_plan(app: &AppHandle, chat_id: &str, plan: &multiagent::MultiAgentPlanState) {
-    let _ = app.emit(
-        "multiagent-plan-event",
-        multiagent::MultiAgentPlanEvent {
-            chat_id: chat_id.to_string(),
-            plan: plan.clone(),
-        },
-    );
-}
+const MULTI_DELEGATION_DIRECTIVE: &str = "\
+## Modo Multi-Agente por Delegación (activo)
+
+- Para cargas de trabajo pesadas (análisis multifichero, búsquedas amplias, implementaciones complejas, verificación con tests) DELEGA en un subagente mediante `delegate_subagent` en lugar de realizar el trabajo tú mismo. El subagente devuelve únicamente un briefing condensado, con lo que ahorras tokens y aceleras la respuesta.
+- En `task` describe el objetivo concreto del subagente y en `context` pasa los hallazgos que ya conozcas (rutas, símbolos, líneas) para evitar re-exploración.
+- Puedes encadenar delegaciones (explorer → coder → tester) pasando el contexto acumulado de cada una a la siguiente.
+- Integra los resultados de los subagentes en tu respuesta final SIN alterar el formato habitual: responde o resume brevemente y con claridad lo realizado (archivos, verificación), como en cualquier tarea normal.
+- No delegues tareas triviales (una sola búsqueda, preguntas conceptuales, lectura puntual de un archivo).
+- La interfaz ya muestra la actividad de los subagentes al usuario; no hace falta que la expliques en detalle.";
 
 pub async fn run_multiagent(
     app: &AppHandle,
@@ -1486,303 +1717,15 @@ pub async fn run_multiagent(
     messages: &[ChatMessage],
     folders: &[String],
     objective: &str,
-    registry: &McpRegistry,
+    registry: &'static McpRegistry,
 ) -> Result<ChatResult, String> {
     clear_cancel(chat_id);
-    let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
-    let mut msgs: Vec<ChatMessage> = messages.to_vec();
-    let mut total = ChatUsage::default();
-    let workspace = folders
-        .iter()
-        .find(|f| !f.is_empty())
-        .cloned()
-        .unwrap_or_else(|| "default".into());
-    let session_id = {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in chat_id.as_bytes() {
-            h ^= *b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        format!("{h:016x}")
-    };
-    history::upsert_session(&session_id, &workspace, &cfg.model);
-
-    let mut plan = multiagent::create_default_plan(chat_id, objective);
-    emit_plan(app, chat_id, &plan);
-
-    let mut briefing = String::new();
-    let mut all_modified_files: Vec<String> = Vec::new();
-    let mut turn: u32 = 0;
-
-    for idx in 0..plan.steps.len() {
-        if is_chat_cancelled(chat_id) {
-            return Err("cancelado por el usuario".into());
-        }
-        plan.steps[idx].status = "running".into();
-        plan.active_step_index = Some(plan.steps[idx].step_index);
-        emit_plan(app, chat_id, &plan);
-
-        let role = plan.steps[idx].role;
-        let step_index = plan.steps[idx].step_index;
-        let allowed = role_tool_names(role);
-        let mut tools: Vec<ToolDef> = core_tools()
-            .into_iter()
-            .filter(|t| allowed.contains(&t.name.as_str()))
-            .collect();
-        if role == multiagent::SubagentRole::Coder {
-            let map = registry.tools.lock().unwrap();
-            for (name, (_, schema)) in map.iter() {
-                tools.push(ToolDef {
-                    name: name.clone(),
-                    description: format!("Herramienta MCP {name}"),
-                    parameters: schema.clone(),
-                });
-            }
-        }
-
-        let sub_system = format!(
-            "{full_system}\n\n## Subagente: {}\n{}\n\n## Objetivo de la tarea\n{objective}\n\n## Briefing acumulado de pasos previos\n{}{}",
-            role.name(),
-            role.system_prompt(),
-            if briefing.is_empty() {
-                "(ninguno — este es el primer paso del flujo multi-agente)".to_string()
-            } else {
-                briefing.clone()
-            },
-            if all_modified_files.is_empty() {
-                String::new()
-            } else {
-                format!("\n\n## Archivos modificados en el workspace:\n{}", all_modified_files.join("\n"))
-            }
-        );
-
-        let role_instruction = match role {
-            multiagent::SubagentRole::Explorer => format!(
-                "Inspecciona el espacio de trabajo para resolver el siguiente requerimiento:\n\n{objective}\n\nUsa `grep`, `list_dir` y `read_file_range` para localizar los archivos y funciones relevantes. Devuelve un briefing técnico estructurado con rutas y rangos de líneas."
-            ),
-            multiagent::SubagentRole::Coder => format!(
-                "Implementa las modificaciones necesarias para resolver el objetivo:\n\n{objective}\n\nUsa `apply_patch` con 3-5 líneas de anclaje exactas basándote en los archivos y líneas descubiertos por el Explorador. No reescribas archivos completos."
-            ),
-            multiagent::SubagentRole::Tester => format!(
-                "Verifica que los cambios aplicados compilen o no contengan fallos de sintaxis. Si hay comandos de pruebas o chequeo disponibles, ejecútalos con `bash`. Si no, inspecciona los archivos editados para certificar su validez.\n\nObjetivo: {objective}"
-            ),
-            multiagent::SubagentRole::Reviewer => format!(
-                "Audita las modificaciones aplicadas y los resultados de las pruebas para verificar que no haya regresiones arquitectónicas, contratos rotos ni fallos de seguridad.\n\nObjetivo: {objective}"
-            ),
-        };
-
-        let mut sub_msgs = messages.to_vec();
-        sub_msgs.push(ChatMessage {
-            role: "user".into(),
-            content: role_instruction,
-            images: vec![],
-            tool_calls: None,
-            tool_call_id: None,
-        });
-
-        let subagent_chat_id = format!("{chat_id}__sub_{step_index}");
-        let mut step_text = String::new();
-        let mut step_success = true;
-        let mut executed_tool_names: Vec<String> = Vec::new();
-
-        for _ in 0..6 {
-            if is_chat_cancelled(chat_id) {
-                return Err("cancelado por el usuario".into());
-            }
-            turn += 1;
-            let started = std::time::Instant::now();
-            let outcome = if cfg.kind == "anthropic" {
-                gateway::anthropic_turn(app, cfg, &subagent_chat_id, &sub_system, &sub_msgs, &tools).await?
-            } else {
-                gateway::openai_turn(app, cfg, &subagent_chat_id, &sub_system, &sub_msgs, &tools).await?
-            };
-            total.input_tokens += outcome.usage.input_tokens;
-            total.output_tokens += outcome.usage.output_tokens;
-            total.cached_tokens += outcome.usage.cached_tokens;
-            history::record_request(
-                &session_id,
-                turn,
-                &cfg.kind,
-                &cfg.model,
-                &RequestMeter {
-                    input_tokens: outcome.usage.input_tokens,
-                    cached_tokens: outcome.usage.cached_tokens,
-                    output_tokens: outcome.usage.output_tokens,
-                    cost_usd: 0.0,
-                    latency_ms: started.elapsed().as_millis() as i64,
-                },
-            );
-
-            if !outcome.text.trim().is_empty() {
-                step_text = outcome.text.clone();
-            }
-            if outcome.tool_calls.is_empty() {
-                break;
-            }
-
-            sub_msgs.push(ChatMessage {
-                role: "assistant".into(),
-                content: outcome.text.clone(),
-                images: vec![],
-                tool_calls: Some(outcome.tool_calls.clone()),
-                tool_call_id: None,
-            });
-            for tc in &outcome.tool_calls {
-                if is_chat_cancelled(chat_id) {
-                    return Err("cancelado por el usuario".into());
-                }
-                executed_tool_names.push(tc.name.clone());
-                if tc.name == "apply_patch" || tc.name == "write_file" {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&tc.arguments) {
-                        if let Some(p) = v.get("path").and_then(|x| x.as_str()) {
-                            if !all_modified_files.contains(&p.to_string()) {
-                                all_modified_files.push(p.to_string());
-                            }
-                        }
-                    }
-                }
-                let _ = app.emit(
-                    "tool-start",
-                    ToolStart {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                        chat_id: chat_id.to_string(),
-                    },
-                );
-                let result =
-                    execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry, chat_id).await;
-                let (ok, summary) = match &result {
-                    Ok(s) => (true, truncate(s, 400)),
-                    Err(e) => {
-                        step_success = false;
-                        (false, e.clone())
-                    }
-                };
-                let _ = app.emit(
-                    "tool-end",
-                    ToolEnd { id: tc.id.clone(), ok, summary, chat_id: chat_id.to_string() },
-                );
-                let content = match result {
-                    Ok(s) => s,
-                    Err(e) => format!("ERROR: {e}"),
-                };
-                sub_msgs.push(ChatMessage {
-                    role: "tool".into(),
-                    content,
-                    images: vec![],
-                    tool_calls: None,
-                    tool_call_id: Some(tc.id.clone()),
-                });
-            }
-        }
-
-        let summary = if !step_text.trim().is_empty() {
-            truncate(&step_text, 600)
-        } else if !executed_tool_names.is_empty() {
-            format!("Herramientas ejecutadas: {}", executed_tool_names.join(", "))
-        } else {
-            "Fase completada exitosamente.".to_string()
-        };
-
-        briefing.push_str(&format!(
-            "\n\n## Paso {} ({}) — resultado\n{summary}\n",
-            step_index + 1,
-            role.name()
-        ));
-        plan.steps[idx].result_summary = Some(truncate(&summary, 450));
-        plan.steps[idx].status = if step_success { "completed".into() } else { "failed".into() };
-        emit_plan(app, chat_id, &plan);
-    }
-
-    // Fase 5: Orquestador Principal — Síntesis Final estructurada y streaming directo al usuario
-    if is_chat_cancelled(chat_id) {
-        return Err("cancelado por el usuario".into());
-    }
-
-    let synth_system = format!(
-        "{full_system}\n\n## Modo: Orquestador Principal Makora (Síntesis Final Multi-Agente)\nHas coordinado una ejecución en cadena con 4 fases especializadas (Exploración, Código, Validación, Revisión).\n\n### Archivos Modificados en la Tarea:\n{}\n\n### Briefings Técnicos de los Subagentes:\n{briefing}\n\nDirectiva:\nGenera la respuesta final de forma concisa, clara y objetiva respondiendo directamente a la solicitud del usuario: '{objective}'. Resume sin redundancias ni preámbulos qué se ha analizado, qué cambios exactos se han aplicado (rutas de archivo y funciones), el resultado de las pruebas y las conclusiones de calidad.",
-        if all_modified_files.is_empty() {
-            "Ninguno (operación de solo lectura / análisis).".to_string()
-        } else {
-            all_modified_files.join(", ")
-        }
+    let full_system = format!(
+        "{MAKORA_BASE_SKILL}\n\n{system}\n\n{MULTI_DELEGATION_DIRECTIVE}\n\n## Objetivo del usuario\n{objective}"
     );
-
-    let synth_user_content = format!(
-        "Genera la síntesis final estructurada para el objetivo: {objective}"
-    );
-
-    let mut synth_msgs = messages.to_vec();
-    synth_msgs.push(ChatMessage {
-        role: "user".into(),
-        content: synth_user_content,
-        images: vec![],
-        tool_calls: None,
-        tool_call_id: None,
-    });
-
-    turn += 1;
-    let started = std::time::Instant::now();
-    let synth_outcome = if cfg.kind == "anthropic" {
-        gateway::anthropic_turn(app, cfg, chat_id, &synth_system, &synth_msgs, &[]).await?
-    } else {
-        gateway::openai_turn(app, cfg, chat_id, &synth_system, &synth_msgs, &[]).await?
-    };
-
-    total.input_tokens += synth_outcome.usage.input_tokens;
-    total.output_tokens += synth_outcome.usage.output_tokens;
-    total.cached_tokens += synth_outcome.usage.cached_tokens;
-    history::record_request(
-        &session_id,
-        turn,
-        &cfg.kind,
-        &cfg.model,
-        &RequestMeter {
-            input_tokens: synth_outcome.usage.input_tokens,
-            cached_tokens: synth_outcome.usage.cached_tokens,
-            output_tokens: synth_outcome.usage.output_tokens,
-            cost_usd: 0.0,
-            latency_ms: started.elapsed().as_millis() as i64,
-        },
-    );
-
-    plan.is_completed = true;
-    plan.active_step_index = None;
-    plan.total_tokens = total.input_tokens + total.output_tokens;
-    emit_plan(app, chat_id, &plan);
-
-    let final_msg = if !synth_outcome.text.trim().is_empty() {
-        synth_outcome.text
-    } else {
-        let mut report = String::from("### 📋 Informe de Ejecución Multi-Agente\n\n");
-        for step in &plan.steps {
-            let role_name = step.role.name();
-            let summary = step.result_summary.as_deref().unwrap_or("Completado sin observaciones");
-            report.push_str(&format!("- **{} ({})**:\n  {}\n\n", step.title, role_name, summary));
-        }
-        report.push_str(&format!(
-            "⚡ **Consumo total**: {} tokens.\n",
-            plan.total_tokens
-        ));
-        report
-    };
-
-    msgs.push(ChatMessage {
-        role: "assistant".into(),
-        content: final_msg,
-        images: vec![],
-        tool_calls: None,
-        tool_call_id: None,
-    });
-    history::create_checkpoint(&session_id, turn, &msgs);
-    history::archive_transcript(&session_id, turn, &msgs);
-    Ok(ChatResult {
-        input_tokens: total.input_tokens,
-        output_tokens: total.output_tokens,
-        cached_tokens: total.cached_tokens,
-        messages: msgs,
-    })
+    let mut tools = tools_with_mcp(registry, core_tools());
+    tools.push(delegate_tool_def());
+    run_loop(app, cfg, chat_id, &full_system, messages, folders, registry, &tools).await
 }
 
 #[cfg(test)]

@@ -30,7 +30,6 @@ import {
   X,
   ChevronDown,
   Search,
-  Plus,
   Coins,
   Clock,
   Rocket,
@@ -1065,10 +1064,6 @@ export default function Chat({
                 : t.chat.notReadyHint}
             </p>
             <div className="chat-quickstart-actions">
-              <button className="btn btn-subtle" onClick={clearChat} title={t.chat.newConversation}>
-                <Plus size={12} />
-                <span>{t.chat.newConversation}</span>
-              </button>
               <button className="btn btn-subtle" onClick={triggerAutoTestAndRepair}>
                 <FlaskConical size={12} />
                 <span>{t.chat.autoTest}</span>

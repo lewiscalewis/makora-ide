@@ -18,6 +18,10 @@ pub struct McpRegistry {
     pub tools: Mutex<HashMap<String, (String, Value)>>,
 }
 
+fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn send_request(
     stdin: &mut ChildStdin,
     lines: &mpsc::Receiver<String>,
@@ -53,8 +57,8 @@ fn send_request(
 }
 
 pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec<String>, String> {
-    let mut servers = registry.servers.lock().unwrap();
-    let mut tools = registry.tools.lock().unwrap();
+    let mut servers = guard(&registry.servers);
+    let mut tools = guard(&registry.tools);
 
     for (_, mut s) in servers.drain() {
         let _ = s.child.kill();
@@ -168,7 +172,7 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
 
 pub fn call(registry: &McpRegistry, full_name: &str, arguments: &str) -> Result<String, String> {
     let (server_name, _) = {
-        let tools = registry.tools.lock().unwrap();
+        let tools = guard(&registry.tools);
         tools
             .get(full_name)
             .cloned()
@@ -181,7 +185,7 @@ pub fn call(registry: &McpRegistry, full_name: &str, arguments: &str) -> Result<
         serde_json::from_str(arguments).unwrap_or(json!({}))
     };
 
-    let mut servers = registry.servers.lock().unwrap();
+    let mut servers = guard(&registry.servers);
     let server = servers
         .get_mut(&server_name)
         .ok_or_else(|| "servidor MCP no activo".to_string())?;

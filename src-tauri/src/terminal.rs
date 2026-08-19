@@ -13,6 +13,10 @@ pub struct TermHandle {
 #[derive(Default)]
 pub struct Terminals(pub Mutex<HashMap<String, TermHandle>>);
 
+fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct TermData {
     pub data: String,
@@ -58,7 +62,7 @@ pub fn spawn(
     cwd: Option<String>,
     terminals: &Terminals,
 ) -> Result<(), String> {
-    if terminals.0.lock().unwrap().contains_key(&id) {
+    if guard(&terminals.0).contains_key(&id) {
         return Ok(());
     }
     let pty_system = native_pty_system();
@@ -100,23 +104,25 @@ pub fn spawn(
         let _ = app2.emit(&format!("term-exit-{rid}"), ());
     });
 
-    terminals
-        .0
-        .lock()
-        .unwrap()
-        .insert(id, TermHandle { master: pair.master, writer });
+    guard(&terminals.0).insert(
+        id,
+        TermHandle {
+            master: pair.master,
+            writer,
+        },
+    );
     Ok(())
 }
 
 pub fn write(terminals: &Terminals, id: &str, data: &str) -> Result<(), String> {
-    let mut map = terminals.0.lock().unwrap();
+    let mut map = guard(&terminals.0);
     let h = map.get_mut(id).ok_or("terminal no encontrado")?;
     h.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     h.writer.flush().map_err(|e| e.to_string())
 }
 
 pub fn resize(terminals: &Terminals, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-    let map = terminals.0.lock().unwrap();
+    let map = guard(&terminals.0);
     let h = map.get(id).ok_or("terminal no encontrado")?;
     h.master
         .resize(PtySize {
@@ -129,6 +135,6 @@ pub fn resize(terminals: &Terminals, id: &str, cols: u16, rows: u16) -> Result<(
 }
 
 pub fn kill(terminals: &Terminals, id: &str) {
-    let mut map = terminals.0.lock().unwrap();
+    let mut map = guard(&terminals.0);
     map.remove(id);
 }

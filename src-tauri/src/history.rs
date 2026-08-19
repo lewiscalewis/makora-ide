@@ -13,6 +13,10 @@ use crate::ChatMessage;
 
 static DB_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn data_dir() -> PathBuf {
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
@@ -26,7 +30,7 @@ pub fn init() {
         return;
     }
     let path = dir.join("makora_history.db");
-    *DB_PATH.lock().unwrap() = Some(path.clone());
+    *guard(&DB_PATH) = Some(path.clone());
     let conn = match Connection::open(&path) {
         Ok(c) => c,
         Err(_) => return,
@@ -78,13 +82,13 @@ pub fn init() {
 
 fn ensure_db_path() -> Option<PathBuf> {
     {
-        let guard = DB_PATH.lock().unwrap();
-        if let Some(p) = guard.clone() {
+        let g = guard(&DB_PATH);
+        if let Some(p) = g.clone() {
             return Some(p);
         }
     }
     init();
-    DB_PATH.lock().unwrap().clone()
+    guard(&DB_PATH).clone()
 }
 
 fn with_conn<T>(f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T> {

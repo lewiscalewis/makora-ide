@@ -94,5 +94,26 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   3. **Aislamiento multisesión en `App.tsx`:** `updateActiveWorkspace` admite `targetSessionId` explícito; el hook de supervisión monitoriza el estado de cada sesión individualmente; `persistTranscript` y `addUsage` vinculan el modelo inmutable de cada sesión.
   4. **Corrección visual de selector de modelos:** Unificación y estilización del dropdown popover (`bottom-up`, glassmorphic dark theme, buscador con iconos e interactividad fluida).
 
+## ADR-019 — Formato de wire universal por proveedor + saneamiento de historial (2026-08-20)
+
+- **Problema:** historiales inválidos para la API al cruzar proveedores o al podar historia (mensajes `tool` huérfanos, usuarios consecutivos en Anthropic, asistentes vacíos `content: []`, `tool_result` con id desconocido), y parámetros rechazados por endpoints estrictos/locales (`reasoning_effort` inválido, `stream_options` en Ollama/LM Studio). Resultado: errores 400 frecuentes y "errores al cambiar de proveedor".
+- **Decisión:**
+  1. `gateway.rs` sanitiza el wire SIEMPRE antes de enviar: `sanitize_openai_wire` (descarta `tool` sin id conocido/asistentes vacíos) y reconstrucción completa de mensajes en `anthropic_turn` (elimina leading non-user, fusiona usuarios consecutivos, descarta `tool_result` huérfanos, ids de `tool_use` con fallback).
+  2. `agent.rs::sanitize_history` + `prepare_wire` aplican el mismo saneamiento al transcript en memoria (post evicción/fit_history).
+  3. Normalización de `reasoning_effort` por proveedor (`norm_effort_openai`/`norm_effort_anthropic`; Anthropic: `minimal`→`low`, thinking `adaptive` solo en modelos 4.x, `enabled`+budget en anteriores). Endpoints locales (localhost/127.0.0.1) omiten `stream_options`/`reasoning_effort`.
+  4. Tool results vacíos se envían como `[sin salida]`.
+
+## ADR-020 — Multi-Agente por delegación (sustituye al pipeline de 5 fases, 2026-08-20)
+
+- **Problema:** el DAG fijo Explorer→Coder→Tester→Reviewer→Síntesis duplicaba el historial completo y el system prompt en cada fase (explosión de tokens), no estaba conectado al hilo principal (sin eventos de herramientas, formato final distinto) y ejecutaba todas las fases aunque la tarea no lo requiriese.
+- **Decisión:** el modo Multi activa la herramienta `delegate_subagent` (roles explorer/coder/tester/reviewer) en el MISMO bucle agéntico principal. El agente decide qué delegar y cuándo; cada subagente recibe contexto mínimo (skill base + rol + tarea + `context` aportado por el principal + raíces del workspace), devuelve solo un briefing condensado (≤400 palabras) y sus herramientas emiten `tool-start`/`tool-end` con prefijo `sub:{rol}:` asociados al chat principal (semi-transparente, como cualquier herramienta). El formato final de respuesta no se altera. `explore_subagent` se mantiene como alias del rol explorer.
+- **Consecuencias:** `run_multiagent` = `run_loop` con directiva de delegación + tool extra (bucle, checkpoints, metering y detección de bucles unificados); el evento `multiagent-plan-event` y el panel quedan sin uso (la interfaz muestra la actividad vía cards de herramientas).
+
+## ADR-021 — Estabilidad: locks poison-safe, MCP no bloqueante y defensas anti-cierre (2026-08-20)
+
+- **Problema:** `panic = "abort"` en release convierte cualquier panic en cierre de la app; todos los `.lock().unwrap()` en `agent/mcp/terminal/token_engine/history` propagaban poisoning; `mcp_configure` (comando síncrono) bloqueaba el hilo principal hasta 20s por servidor; el export de bindings usaba `.expect()` en arranque.
+- **Decisión:** helper `guard()` (lock con `into_inner` en caso de poison) en todos los módulos; `mcp_configure` pasa a `spawn_blocking`; `mcp::call` se ejecuta en `spawn_blocking` desde `execute_tool`; el export de `bindings.ts` registra error sin panic; `run_bash` sube a 600s (alineado con el diseño documentado). En frontend: al cambiar de proveedor se selecciona síncronamente el modelo recomendado del nuevo proveedor (evita 404/400 al chatear antes de cargar modelos) y `reasoningEffort` solo se envía si es válido.
+
+
 
 

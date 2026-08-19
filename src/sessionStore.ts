@@ -302,17 +302,55 @@ function installEventRouting(): void {
       runningTool: t.name,
     })),
   );
-  on<ToolOutputEvent>("tool-output", (t) =>
-    update(t.chatId, (rt) => ({
-      turnActivities: {
-        ...rt.turnActivities,
-        [rt.currentAssistantId]: (rt.turnActivities[rt.currentAssistantId] ?? []).map((x) =>
-          x.id === t.id ? { ...x, log: x.log + t.data } : x,
-        ),
-      },
-    })),
-  );
-  on<ToolEnd>("tool-end", (t) =>
+  const MAX_LOG_SIZE = 65_536;
+  const appendLogSafely = (currentLog: string, incoming: string): string => {
+    const total = currentLog + incoming;
+    if (total.length > MAX_LOG_SIZE) {
+      return "...[salida truncada por límite de memoria]\n" + total.slice(-(MAX_LOG_SIZE - 100));
+    }
+    return total;
+  };
+
+  let pendingOutputs: { chatId: string; id: string; data: string }[] = [];
+  let outputRafScheduled = false;
+
+  const flushOutputs = () => {
+    outputRafScheduled = false;
+    if (pendingOutputs.length === 0) return;
+    const batch = pendingOutputs;
+    pendingOutputs = [];
+
+    // Agrupar por chat y id de herramienta
+    const byChat = new Map<string, Map<string, string>>();
+    for (const item of batch) {
+      if (!byChat.has(item.chatId)) byChat.set(item.chatId, new Map());
+      const map = byChat.get(item.chatId)!;
+      map.set(item.id, (map.get(item.id) ?? "") + item.data);
+    }
+
+    for (const [chatId, toolDeltas] of byChat) {
+      update(chatId, (rt) => ({
+        turnActivities: {
+          ...rt.turnActivities,
+          [rt.currentAssistantId]: (rt.turnActivities[rt.currentAssistantId] ?? []).map((x) => {
+            const extra = toolDeltas.get(x.id);
+            return extra ? { ...x, log: appendLogSafely(x.log, extra) } : x;
+          }),
+        },
+      }));
+    }
+  };
+
+  on<ToolOutputEvent>("tool-output", (t) => {
+    pendingOutputs.push(t);
+    if (!outputRafScheduled) {
+      outputRafScheduled = true;
+      requestAnimationFrame(flushOutputs);
+    }
+  });
+
+  on<ToolEnd>("tool-end", (t) => {
+    flushOutputs();
     update(t.chatId, (rt) => {
       const nextActivities = {
         ...rt.turnActivities,
@@ -327,16 +365,40 @@ function installEventRouting(): void {
         turnActivities: nextActivities,
         runningTool: stillRunning ? stillRunning.name : null,
       };
-    }),
-  );
-  on<ThinkingDeltaEvent>("thinking-delta", (d) =>
-    update(d.chatId, (rt) => ({
-      thinking: {
-        id: rt.thinking?.id ?? rt.currentAssistantId,
-        text: (rt.thinking?.text ?? "") + d.text,
-      },
-    })),
-  );
+    });
+  });
+
+  let pendingThinking: { chatId: string; text: string }[] = [];
+  let thinkingRafScheduled = false;
+
+  const flushThinking = () => {
+    thinkingRafScheduled = false;
+    if (pendingThinking.length === 0) return;
+    const batch = pendingThinking;
+    pendingThinking = [];
+
+    const byChat = new Map<string, string>();
+    for (const item of batch) {
+      byChat.set(item.chatId, (byChat.get(item.chatId) ?? "") + item.text);
+    }
+
+    for (const [chatId, deltaText] of byChat) {
+      update(chatId, (rt) => ({
+        thinking: {
+          id: rt.thinking?.id ?? rt.currentAssistantId,
+          text: (rt.thinking?.text ?? "") + deltaText,
+        },
+      }));
+    }
+  };
+
+  on<ThinkingDeltaEvent>("thinking-delta", (d) => {
+    pendingThinking.push(d);
+    if (!thinkingRafScheduled) {
+      thinkingRafScheduled = true;
+      requestAnimationFrame(flushThinking);
+    }
+  });
   on<MultiAgentPlanEvent>("multiagent-plan-event", (p) =>
     update(p.chatId, () => ({ plan: p.plan })),
   );
@@ -372,7 +434,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     thinking: null,
     error: null,
     abortRequested: false,
-    plan: opts.useMultiAgent ? r.plan : null,
+    plan: null,
     draftInput: "",
     draftAttachments: [],
     transcript: newTranscript,

@@ -18,6 +18,10 @@ pub struct TokenCounter {
     bpe: Mutex<Option<CoreBPE>>,
 }
 
+fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl TokenCounter {
     pub fn new() -> Self {
         let bpe = tiktoken_rs::cl100k_base().ok();
@@ -27,7 +31,7 @@ impl TokenCounter {
     }
 
     pub fn count(&self, text: &str) -> usize {
-        if let Some(bpe) = self.bpe.lock().unwrap().as_ref() {
+        if let Some(bpe) = guard(&self.bpe).as_ref() {
             bpe.encode_ordinary(text).len()
         } else {
             text.chars().count() / 4

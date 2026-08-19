@@ -10,6 +10,7 @@ mod token_engine;
 use std::sync::LazyLock;
 
 use specta::Type;
+#[cfg(debug_assertions)]
 use specta_typescript::Typescript;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -90,6 +91,14 @@ pub struct ChatUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cached_tokens: u32,
+}
+
+impl std::ops::AddAssign for ChatUsage {
+    fn add_assign(&mut self, other: Self) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cached_tokens += other.cached_tokens;
+    }
 }
 
 #[derive(Clone, serde::Serialize, Type, Default)]
@@ -421,8 +430,10 @@ async fn run_multiagent_plan(
 
 #[tauri::command]
 #[specta::specta]
-fn mcp_configure(specs: Vec<McpSpec>) -> Result<Vec<String>, String> {
-    mcp::configure(&MCP, &specs)
+async fn mcp_configure(specs: Vec<McpSpec>) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || mcp::configure(&MCP, &specs))
+        .await
+        .map_err(|e| format!("error configurando MCP: {e}"))?
 }
 
 #[tauri::command]
@@ -1331,9 +1342,9 @@ pub fn run() {
         .setup(move |app| {
             specta_builder.mount_events(app);
             #[cfg(debug_assertions)]
-            specta_builder
-                .export(Typescript::default(), "../src/bindings.ts")
-                .expect("failed to export typescript bindings");
+            if let Err(e) = specta_builder.export(Typescript::default(), "../src/bindings.ts") {
+                eprintln!("[specta] no se pudo exportar bindings.ts: {e}");
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

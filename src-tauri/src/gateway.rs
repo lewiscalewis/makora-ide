@@ -84,6 +84,56 @@ where
     }
 }
 
+pub fn parse_tool_args(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return json!({});
+    }
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return v;
+    }
+    let clean = if trimmed.starts_with("```") {
+        let lines: Vec<&str> = trimmed.lines().collect();
+        if lines.len() >= 2 {
+            lines[1..lines.len().saturating_sub(1)].join("\n")
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        trimmed.to_string()
+    };
+    if let Ok(v) = serde_json::from_str::<Value>(&clean) {
+        return v;
+    }
+    // Handle concatenated stream of JSON objects: e.g. {"pattern":"a"}{"pattern":"b"}
+    let mut merged = json!({});
+    let mut stream = serde_json::Deserializer::from_str(trimmed).into_iter::<Value>();
+    let mut count = 0;
+    while let Some(Ok(val)) = stream.next() {
+        if let Some(obj) = val.as_object() {
+            for (k, v) in obj {
+                merged[k] = v.clone();
+            }
+            count += 1;
+        } else if count == 0 {
+            return val;
+        }
+    }
+    if count > 0 {
+        return merged;
+    }
+    if let Some(start) = trimmed.find('{') {
+        if let Some(end) = trimmed.rfind('}') {
+            if end > start {
+                if let Ok(v) = serde_json::from_str::<Value>(&trimmed[start..=end]) {
+                    return v;
+                }
+            }
+        }
+    }
+    json!({})
+}
+
 fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
     let mut obj = json!({"role": m.role, "content": m.content});
     if !m.images.is_empty() && m.role == "user" {
@@ -116,10 +166,17 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
                 } else {
                     tc.id.clone()
                 };
+                let valid_args = match serde_json::from_str::<Value>(&tc.arguments) {
+                    Ok(v) => serde_json::to_string(&v).unwrap_or_else(|_| tc.arguments.clone()),
+                    Err(_) => {
+                        let parsed = parse_tool_args(&tc.arguments);
+                        serde_json::to_string(&parsed).unwrap_or_else(|_| "{}".to_string())
+                    }
+                };
                 let mut tc_obj = json!({
                     "id": id,
                     "type": "function",
-                    "function": {"name": clean_name, "arguments": tc.arguments}
+                    "function": {"name": clean_name, "arguments": valid_args}
                 });
                 if let Some(ec) = &tc.extra_content {
                     tc_obj["extra_content"] = ec.clone();
@@ -140,7 +197,83 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
         };
         obj["tool_call_id"] = json!(id);
     }
+    if m.role == "tool" && m.content.trim().is_empty() {
+        obj["content"] = json!("[sin salida]");
+    }
     obj
+}
+
+fn is_local_endpoint(base: &str) -> bool {
+    let lower = base.to_lowercase();
+    lower.contains("localhost")
+        || lower.contains("127.0.0.1")
+        || lower.contains("[::1]")
+        || lower.contains("0.0.0.0")
+}
+
+fn norm_effort_openai(e: &str) -> Option<String> {
+    match e {
+        "minimal" | "low" | "medium" | "high" => Some(e.to_string()),
+        _ => None,
+    }
+}
+
+fn norm_effort_anthropic(e: &str) -> Option<String> {
+    match e {
+        "minimal" => Some("low".into()),
+        "low" | "medium" | "high" => Some(e.into()),
+        _ => None,
+    }
+}
+
+/// Garantiza una secuencia válida para cualquier API OpenAI-compatible:
+/// - descarta mensajes `tool` sin `tool_call_id` conocido o huérfanos al inicio;
+/// - descarta asistentes vacíos (sin contenido ni tool_calls).
+fn sanitize_openai_wire(msgs: Vec<Value>) -> Vec<Value> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut started = false;
+    let mut out: Vec<Value> = Vec::with_capacity(msgs.len());
+    for m in msgs {
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("").to_string();
+        match role.as_str() {
+            "assistant" => {
+                if let Some(tcs) = m.get("tool_calls").and_then(|t| t.as_array()) {
+                    for tc in tcs {
+                        if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                            if !id.is_empty() {
+                                seen.insert(id.to_string());
+                            }
+                        }
+                    }
+                }
+                let has_content = m
+                    .get("content")
+                    .map(|c| c.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false))
+                    .unwrap_or(false);
+                let has_tools = m
+                    .get("tool_calls")
+                    .map(|t| t.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                    .unwrap_or(false);
+                if !has_content && !has_tools {
+                    continue;
+                }
+                started = true;
+                out.push(m);
+            }
+            "tool" => {
+                let id = m.get("tool_call_id").and_then(|i| i.as_str()).unwrap_or("");
+                if !started || id.is_empty() || !seen.contains(id) {
+                    continue;
+                }
+                out.push(m);
+            }
+            _ => {
+                started = true;
+                out.push(m);
+            }
+        }
+    }
+    out
 }
 
 fn format_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
@@ -179,6 +312,7 @@ pub async fn openai_turn(
     for m in messages.iter() {
         msgs.push(to_wire(m, cfg));
     }
+    let msgs = sanitize_openai_wire(msgs);
 
     let mut model_name = cfg.model.trim_start_matches("models/");
     let is_gemini = cfg.base_url.contains("googleapis.com") || model_name.starts_with("gemini");
@@ -194,11 +328,12 @@ pub async fn openai_turn(
         "messages": msgs,
         "stream": true,
     });
-    if !is_gemini {
+    let local = is_local_endpoint(&base);
+    if !is_gemini && !local {
         body["stream_options"] = json!({ "include_usage": true });
         if let Some(e) = &cfg.reasoning_effort {
-            if e != "none" {
-                body["reasoning_effort"] = json!(e);
+            if let Some(eff) = norm_effort_openai(e) {
+                body["reasoning_effort"] = json!(eff);
             }
         }
     }
@@ -283,16 +418,35 @@ pub async fn openai_turn(
                 }
                 if let Some(calls) = delta.get("tool_calls").and_then(|c| c.as_array()) {
                     for call in calls {
-                        let idx = call.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
+                        let idx = match call.get("index").and_then(|i| i.as_u64()) {
+                            Some(i) => i as u32,
+                            None => {
+                                if let Some(id) = call.get("id").and_then(|i| i.as_str()) {
+                                    if let Some((&k, _)) = tcs.iter().find(|(_, v)| v.0 == id) {
+                                        k
+                                    } else if tcs.is_empty() {
+                                        0
+                                    } else {
+                                        tcs.keys().max().map(|m| m + 1).unwrap_or(0)
+                                    }
+                                } else {
+                                    tcs.keys().max().copied().unwrap_or(0)
+                                }
+                            }
+                        };
                         let entry = tcs
                             .entry(idx)
                             .or_insert_with(|| (String::new(), String::new(), String::new(), None));
                         if let Some(id) = call.get("id").and_then(|i| i.as_str()) {
-                            entry.0 = id.to_string();
+                            if !id.is_empty() {
+                                entry.0 = id.to_string();
+                            }
                         }
                         if let Some(f) = call.get("function") {
                             if let Some(n) = f.get("name").and_then(|x| x.as_str()) {
-                                entry.1 = n.to_string();
+                                if !n.is_empty() {
+                                    entry.1 = n.to_string();
+                                }
                             }
                             if let Some(a) = f.get("arguments").and_then(|x| x.as_str()) {
                                 entry.2.push_str(a);
@@ -492,7 +646,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
         let v = TABLE
             .iter()
             .position(|&x| x == c)
-            .ok_or("carÃ¡cter base64 invÃ¡lido")? as u32;
+            .ok_or("carácter base64 inválido")? as u32;
         buf = (buf << 6) | v;
         bits += 6;
         if bits >= 8 {
@@ -506,7 +660,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 static IMG_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn save_image_temp(data_url: &str) -> Result<String, String> {
-    let (media_type, b64) = parse_data_url(data_url).ok_or("data url invÃ¡lida")?;
+    let (media_type, b64) = parse_data_url(data_url).ok_or("data url inválida")?;
     let ext = media_type.split('/').nth(1).unwrap_or("png");
     let dir = std::env::temp_dir().join("makora_attachments");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -529,13 +683,19 @@ pub async fn anthropic_turn(
     let base = cfg.base_url.trim_end_matches('/');
     let url = format!("{base}/messages");
 
-    let mut msgs: Vec<Value> = Vec::new();
+    struct AntMsg {
+        role: String,
+        blocks: Vec<Value>,
+    }
+
+    let mut raw: Vec<AntMsg> = Vec::new();
+    let mut known_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for m in messages.iter() {
         match m.role.as_str() {
             "user" => {
+                let mut blocks: Vec<Value> = Vec::new();
                 if !m.images.is_empty() {
                     if cfg.vision_enabled {
-                        let mut blocks: Vec<Value> = Vec::new();
                         for img in &m.images {
                             if let Some((media_type, data)) = parse_data_url(img) {
                                 blocks.push(json!({
@@ -544,10 +704,6 @@ pub async fn anthropic_turn(
                                 }));
                             }
                         }
-                        if !m.content.is_empty() {
-                            blocks.push(json!({"type": "text", "text": m.content}));
-                        }
-                        msgs.push(json!({"role": "user", "content": blocks}));
                     } else {
                         let mut content = m.content.clone();
                         for img in &m.images {
@@ -558,11 +714,19 @@ pub async fn anthropic_turn(
                                 Err(_) => content.push_str("\n[Imagen adjunta: no se pudo guardar]"),
                             }
                         }
-                        msgs.push(json!({"role": "user", "content": content}));
+                        blocks.push(json!({"type": "text", "text": content}));
                     }
-                } else {
-                    msgs.push(json!({"role": "user", "content": m.content}));
                 }
+                if !m.content.trim().is_empty() {
+                    blocks.push(json!({"type": "text", "text": m.content}));
+                }
+                if blocks.is_empty() {
+                    blocks.push(json!({"type": "text", "text": "[sin contenido]"}));
+                }
+                raw.push(AntMsg {
+                    role: "user".into(),
+                    blocks,
+                });
             }
             "assistant" => {
                 let mut blocks: Vec<Value> = Vec::new();
@@ -570,32 +734,72 @@ pub async fn anthropic_turn(
                     blocks.push(json!({"type": "text", "text": m.content}));
                 }
                 if let Some(tcs) = &m.tool_calls {
-                    for tc in tcs {
-                        let input: Value =
-                            serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
+                    for (i, tc) in tcs.iter().enumerate() {
+                        let id = if tc.id.trim().is_empty() {
+                            format!("call_{i}")
+                        } else {
+                            tc.id.clone()
+                        };
+                        known_tool_ids.insert(id.clone());
                         blocks.push(json!({
                             "type": "tool_use",
-                            "id": tc.id,
+                            "id": id,
                             "name": tc.name,
-                            "input": input
+                            "input": parse_tool_args(&tc.arguments)
                         }));
                     }
                 }
-                msgs.push(json!({"role": "assistant", "content": blocks}));
+                if blocks.is_empty() {
+                    continue;
+                }
+                raw.push(AntMsg {
+                    role: "assistant".into(),
+                    blocks,
+                });
             }
             "tool" => {
-                msgs.push(json!({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
-                        "content": m.content
-                    }]
-                }));
+                let id = m.tool_call_id.clone().unwrap_or_default();
+                if id.trim().is_empty() || !known_tool_ids.contains(&id) {
+                    continue;
+                }
+                let content = if m.content.trim().is_empty() {
+                    "[sin salida]".to_string()
+                } else {
+                    m.content.clone()
+                };
+                let block = json!({"type": "tool_result", "tool_use_id": id, "content": content});
+                match raw.last_mut() {
+                    Some(last) if last.role == "user" => last.blocks.push(block),
+                    _ => raw.push(AntMsg {
+                        role: "user".into(),
+                        blocks: vec![block],
+                    }),
+                }
             }
             _ => {}
         }
     }
+
+    while let Some(first) = raw.first() {
+        if first.role == "user" {
+            break;
+        }
+        raw.remove(0);
+    }
+    let mut merged: Vec<AntMsg> = Vec::new();
+    for m in raw {
+        if let Some(last) = merged.last_mut() {
+            if last.role == m.role {
+                last.blocks.extend(m.blocks);
+                continue;
+            }
+        }
+        merged.push(m);
+    }
+    let msgs: Vec<Value> = merged
+        .into_iter()
+        .map(|m| json!({"role": m.role, "content": m.blocks}))
+        .collect();
 
     let mut body = json!({
         "model": cfg.model,
@@ -616,10 +820,19 @@ pub async fn anthropic_turn(
         body["temperature"] = json!(t);
     }
     if let Some(e) = &cfg.reasoning_effort {
-        if e != "none" {
-            // Claude 4.7+ usa adaptive thinking; 4.5/anteriores solo "enabled"
-            body["thinking"] = json!({"type": "adaptive"});
-            body["output_config"] = json!({"effort": e});
+        if let Some(eff) = norm_effort_anthropic(e) {
+            let model_lower = cfg.model.to_lowercase();
+            let supports_adaptive = model_lower.contains("4-7")
+                || model_lower.contains("4.7")
+                || model_lower.contains("opus-4")
+                || model_lower.contains("sonnet-4")
+                || model_lower.contains("haiku-4");
+            if supports_adaptive {
+                body["thinking"] = json!({"type": "adaptive"});
+                body["output_config"] = json!({"effort": eff});
+            } else {
+                body["thinking"] = json!({"type": "enabled", "budget_tokens": 2048});
+            }
         }
     }
     if !tools.is_empty() {

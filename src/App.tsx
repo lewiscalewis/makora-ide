@@ -16,7 +16,7 @@ import {
   detectOllama,
 } from "./api";
 import { presetById } from "./providers";
-import { DEFAULT_CONFIG, inferModelConfig, computeCostUsd } from "./defaults";
+import { DEFAULT_CONFIG, getRecommendedModelsForProvider, inferModelConfig, computeCostUsd } from "./defaults";
 import { applyTheme, loadSavedTheme, THEME_LIST } from "./themes";
 import { useI18n } from "./i18n";
 import { UploadCloud, AlertTriangle, CheckCircle2, X } from "lucide-react";
@@ -458,7 +458,12 @@ function App() {
       baseUrl: settings.baseUrl || preset.baseUrl,
       model: settings.model,
       apiKey: settings.apiKey,
-      reasoningEffort: modelConfig?.reasoningEnabled ? modelConfig.thinkingLevel : null,
+      reasoningEffort:
+        modelConfig?.reasoningEnabled &&
+        modelConfig.thinkingLevel &&
+        modelConfig.thinkingLevel !== "none"
+          ? modelConfig.thinkingLevel
+          : null,
       maxOutputTokens: modelConfig?.maxOutputTokens ?? null,
       temperature: null,
       visionEnabled: isVisionActive,
@@ -622,13 +627,31 @@ function App() {
     if (activeSessionId) persistActiveSessionId(activeSessionId);
   }, [activeSessionId]);
 
+  const prevProviderRef = useRef(settings.providerId);
   useEffect(() => {
+    const prevProvider = prevProviderRef.current;
+    const providerChanged = prevProvider !== settings.providerId;
+    prevProviderRef.current = settings.providerId;
     setModels([]);
     setModelsError(null);
     setBalance(null);
-    if (settings.providerId !== "custom") {
-      setSettings((s) => ({ ...s, baseUrl: presetById(settings.providerId).baseUrl }));
-    }
+    setSettings((s) => {
+      const next = { ...s };
+      if (s.providerId !== "custom") {
+        next.baseUrl = presetById(s.providerId).baseUrl;
+        // Al cambiar de proveedor, el modelo anterior casi nunca existe en el
+        // nuevo proveedor: seleccionar el recomendado de inmediato evita
+        // errores 404/400 si el usuario envía un mensaje antes de cargar modelos.
+        if (providerChanged) {
+          const recommended = getRecommendedModelsForProvider(s.providerId);
+          const currentBelongs = recommended.some((m) => m.id === s.model);
+          if (!currentBelongs) {
+            next.model = recommended[0]?.id ?? "";
+          }
+        }
+      }
+      return next;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.providerId]);
 
