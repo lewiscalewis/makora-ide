@@ -22,8 +22,11 @@ src-tauri/target
 target
 Cargo.lock
 
+# Scratch & Ephemeral scripts
+scratch/
+scratch_*
+
 # Environment & Secrets
 .env
 .env.*
 *.local
-

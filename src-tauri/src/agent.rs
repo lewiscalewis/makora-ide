@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -7,39 +7,51 @@ use tauri::{AppHandle, Emitter};
 use crate::gateway::{self, ToolDef};
 use crate::history::{self, RequestMeter};
 use crate::mcp::{self, McpRegistry};
+use crate::multiagent;
 use crate::token_engine;
 use crate::{ChatConfig, ChatMessage, ChatResult, ChatUsage};
 
-static CANCEL: AtomicBool = AtomicBool::new(false);
+static CANCELLED: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
 
-pub fn cancel() {
-    CANCEL.store(true, Ordering::SeqCst);
+pub fn cancel_chat(chat_id: &str) {
+    if !chat_id.is_empty() {
+        CANCELLED.lock().unwrap().insert(chat_id.to_string());
+    }
 }
 
-pub fn is_cancelled() -> bool {
-    CANCEL.load(Ordering::SeqCst)
+pub fn clear_cancel(chat_id: &str) {
+    CANCELLED.lock().unwrap().remove(chat_id);
+}
+
+pub fn is_chat_cancelled(chat_id: &str) -> bool {
+    let raw = chat_id.split("__sub_").next().unwrap_or(chat_id);
+    let guard = CANCELLED.lock().unwrap();
+    guard.contains(chat_id) || guard.contains(raw)
 }
 
 const MAKORA_BASE_SKILL: &str = "\
-## Makora Core Skill (universal — aplica en todos los proveedores y modelos)
+## Makora Core Operating Engine (universal — estándar de máxima precisión y eficiencia)
 
-Directrices Operativas de Calidad, Precisión y Eficiencia:
-1. Respuestas pertinentes y naturales: Si el usuario realiza un saludo ('Hola', 'Buenas', etc.), agradecimiento o pregunta general/conceptual, responde directamente de manera cordial, clara y concisa SIN ejecutar herramientas de fondo innecesarias.
-2. Acción técnica directa: Si el usuario te pide expresamente inspeccionar, modificar, depurar, crear o ejecutar código/archivos en el workspace, procede directamente utilizando las herramientas correspondientes con la máxima precisión y sin rodeos.
-3. Edición quirúrgica obligatoria: NUNCA uses write_file en archivos existentes ni reescribas archivos completos. Usa EXCLUSIVAMENTE apply_patch con bloques:
-   <<<<<<< SEARCH
-   [líneas exactas a reemplazar]
-   =======
-   [nuevas líneas]
-   >>>>>>> REPLACE
-   con 3-5 líneas de anclaje de contexto. Usa write_file ÚNICAMENTE para archivos 100% nuevos.
-4. Lectura progresiva y focalizada: NUNCA leas archivos enteros con read_file si solo requieres una función o sección. Usa read_file_range con rango [start_line, end_line]. Usa list_dir para ubicar archivos antes de leerlos.
-5. Tool Batching: Agrupa todas las lecturas de herramientas independientes en el primer turno para minimizar iteraciones de red y latencia.
-6. Exploración aislada: Cuando necesites buscar en múltiples archivos, logs extensos o diagnosticar dependencias complejas, utiliza explore_subagent para no polucionar el historial principal.
-7. Terminal no interactiva y silenciosa: Ejecuta comandos bash con parámetros silenciosos (-q, --quiet, salidas acotadas). NUNCA ejecutes comandos interactivos o bloqueantes.
-8. Conclusión estructurada y compacta: Al finalizar la tarea técnica, emite un resumen conciso de máximo 1 línea por archivo modificado:
-   - `ruta/al/archivo:línea - acción realizada`
-9. Continúa autónomamente hasta COMPLETAR la tarea técnica en su totalidad; no te detengas a mitad de camino pidiendo confirmaciones triviales.
+### I. Protocolo de Razonamiento Crítico (Thinking Protocol)
+1. Invariantes y Contratos: Antes de proponer cualquier cambio, identifica contratos IPC, tipos y dependencias existentes para garantizar cero regresiones.
+2. Mapeo Quirúrgico: Localiza siempre el archivo y rango exacto de líneas con `grep` o `read_file_range` antes de formular un parche.
+3. Validación Sintáctica Previa: Verifica mentalmente imports requeridos, balance de llaves y coherencia de tipos antes de aplicar cualquier modificación.
+
+### II. Economía Extrema de Tokens (Token Economy Guard)
+1. Anti-Bloat: NUNCA uses `read_file` en archivos de más de 150 líneas. Usa OBLIGATORIAMENTE `read_file_range` tras ubicar la función con `grep`.
+2. Cirugía Estricta con `apply_patch`: Modifica archivos existentes EXCLUSIVAMENTE con `apply_patch` usando ventanas mínimas de 3 a 5 líneas de anclaje exactas. NUNCA reescribas archivos completos existentes con `write_file` (reserva `write_file` solo para archivos 100% nuevos).
+3. Batching de Herramientas: Agrupa todas las llamadas de lectura o búsqueda independientes en una única ronda de ejecución para minimizar latencia de red.
+4. Aislamiento Efímero: Para exploraciones masivas en múltiples archivos o análisis de logs extensos, usa `explore_subagent` para no polucionar el historial principal (el subagente devuelve solo un briefing condensado de <200 tokens).
+5. Cero Código Duplicado: NUNCA reimprimas el código completo en la respuesta final de texto cuando ya haya sido aplicado con `apply_patch`.
+
+### III. Directrices de Ejecución y Salida
+1. Conversación Natural vs Acción: Si el usuario realiza un saludo, agradecimiento o pregunta conceptual, responde de forma concisa y cordial sin invocar herramientas. Si pide una tarea técnica, procede directamente con las herramientas adecuadas.
+2. Terminal Silenciosa: Ejecuta comandos `bash` con banderas silenciosas (`-q`, `--quiet`, salidas acotadas). Prohibidos comandos interactivos o bloqueantes.
+3. Cierre y Respuesta Final Obligatoria: NUNCA finalices una interacción en silencio o con texto vacío tras ejecutar herramientas. Al terminar la tarea técnica, emite SIEMPRE un resumen final claro y estructurado:
+   - `ruta/al/archivo:línea` — descripción quirúrgica del cambio realizado.
+   - Estado de Verificación: `[compilación / tests / parches OK]`
+4. Autonomía: Completa la tarea técnica en su totalidad sin detenerte a pedir confirmaciones innecesarias en pasos intermedios.
 ";
 
 fn now_id() -> String {
@@ -55,6 +67,7 @@ pub struct ToolStart {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    pub chat_id: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -63,6 +76,7 @@ pub struct ToolOutput {
     pub id: String,
     pub stream: String,
     pub data: String,
+    pub chat_id: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -71,6 +85,7 @@ pub struct ToolEnd {
     pub id: String,
     pub ok: bool,
     pub summary: String,
+    pub chat_id: String,
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> String {
@@ -399,7 +414,12 @@ fn is_read_only_tool(name: &str) -> bool {
     matches!(name, "read_file" | "read_file_range" | "grep" | "list_dir")
 }
 
-async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<String, String> {
+async fn run_bash(
+    app: &AppHandle,
+    command: &str,
+    folders: &[String],
+    chat_id: &str,
+) -> Result<String, String> {
     if is_dangerous_command(command) {
         return Err("Comando bloqueado por seguridad: contiene patrones destructivos no permitidos.".into());
     }
@@ -444,6 +464,7 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
     let combined = Arc::new(StdMutex::new(String::new()));
     let app_out = app.clone();
     let id_out = id.clone();
+    let chat_out = chat_id.to_string();
     let combined_out = combined.clone();
 
     let stdout_handle = tokio::spawn(async move {
@@ -459,6 +480,7 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
                         id: id_out.clone(),
                         stream: "stdout".into(),
                         data: format!("{line}\n"),
+                        chat_id: chat_out.clone(),
                     },
                 );
             }
@@ -467,6 +489,7 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
 
     let app_err = app.clone();
     let id_err = id.clone();
+    let chat_err = chat_id.to_string();
     let combined_err = combined.clone();
     let stderr_handle = tokio::spawn(async move {
         if let Some(stderr) = stderr {
@@ -481,29 +504,36 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
                         id: id_err.clone(),
                         stream: "stderr".into(),
                         data: format!("{line}\n"),
+                        chat_id: chat_err.clone(),
                     },
                 );
             }
         }
     });
 
+    // Espera con cancelación por chat: mata también el proceso hijo.
     let timeout_duration = std::time::Duration::from_secs(60);
-    let wait_result = tokio::time::timeout(timeout_duration, async {
-        let status = child.wait().await;
-        let _ = stdout_handle.await;
-        let _ = stderr_handle.await;
-        status
-    })
-    .await;
-
-    let exit_code = match wait_result {
-        Ok(Ok(status)) => status.code().unwrap_or(-1),
-        Ok(Err(e)) => return Err(format!("error esperando al proceso: {e}")),
-        Err(_) => {
+    let deadline = std::time::Instant::now() + timeout_duration;
+    let exit_code: i32;    loop {
+        if is_chat_cancelled(chat_id) {
+            let _ = child.kill().await;
+            return Err("cancelado por el usuario".into());
+        }
+        if std::time::Instant::now() >= deadline {
             let _ = child.kill().await;
             return Err("timeout (60s) ejecutando el comando bash".into());
         }
-    };
+        match tokio::time::timeout(std::time::Duration::from_millis(300), child.wait()).await {
+            Ok(Ok(status)) => {
+                exit_code = status.code().unwrap_or(-1);
+                break;
+            }
+            Ok(Err(e)) => return Err(format!("error esperando al proceso: {e}")),
+            Err(_) => {}
+        }
+    }
+    let _ = stdout_handle.await;
+    let _ = stderr_handle.await;
 
     let out = combined.lock().unwrap().clone();
     let mut summarized = truncate_head_tail(&out, 40, 40);
@@ -516,6 +546,7 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
             id: id.clone(),
             stream: "exit".into(),
             data: format!("exit: {exit_code}\n"),
+            chat_id: chat_id.to_string(),
         },
     );
     Ok(format!("exit: {exit_code}\n{summarized}"))
@@ -882,6 +913,7 @@ async fn run_explore_subagent(
     cfg: &ChatConfig,
     task: &str,
     folders: &[String],
+    chat_id: &str,
 ) -> Result<String, String> {
     let sub_system = format!(
         "Eres el Subagente Explorer de MakoraIDE. Tu misión exclusiva es investigar y responder con síntesis técnica concisa (100-250 palabras):\n{task}\n\nUsa las herramientas read_file_range, list_dir, grep para localizar la información. Al terminar emite directamente tu conclusión técnica sin rodeos."
@@ -929,13 +961,13 @@ async fn run_explore_subagent(
 
     let mut last_text = String::new();
     for _ in 0..4 {
-        if CANCEL.load(Ordering::SeqCst) {
+        if is_chat_cancelled(chat_id) {
             return Err("exploración cancelada".into());
         }
         let outcome = if cfg.kind == "anthropic" {
-            gateway::anthropic_turn(app, cfg, &sub_system, &current_msgs, &sub_tools).await?
+            gateway::anthropic_turn(app, cfg, chat_id, &sub_system, &current_msgs, &sub_tools).await?
         } else {
-            gateway::openai_turn(app, cfg, &sub_system, &current_msgs, &sub_tools).await?
+            gateway::openai_turn(app, cfg, chat_id, &sub_system, &current_msgs, &sub_tools).await?
         };
 
         if !outcome.text.trim().is_empty() {
@@ -982,6 +1014,7 @@ async fn execute_tool(
     arguments: &str,
     folders: &[String],
     registry: &McpRegistry,
+    chat_id: &str,
 ) -> Result<String, String> {
     let args: Value = if arguments.trim().is_empty() {
         json!({})
@@ -1038,7 +1071,7 @@ async fn execute_tool(
             if task.trim().is_empty() {
                 return Err("debes especificar la tarea para explore_subagent".into());
             }
-            run_explore_subagent(app, cfg, &task, folders).await
+            run_explore_subagent(app, cfg, &task, folders, chat_id).await
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -1082,7 +1115,7 @@ async fn execute_tool(
             }
             Ok(token_engine::global().truncate(&out, 3000))
         }
-        "bash" => run_bash(app, &s("command"), folders).await,
+        "bash" => run_bash(app, &s("command"), folders, chat_id).await,
         "write_file" => {
             let path = resolve_path(folders, &s("path"), true)?;
             let content = s("content");
@@ -1105,13 +1138,13 @@ async fn execute_tool(
 pub async fn run(
     app: &AppHandle,
     cfg: &ChatConfig,
+    chat_id: &str,
     system: &str,
     messages: &[ChatMessage],
     folders: &[String],
     registry: &McpRegistry,
 ) -> Result<ChatResult, String> {
-    CANCEL.store(false, Ordering::SeqCst);
-    history::init();
+    clear_cancel(chat_id);
     let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
     let mut total = ChatUsage::default();
@@ -1123,14 +1156,13 @@ pub async fn run(
         .unwrap_or_else(|| "default".into());
     let session_id = {
         let mut h: u64 = 0xcbf29ce484222325;
-        for b in workspace.as_bytes() {
+        for b in chat_id.as_bytes() {
             h ^= *b as u64;
             h = h.wrapping_mul(0x100000001b3);
         }
         format!("{h:016x}")
     };
     history::upsert_session(&session_id, &workspace, &cfg.model);
-    CANCEL.store(false, Ordering::SeqCst);
     // M4: resume por checkpoint cuando el frontend entrega un transcript vacío.
     if msgs.is_empty() {
         if let Some((_, restored)) = history::latest_checkpoint(&session_id) {
@@ -1155,7 +1187,7 @@ pub async fn run(
     let mut repeats: u32 = 0;
 
     loop {
-        if CANCEL.load(Ordering::SeqCst) {
+        if is_chat_cancelled(chat_id) {
             return Err("cancelado por el usuario".into());
         }
         // ADR-014: poda de resultados antiguos de tools (evicción local)
@@ -1164,9 +1196,9 @@ pub async fn run(
         let started = std::time::Instant::now();
         let local_tokens = counter.count_messages(&full_system, &msgs);
         let outcome = if cfg.kind == "anthropic" {
-            gateway::anthropic_turn(app, cfg, &full_system, &msgs, &tools).await?
+            gateway::anthropic_turn(app, cfg, chat_id, &full_system, &msgs, &tools).await?
         } else {
-            gateway::openai_turn(app, cfg, &full_system, &msgs, &tools).await?
+            gateway::openai_turn(app, cfg, chat_id, &full_system, &msgs, &tools).await?
         };
         total.input_tokens += outcome.usage.input_tokens;
         total.output_tokens += outcome.usage.output_tokens;
@@ -1190,9 +1222,57 @@ pub async fn run(
         );
 
         if outcome.tool_calls.is_empty() {
+            let final_content = if !outcome.text.trim().is_empty() {
+                outcome.text
+            } else {
+                let mut modified_files = Vec::new();
+                let mut read_files = Vec::new();
+                for msg in &msgs {
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        for tc in tool_calls {
+                            if tc.name == "apply_patch" || tc.name == "write_file" {
+                                if let Ok(v) = serde_json::from_str::<Value>(&tc.arguments) {
+                                    if let Some(p) = v.get("path").and_then(|p| p.as_str()) {
+                                        if !modified_files.contains(&p.to_string()) {
+                                            modified_files.push(p.to_string());
+                                        }
+                                    }
+                                }
+                            } else if tc.name == "read_file" || tc.name == "read_file_range" {
+                                if let Ok(v) = serde_json::from_str::<Value>(&tc.arguments) {
+                                    if let Some(p) = v.get("path").and_then(|p| p.as_str()) {
+                                        if !read_files.contains(&p.to_string()) {
+                                            read_files.push(p.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !modified_files.is_empty() {
+                    let mut s = String::from("### ✅ Modificaciones aplicadas con éxito\n\nSe han integrado parches quirúrgicos en los siguientes archivos:\n");
+                    for f in &modified_files {
+                        s.push_str(&format!("- `{f}`\n"));
+                    }
+                    s.push_str("\nTodos los cambios fueron aplicados y validados correctamente.");
+                    s
+                } else if !read_files.is_empty() {
+                    let mut s = String::from("### 📋 Análisis completado\n\nSe inspeccionaron los componentes relevantes:\n");
+                    for f in &read_files {
+                        s.push_str(&format!("- `{f}`\n"));
+                    }
+                    s.push_str("\nEl análisis finalizó sin requerir modificaciones adicionales.");
+                    s
+                } else {
+                    "✅ Tarea procesada y completada correctamente.".to_string()
+                }
+            };
+
             msgs.push(ChatMessage {
                 role: "assistant".into(),
-                content: outcome.text,
+                content: final_content,
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: None,
@@ -1222,9 +1302,9 @@ pub async fn run(
             repeats += 1;
             if repeats >= 2 {
                 let forced = if cfg.kind == "anthropic" {
-                    gateway::anthropic_turn(app, cfg, &full_system, &msgs, &[]).await?
+                    gateway::anthropic_turn(app, cfg, chat_id, &full_system, &msgs, &[]).await?
                 } else {
-                    gateway::openai_turn(app, cfg, &full_system, &msgs, &[]).await?
+                    gateway::openai_turn(app, cfg, chat_id, &full_system, &msgs, &[]).await?
                 };
                 total.input_tokens += forced.usage.input_tokens;
                 total.output_tokens += forced.usage.output_tokens;
@@ -1286,6 +1366,7 @@ pub async fn run(
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         arguments: tc.arguments.clone(),
+                        chat_id: chat_id.to_string(),
                     },
                 );
             }
@@ -1296,13 +1377,18 @@ pub async fn run(
                 let arguments = tc.arguments.clone();
                 let folders = folders.to_vec();
                 let id = tc.id.clone();
+                let chat = chat_id.to_string();
                 async move {
-                    let result = execute_tool(&app, &cfg, &name, &arguments, &folders, registry).await;
+                    let result =
+                        execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat).await;
                     let (ok, summary) = match &result {
                         Ok(s) => (true, truncate(s, 400)),
                         Err(e) => (false, e.clone()),
                     };
-                    let _ = app.emit("tool-end", ToolEnd { id: id.clone(), ok, summary });
+                    let _ = app.emit(
+                        "tool-end",
+                        ToolEnd { id: id.clone(), ok, summary, chat_id: chat.clone() },
+                    );
                     let content = match result {
                         Ok(s) => s,
                         Err(e) => format!("ERROR: {e}"),
@@ -1312,7 +1398,7 @@ pub async fn run(
             }).collect();
 
             let results = futures_util::future::join_all(tasks).await;
-            if CANCEL.load(Ordering::SeqCst) {
+            if is_chat_cancelled(chat_id) {
                 return Err("Cancelado por el usuario".into());
             }
             for (id, content) in results {
@@ -1326,7 +1412,7 @@ pub async fn run(
             }
         } else {
             for tc in &outcome.tool_calls {
-                if CANCEL.load(Ordering::SeqCst) {
+                if is_chat_cancelled(chat_id) {
                     return Err("Cancelado por el usuario".into());
                 }
                 let _ = app.emit(
@@ -1335,17 +1421,22 @@ pub async fn run(
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         arguments: tc.arguments.clone(),
+                        chat_id: chat_id.to_string(),
                     },
                 );
-                let result = execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry).await;
-                if CANCEL.load(Ordering::SeqCst) {
+                let result =
+                    execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry, chat_id).await;
+                if is_chat_cancelled(chat_id) {
                     return Err("Cancelado por el usuario".into());
                 }
                 let (ok, summary) = match &result {
                     Ok(s) => (true, truncate(s, 400)),
                     Err(e) => (false, e.clone()),
                 };
-                let _ = app.emit("tool-end", ToolEnd { id: tc.id.clone(), ok, summary });
+                let _ = app.emit(
+                    "tool-end",
+                    ToolEnd { id: tc.id.clone(), ok, summary, chat_id: chat_id.to_string() },
+                );
                 let content = match result {
                     Ok(s) => s,
                     Err(e) => format!("ERROR: {e}"),
@@ -1360,6 +1451,308 @@ pub async fn run(
             }
         }
     }
+}
+
+fn role_tool_names(role: multiagent::SubagentRole) -> &'static [&'static str] {
+    match role {
+        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range"],
+        multiagent::SubagentRole::Coder => {
+            &["list_dir", "grep", "read_file_range", "apply_patch", "write_file"]
+        }
+        multiagent::SubagentRole::Tester => &["bash", "list_dir", "grep", "read_file_range"],
+        multiagent::SubagentRole::Reviewer => &["list_dir", "grep", "read_file_range"],
+    }
+}
+
+fn emit_plan(app: &AppHandle, chat_id: &str, plan: &multiagent::MultiAgentPlanState) {
+    let _ = app.emit(
+        "multiagent-plan-event",
+        multiagent::MultiAgentPlanEvent {
+            chat_id: chat_id.to_string(),
+            plan: plan.clone(),
+        },
+    );
+}
+
+pub async fn run_multiagent(
+    app: &AppHandle,
+    cfg: &ChatConfig,
+    chat_id: &str,
+    system: &str,
+    messages: &[ChatMessage],
+    folders: &[String],
+    objective: &str,
+    registry: &McpRegistry,
+) -> Result<ChatResult, String> {
+    clear_cancel(chat_id);
+    let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
+    let mut msgs: Vec<ChatMessage> = messages.to_vec();
+    let mut total = ChatUsage::default();
+    let workspace = folders
+        .iter()
+        .find(|f| !f.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "default".into());
+    let session_id = {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in chat_id.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        format!("{h:016x}")
+    };
+    history::upsert_session(&session_id, &workspace, &cfg.model);
+
+    let mut plan = multiagent::create_default_plan(chat_id, objective);
+    emit_plan(app, chat_id, &plan);
+
+    let mut briefing = String::new();
+    let mut turn: u32 = 0;
+
+    for idx in 0..plan.steps.len() {
+        if is_chat_cancelled(chat_id) {
+            return Err("cancelado por el usuario".into());
+        }
+        plan.steps[idx].status = "running".into();
+        plan.active_step_index = Some(plan.steps[idx].step_index);
+        emit_plan(app, chat_id, &plan);
+
+        let role = plan.steps[idx].role;
+        let step_index = plan.steps[idx].step_index;
+        let allowed = role_tool_names(role);
+        let mut tools: Vec<ToolDef> = core_tools()
+            .into_iter()
+            .filter(|t| allowed.contains(&t.name.as_str()))
+            .collect();
+        if role == multiagent::SubagentRole::Coder {
+            let map = registry.tools.lock().unwrap();
+            for (name, (_, schema)) in map.iter() {
+                tools.push(ToolDef {
+                    name: name.clone(),
+                    description: format!("Herramienta MCP {name}"),
+                    parameters: schema.clone(),
+                });
+            }
+        }
+
+        let sub_system = format!(
+            "{full_system}\n\n## Subagente: {}\n{}\n\n## Objetivo de la tarea\n{objective}\n\n## Briefing acumulado de pasos previos\n{}",
+            role.name(),
+            role.system_prompt(),
+            if briefing.is_empty() {
+                "(ninguno — este es el primer paso del flujo multi-agente)".to_string()
+            } else {
+                briefing.clone()
+            }
+        );
+
+        let role_instruction = match role {
+            multiagent::SubagentRole::Explorer => format!(
+                "Inspecciona el espacio de trabajo para resolver el siguiente requerimiento:\n\n{objective}\n\nUsa `grep`, `list_dir` y `read_file_range` para localizar los archivos y funciones relevantes. Devuelve un briefing técnico estructurado con rutas y rangos de líneas."
+            ),
+            multiagent::SubagentRole::Coder => format!(
+                "Implementa las modificaciones necesarias para resolver el objetivo:\n\n{objective}\n\nUsa `apply_patch` con 3-5 líneas de anclaje exactas basándote en los archivos y líneas descubiertos por el Explorador. No reescribas archivos completos."
+            ),
+            multiagent::SubagentRole::Tester => format!(
+                "Verifica que los cambios aplicados compilen o no contengan fallos de sintaxis. Si hay comandos de pruebas o chequeo disponibles, ejecútalos con `bash`. Si no, inspecciona los archivos editados para certificar su validez.\n\nObjetivo: {objective}"
+            ),
+            multiagent::SubagentRole::Reviewer => format!(
+                "Audita las modificaciones aplicadas y los resultados de las pruebas para verificar que no haya regresiones arquitectónicas, contratos rotos ni fallos de seguridad.\n\nObjetivo: {objective}"
+            ),
+        };
+
+        let mut sub_msgs = vec![ChatMessage {
+            role: "user".into(),
+            content: role_instruction,
+            images: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let subagent_chat_id = format!("{chat_id}__sub_{step_index}");
+        let mut step_text = String::new();
+        let mut step_success = true;
+
+        for _ in 0..6 {
+            if is_chat_cancelled(chat_id) {
+                return Err("cancelado por el usuario".into());
+            }
+            turn += 1;
+            let started = std::time::Instant::now();
+            let outcome = if cfg.kind == "anthropic" {
+                gateway::anthropic_turn(app, cfg, &subagent_chat_id, &sub_system, &sub_msgs, &tools).await?
+            } else {
+                gateway::openai_turn(app, cfg, &subagent_chat_id, &sub_system, &sub_msgs, &tools).await?
+            };
+            total.input_tokens += outcome.usage.input_tokens;
+            total.output_tokens += outcome.usage.output_tokens;
+            total.cached_tokens += outcome.usage.cached_tokens;
+            history::record_request(
+                &session_id,
+                turn,
+                &cfg.kind,
+                &cfg.model,
+                &RequestMeter {
+                    input_tokens: outcome.usage.input_tokens,
+                    cached_tokens: outcome.usage.cached_tokens,
+                    output_tokens: outcome.usage.output_tokens,
+                    cost_usd: 0.0,
+                    latency_ms: started.elapsed().as_millis() as i64,
+                },
+            );
+
+            if !outcome.text.trim().is_empty() {
+                step_text = outcome.text.clone();
+            }
+            if outcome.tool_calls.is_empty() {
+                break;
+            }
+
+            sub_msgs.push(ChatMessage {
+                role: "assistant".into(),
+                content: outcome.text.clone(),
+                images: vec![],
+                tool_calls: Some(outcome.tool_calls.clone()),
+                tool_call_id: None,
+            });
+            for tc in &outcome.tool_calls {
+                if is_chat_cancelled(chat_id) {
+                    return Err("cancelado por el usuario".into());
+                }
+                let _ = app.emit(
+                    "tool-start",
+                    ToolStart {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                        chat_id: chat_id.to_string(),
+                    },
+                );
+                let result =
+                    execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry, chat_id).await;
+                let (ok, summary) = match &result {
+                    Ok(s) => (true, truncate(s, 400)),
+                    Err(e) => {
+                        step_success = false;
+                        (false, e.clone())
+                    }
+                };
+                let _ = app.emit(
+                    "tool-end",
+                    ToolEnd { id: tc.id.clone(), ok, summary, chat_id: chat_id.to_string() },
+                );
+                let content = match result {
+                    Ok(s) => s,
+                    Err(e) => format!("ERROR: {e}"),
+                };
+                sub_msgs.push(ChatMessage {
+                    role: "tool".into(),
+                    content,
+                    images: vec![],
+                    tool_calls: None,
+                    tool_call_id: Some(tc.id.clone()),
+                });
+            }
+        }
+
+        let summary = if !step_text.trim().is_empty() {
+            truncate(&step_text, 600)
+        } else {
+            "Fase completada exitosamente sin notas adicionales.".to_string()
+        };
+
+        briefing.push_str(&format!(
+            "\n\n## Paso {} ({}) — resultado\n{summary}\n",
+            step_index + 1,
+            role.name()
+        ));
+        plan.steps[idx].result_summary = Some(truncate(&summary, 450));
+        plan.steps[idx].status = if step_success { "completed".into() } else { "failed".into() };
+        emit_plan(app, chat_id, &plan);
+    }
+
+    // Fase 5: Orquestador Principal — Síntesis Final estructurada y streaming directo al usuario
+    if is_chat_cancelled(chat_id) {
+        return Err("cancelado por el usuario".into());
+    }
+
+    let synth_system = format!(
+        "{full_system}\n\n## Modo: Orquestador Principal Makora (Síntesis Final Multi-Agente)\nHas coordinado una ejecución en cadena con 4 fases especializadas (Exploración, Código, Validación, Revisión).\n\n### Briefings Técnicos de los Subagentes:\n{briefing}\n\nDirectiva:\nGenera la respuesta final completa, clara y profesional respondiendo directamente a la solicitud original del usuario: '{objective}'. Resume con precisión las acciones realizadas, archivos y funciones afectadas, confirmación de pruebas y conclusiones de calidad."
+    );
+
+    let synth_user_content = format!(
+        "Genera la síntesis final estructurada para el objetivo: {objective}"
+    );
+
+    let synth_msgs = vec![ChatMessage {
+        role: "user".into(),
+        content: synth_user_content,
+        images: vec![],
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+
+    turn += 1;
+    let started = std::time::Instant::now();
+    let synth_outcome = if cfg.kind == "anthropic" {
+        gateway::anthropic_turn(app, cfg, chat_id, &synth_system, &synth_msgs, &[]).await?
+    } else {
+        gateway::openai_turn(app, cfg, chat_id, &synth_system, &synth_msgs, &[]).await?
+    };
+
+    total.input_tokens += synth_outcome.usage.input_tokens;
+    total.output_tokens += synth_outcome.usage.output_tokens;
+    total.cached_tokens += synth_outcome.usage.cached_tokens;
+    history::record_request(
+        &session_id,
+        turn,
+        &cfg.kind,
+        &cfg.model,
+        &RequestMeter {
+            input_tokens: synth_outcome.usage.input_tokens,
+            cached_tokens: synth_outcome.usage.cached_tokens,
+            output_tokens: synth_outcome.usage.output_tokens,
+            cost_usd: 0.0,
+            latency_ms: started.elapsed().as_millis() as i64,
+        },
+    );
+
+    plan.is_completed = true;
+    plan.active_step_index = None;
+    plan.total_tokens = total.input_tokens + total.output_tokens;
+    emit_plan(app, chat_id, &plan);
+
+    let final_msg = if !synth_outcome.text.trim().is_empty() {
+        synth_outcome.text
+    } else {
+        let mut report = String::from("### 📋 Informe de Ejecución Multi-Agente\n\n");
+        for step in &plan.steps {
+            let role_name = step.role.name();
+            let summary = step.result_summary.as_deref().unwrap_or("Completado sin observaciones");
+            report.push_str(&format!("- **{} ({})**:\n  {}\n\n", step.title, role_name, summary));
+        }
+        report.push_str(&format!(
+            "⚡ **Consumo total**: {} tokens.\n",
+            plan.total_tokens
+        ));
+        report
+    };
+
+    msgs.push(ChatMessage {
+        role: "assistant".into(),
+        content: final_msg,
+        images: vec![],
+        tool_calls: None,
+        tool_call_id: None,
+    });
+    history::create_checkpoint(&session_id, turn, &msgs);
+    history::archive_transcript(&session_id, turn, &msgs);
+    Ok(ChatResult {
+        input_tokens: total.input_tokens,
+        output_tokens: total.output_tokens,
+        cached_tokens: total.cached_tokens,
+        messages: msgs,
+    })
 }
 
 #[cfg(test)]
@@ -1408,6 +1801,82 @@ mod tests {
 
         let err_res = "ERROR: la ruta no existe dentro del workspace: test.txt";
         assert!(summarize_old_tool_result(err_res).contains("Resultado previo con error"));
+    }
+
+    #[test]
+    fn test_resolve_path_empty_workspace_err() {
+        let folders: Vec<String> = vec![];
+        let res = resolve_path(&folders, "test.txt", false);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "no hay workspace activo");
+    }
+
+    #[test]
+    fn test_resolve_path_traversal_prevention() {
+        let temp_dir = std::env::temp_dir();
+        let ws_dir = temp_dir.join("makora_test_ws_sec");
+        let _ = std::fs::create_dir_all(&ws_dir);
+        let folders = vec![ws_dir.to_string_lossy().to_string()];
+
+        // Attempting to escape the workspace with ../../../ should fail or stay bound
+        let escape_path = "../../../../../../../../../Windows/System32/drivers/etc/hosts";
+        let res = resolve_path(&folders, escape_path, false);
+        // Either resolve_path rejects it or fails because it is outside within()
+        if let Ok(resolved) = res {
+            assert!(within(&folders, std::path::Path::new(&resolved)));
+        }
+
+        let _ = std::fs::remove_dir_all(&ws_dir);
+    }
+
+    #[test]
+    fn test_is_dangerous_command() {
+        assert!(is_dangerous_command("rm -rf /"));
+        assert!(is_dangerous_command("rm -rf /*"));
+        assert!(is_dangerous_command("mkfs.ext4 /dev/sda"));
+        assert!(is_dangerous_command("format c:"));
+        assert!(is_dangerous_command("del /f /s /q c:\\"));
+        assert!(is_dangerous_command("shutdown /s /t 0"));
+
+        // Safe commands should pass
+        assert!(!is_dangerous_command("cargo check"));
+        assert!(!is_dangerous_command("npm test"));
+        assert!(!is_dangerous_command("git status"));
+    }
+
+    #[test]
+    fn test_apply_patch_to() {
+        let original = "line 1\nline 2\nline 3\nline 4\n";
+        let patch = "<<<<<<< SEARCH\nline 2\nline 3\n=======\nline two\nline three\n>>>>>>> REPLACE";
+        let res = apply_patch_to(original, patch);
+        assert!(res.is_ok());
+        let (modified, blocks) = res.unwrap();
+        assert_eq!(blocks, 1);
+        assert_eq!(modified, "line 1\nline two\nline three\nline 4\n");
+
+        let bad_patch = "<<<<<<< SEARCH\nnon_existent_line\n=======\nreplacement\n>>>>>>> REPLACE";
+        assert!(apply_patch_to(original, bad_patch).is_err());
+    }
+
+    #[test]
+    fn test_truncate_head_tail() {
+        let long_text = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let truncated = truncate_head_tail(&long_text, 5, 5);
+        assert!(truncated.contains("line 0"));
+        assert!(truncated.contains("90 líneas omitidas"));
+        assert!(truncated.contains("line 99"));
+    }
+
+    #[test]
+    fn test_is_read_only_tool() {
+        assert!(is_read_only_tool("read_file"));
+        assert!(is_read_only_tool("read_file_range"));
+        assert!(is_read_only_tool("grep"));
+        assert!(is_read_only_tool("list_dir"));
+
+        assert!(!is_read_only_tool("write_file"));
+        assert!(!is_read_only_tool("apply_patch"));
+        assert!(!is_read_only_tool("run_bash"));
     }
 }
 

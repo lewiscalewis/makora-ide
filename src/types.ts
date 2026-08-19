@@ -104,18 +104,36 @@ export interface ToolStart {
   id: string;
   name: string;
   arguments: string;
+  chatId: string;
 }
 
 export interface ToolOutputEvent {
   id: string;
   stream: string;
   data: string;
+  chatId: string;
 }
 
 export interface ToolEnd {
   id: string;
   ok: boolean;
   summary: string;
+  chatId: string;
+}
+
+export interface ChatDeltaEvent {
+  chatId: string;
+  text: string;
+}
+
+export interface ThinkingDeltaEvent {
+  chatId: string;
+  text: string;
+}
+
+export interface MultiAgentPlanEvent {
+  chatId: string;
+  plan: MultiAgentPlanState;
 }
 
 export interface ToolActivity {
@@ -257,6 +275,21 @@ export interface DiffLine {
 
 export type AgentMode = "act" | "plan";
 
+export interface SessionWorkspaceState {
+  folders: string[];
+  openFiles: OpenFile[];
+  activeFilePath: string | null;
+  agentMode?: AgentMode;
+  multiAgentMode?: "auto" | "always" | "off";
+  thinkingLevel?: ThinkingLevel;
+  status: "idle" | "running" | "completed" | "error";
+  diff?: DiffInfo | null;
+}
+
+export interface EnhancedChatSession extends ChatSession {
+  workspace?: SessionWorkspaceState;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -270,6 +303,7 @@ export interface ChatSession {
   outputTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  workspace?: SessionWorkspaceState;
 }
 
 export interface GitStatusInfo {
@@ -305,18 +339,6 @@ export interface UniversalTelemetry {
   totalCachedTokens: number;
   totalCostUsd: number;
   modelUsage: Record<string, { input: number; output: number; cached: number; cost: number; turns: number }>;
-}
-
-export interface SessionWorkspaceState {
-  folders: string[];
-  openFiles: OpenFile[];
-  activeFilePath: string | null;
-  agentMode?: AgentMode;
-  status: "idle" | "running" | "completed" | "error";
-}
-
-export interface EnhancedChatSession extends ChatSession {
-  workspace?: SessionWorkspaceState;
 }
 
 export type SubagentRole = "explorer" | "coder" | "tester" | "reviewer";

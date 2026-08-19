@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FileCode, Eye, Code2, ZoomIn, ZoomOut, Save } from "lucide-react";
+import { useI18n } from "../../i18n";
 
 interface Props {
   content: string;
@@ -15,6 +16,7 @@ export default function SvgViewer({
   onUpdateContent,
   onSave,
 }: Props) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<"graphic" | "code">("graphic");
   const [zoom, setZoom] = useState(1);
 
@@ -23,8 +25,8 @@ export default function SvgViewer({
       <div className="viewer-toolbar">
         <div className="viewer-toolbar-left">
           <FileCode size={13} className="text-cyan" />
-          <span className="viewer-file-tag">Gráfico SVG</span>
-          {isDirty && <span className="dirty-badge">● Modificado</span>}
+          <span className="viewer-file-tag">SVG</span>
+          {isDirty && <span className="dirty-badge">● {t.workspace.unsavedChanges}</span>}
         </div>
         <div className="viewer-toolbar-center">
           <div className="segmented-control">
@@ -33,23 +35,23 @@ export default function SvgViewer({
               onClick={() => setMode("graphic")}
             >
               <Eye size={11} />
-              <span>Gráfico</span>
+              <span>{t.editor.graphic}</span>
             </button>
             <button
               className={`seg-btn ${mode === "code" ? "active" : ""}`}
               onClick={() => setMode("code")}
             >
               <Code2 size={11} />
-              <span>Código XML</span>
+              <span>{t.editor.codeXml}</span>
             </button>
           </div>
           {mode === "graphic" && (
             <div className="zoom-controls">
-              <button className="icon-btn" onClick={() => setZoom((z) => Math.max(0.25, z - 0.25))} title="Alejar">
+              <button className="icon-btn" onClick={() => setZoom((z) => Math.max(0.25, z - 0.25))} title="-">
                 <ZoomOut size={12} />
               </button>
               <span className="zoom-percent">{Math.round(zoom * 100)}%</span>
-              <button className="icon-btn" onClick={() => setZoom((z) => Math.min(4, z + 0.25))} title="Acercar">
+              <button className="icon-btn" onClick={() => setZoom((z) => Math.min(4, z + 0.25))} title="+">
                 <ZoomIn size={12} />
               </button>
             </div>
@@ -57,9 +59,9 @@ export default function SvgViewer({
         </div>
         <div className="viewer-toolbar-right">
           {isDirty && (
-            <button className="btn btn-save" onClick={onSave} title="Guardar cambios (Ctrl+S)">
+            <button className="btn btn-save" onClick={onSave} title={t.editor.saveFile}>
               <Save size={11} />
-              <span>Guardar</span>
+              <span>{t.editor.save}</span>
             </button>
           )}
         </div>

@@ -20,8 +20,10 @@ export const commands = {
 	countTokens: (text: string) => typedError<number, string>(__TAURI_INVOKE("count_tokens", { text })),
 	spawnStream: (message: string, chunkMs: number) => typedError<null, string>(__TAURI_INVOKE("spawn_stream", { message, chunkMs })),
 	listModels: (config: ChatConfig) => typedError<string[], string>(__TAURI_INVOKE("list_models", { config })),
-	chat: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[]) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("chat", { config, system, messages, folders })),
-	chatCancel: () => __TAURI_INVOKE<void>("chat_cancel"),
+	chat: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("chat", { config, system, messages, folders, chatId })),
+	chatCancel: (chatId: string) => __TAURI_INVOKE<void>("chat_cancel", { chatId }),
+	runMultiagentPlan: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string, objective: string) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("run_multiagent_plan", { config, system, messages, folders, chatId, objective })),
+	createMultiagentPlan: (sessionId: string, objective: string) => __TAURI_INVOKE<MultiAgentPlanState>("create_multiagent_plan", { sessionId, objective }),
 	mcpConfigure: (specs: McpSpec[]) => typedError<string[], string>(__TAURI_INVOKE("mcp_configure", { specs })),
 	fetchBalance: (provider: string, baseUrl: string, apiKey: string) => typedError<{
 	provider: string,
@@ -69,6 +71,7 @@ export const commands = {
 /** Events */
 export const events = {
 	chatDeltaEvent: makeEvent<ChatDeltaEvent>("chat-delta-event"),
+	multiAgentPlanEvent: makeEvent<MultiAgentPlanEvent>("multi-agent-plan-event"),
 	streamEvent: makeEvent<StreamEvent>("stream-event"),
 };
 
@@ -91,6 +94,7 @@ export type ChatConfig = {
 };
 
 export type ChatDeltaEvent = {
+	chatId: string,
 	text: string,
 };
 
@@ -168,12 +172,38 @@ export type McpSpec = {
 	enabled: boolean,
 };
 
+export type MultiAgentPlanEvent = {
+	chatId: string,
+	plan: MultiAgentPlanState,
+};
+
+export type MultiAgentPlanState = {
+	planId: string,
+	sessionId: string,
+	objective: string,
+	steps: MultiAgentPlanStep[],
+	activeStepIndex: number | null,
+	isCompleted: boolean,
+	totalTokens: number,
+	totalCostUsd: number | null,
+};
+
+export type MultiAgentPlanStep = {
+	stepIndex: number,
+	title: string,
+	role: SubagentRole,
+	status: string,
+	resultSummary: string | null,
+};
+
 export type StreamChunk = {
 	seq: number,
 	text: string,
 };
 
 export type StreamEvent = StreamChunk;
+
+export type SubagentRole = "explorer" | "coder" | "tester" | "reviewer";
 
 export type ToolCall = ToolCall_Serialize | ToolCall_Deserialize;
 

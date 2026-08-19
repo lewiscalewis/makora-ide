@@ -5,6 +5,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { keymap } from "@codemirror/view";
 import { FileText, Code2, Eye, Columns2, Save } from "lucide-react";
 import Markdown from "../Markdown";
+import { useI18n } from "../../i18n";
 
 interface Props {
   content: string;
@@ -21,6 +22,7 @@ export default function MarkdownViewer({
   onUpdateContent,
   onSave,
 }: Props) {
+  const { t } = useI18n();
   const [viewMode, setViewMode] = useState<"code" | "preview" | "split">("split");
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -89,41 +91,41 @@ export default function MarkdownViewer({
         <div className="viewer-toolbar-left">
           <FileText size={13} className="text-cyan" />
           <span className="viewer-file-tag">Markdown / MDX</span>
-          {isDirty && <span className="dirty-badge">● Modificado</span>}
+          {isDirty && <span className="dirty-badge">● {t.workspace.unsavedChanges}</span>}
         </div>
         <div className="viewer-toolbar-center">
           <div className="segmented-control">
             <button
               className={`seg-btn ${viewMode === "code" ? "active" : ""}`}
               onClick={() => setViewMode("code")}
-              title="Ver y editar código Markdown fuente"
+              title={t.editor.code}
             >
               <Code2 size={11} />
-              <span>Código</span>
+              <span>{t.editor.code}</span>
             </button>
             <button
               className={`seg-btn ${viewMode === "preview" ? "active" : ""}`}
               onClick={() => setViewMode("preview")}
-              title="Renderizado interactivo (Mermaid, Tablas, Fórmulas)"
+              title={t.editor.preview}
             >
               <Eye size={11} />
-              <span>Preview</span>
+              <span>{t.editor.preview}</span>
             </button>
             <button
               className={`seg-btn ${viewMode === "split" ? "active" : ""}`}
               onClick={() => setViewMode("split")}
-              title="Vista dividida sincronizada"
+              title={t.editor.split}
             >
               <Columns2 size={11} />
-              <span>Split</span>
+              <span>{t.editor.split}</span>
             </button>
           </div>
         </div>
         <div className="viewer-toolbar-right">
           {isDirty && (
-            <button className="btn btn-save" onClick={onSave} title="Guardar cambios (Ctrl+S)">
+            <button className="btn btn-save" onClick={onSave} title={t.editor.saveFile}>
               <Save size={11} />
-              <span>Guardar</span>
+              <span>{t.editor.save}</span>
             </button>
           )}
         </div>

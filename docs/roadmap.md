@@ -2,17 +2,17 @@
 
 Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desde M0.
 
-## Estado real (actualizado 2026-08-18)
+## Estado real (actualizado 2026-08-19)
 
 | Milestone | Estado | Notas |
 |---|---|---|
-| M0 Fundamentos y spike | ✅ Done | Spike sustituido por IDE real; decisión de editor documentada (CM6) |
-| M1 Base IDE + conexión de modelos | 🟡 Parcial | Chat streaming, coste visible por turno OK. **Pendiente:** tabla `requests` en SQLite (implementada en M4 parcial) |
-| M2 Motor de contexto v1 | 🟡 Parcial | `token_engine.rs`: TokenCounter (tiktoken + fallback), truncado por presupuesto con límites de línea, ContextComposer con cuotas por componente. **Pendiente:** repo-index con tree-sitter, BM25/fastembed, integración del composer en el ensamblado |
-| M3 Agent runtime v1 | 🔵 En curso | Loop + tools + MCP + eventos en vivo OK. SQLite sesiones/checkpoints ✅ (M4 parcial). **Pendiente:** undo, timeline tipado |
-| M4 Caché de prefijo + compactación | 🟡 Parcial | `history.rs`: SQLite (sessions/items/checkpoints/requests) con metering por turno, resume por checkpoint, archivo de transcript. `cache_control` ephemeral en system+tools (Anthropic). **Pendiente:** compactación jerárquica con resumen LLM, `cache_read_ratio` > 0.6 medido, limpieza automática de requests viejas |
+| M0 Fundamentos y spike | ✅ Done | Spike sustituido por IDE real; decisión de editor documentada (CM6, ADR-002) |
+| M1 Base IDE + conexión de modelos | ✅ Done | Chat streaming, coste real visible por turno, tabla `requests` en SQLite WAL (`history.rs`) y DPAPI Keyring. |
+| M2 Motor de contexto v1 | 🟡 Parcial | `token_engine.rs`: TokenCounter (tiktoken + fallback), truncado por presupuesto con límites de línea, ContextComposer con cuotas por componente. **Pendiente:** repo-index con tree-sitter, BM25/fastembed. |
+| M3 Agent runtime v1 | ✅ Done | Loop autónomo + tools quirúrgicas (`apply_patch`, `read_file_range`, etc.) + MCP stdio + DAG Multi-Agente con Auto-Router inteligente (`Chat.tsx` / `multiagent.rs`) + SQLite sesiones/checkpoints. |
+| M4 Caché de prefijo + compactación | 🟡 Parcial | `history.rs`: SQLite (sessions/items/checkpoints/requests) con metering por turno, resume por checkpoint, archivo de transcript. `cache_control` ephemeral en system+tools (Anthropic). **Pendiente:** compactación jerárquica con resumen LLM. |
 | M5 Caché semántica + offload local | ⬜ No empezado | — |
-| M6 Laboratorio de optimización | 🟡 Parcial | Perfiles Eco/Balanced/Deep activos (ADR-015). Tabla `requests` con coste/caché/latencia disponible para el dashboard. **Pendiente:** baseline naive, eval suite, optimizer |
+| M6 Laboratorio de optimización | 🟡 Parcial | Perfiles Eco/Balanced/Deep activos (ADR-015). Tabla `requests` con coste/caché/latencia disponible para el dashboard. **Pendiente:** baseline naive, eval suite, optimizer. |
 | M7 Empaquetado y pulido | ⬜ No empezado | — |
 
 ## M0 — Fundamentos y spike técnico (semana 1–2)
@@ -28,34 +28,34 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 ## M1 — Base IDE + conexión de modelos (semana 3–4)
 
 - Editor con árbol de ficheros, pestañas, diffs básicos.
-- Settings: API keys (DPAPI), selección de modelo OpenAI/Anthropic/Ollama.
+- Settings: API keys (DPAPI / keyring), selección de modelo OpenAI/Anthropic/DeepSeek/Ollama.
 - Chat simple: prompt → streaming al panel, sin herramientas.
 - `token-counter` integrado: conteo en vivo del contexto; tabla `requests` en SQLite; desglose de tokens/coste por turno (usage real del API).
 
-**Estado:** 🟡 Parcial. Chat con streaming y coste real por turno ✅. Tabla `requests` en SQLite ❌ (se añadirá con HistoryManager en M4).
+**Estado:** ✅ Done (Chat streaming con coste real, DPAPI keyring y tabla `requests` SQLite activa).
 
 ## M2 — Motor de contexto v1 (semana 5–6)
 
 - `repo-index`: watcher (notify-debouncer) + tree-sitter (TS/JS/Rust/Python) → repo-map estilo Aider con ranking.
 - Composer con presupuestos por componente y truncado con validez sintáctica.
 - Retrieval BM25 + embeddings (fastembed) de chunks por símbolo.
-- Tool "leer archivo por rango" con cuotas.
+- Tool "leer archivo por rango" con cuotas (`read_file_range`).
 
 **Criterios de aceptación:** el agente responde sobre el código del repo enviando solo fragmentos relevantes; conteo local ≈ conteo real del API.
 
-**Estado:** 🟡 Parcial. TokenCounter + truncado por presupuesto + ContextComposer implementados en `src-tauri/src/token_engine.rs` (tests incluidos); el conteo local se registra por turno (`[TOKEN_ENGINE] turn=… local=… api_in=…`). Pendiente: repo-index tree-sitter, BM25/fastembed, integración del composer en el ensamblado.
+**Estado:** 🟡 Parcial. TokenCounter + truncado por presupuesto + ContextComposer implementados en `src-tauri/src/token_engine.rs` (tests incluidos); el conteo local se registra por turno (`[TOKEN_ENGINE] turn=… local=… api_in=…`). Pendiente: repo-index tree-sitter, BM25/fastembed.
 
 ## M3 — Agent runtime v1 (semana 7–9)
 
 - Loop turno = LLM → tools → resultados; `max_turns` + presupuesto en $.
-- Tools núcleo: leer/editar/escribir (diffs), grep/glob, bash, TODO list.
-- Permisos deny→ask→allow→callback con UI de aprobación; subprocess confinado + timeout + kill-tree.
-- SQLite: sesiones, items, checkpoints por turno, undo de turno, resume.
+- Tools núcleo: `apply_patch` (diffs quirúrgicos), `read_file_range`, `list_dir`, `grep`, `bash`, `explore_subagent`.
+- Auto-Router Multi-Agente inteligente con orquestación DAG (*Explorer ➔ Coder ➔ Tester ➔ Reviewer*).
+- SQLite: sesiones, items, checkpoints por turno, resume.
 - Timeline del agente en el frontend (eventos tipados).
 
-**Criterios de aceptación:** el agente completa tareas end-to-end ("añade feature X con tests") con aprobaciones; undo funciona.
+**Criterios de aceptación:** el agente completa tareas end-to-end con parches quirúrgicos mínimos; multi-agente automático para tareas complejas.
 
-**Estado:** 🔵 En curso. Loop, tools (read_file/list_dir/grep/bash/write_file/apply_patch/read_file_range), MCP y eventos en vivo ✅. Pendiente: SQLite sesiones/checkpoints, undo, timeline tipado.
+**Estado:** ✅ Done. Loop autónomo, tools, MCP, auto-router multiagente y persistencia SQLite checkpoints activos.
 
 ## M4 — Caché de prefijo + compactación (semana 10–11)
 

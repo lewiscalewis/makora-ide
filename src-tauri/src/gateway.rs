@@ -7,7 +7,9 @@ use tauri_specta::Event;
 use crate::{ChatConfig, ChatDeltaEvent, ChatMessage, ChatUsage, ToolCall};
 
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThinkingDelta {
+    pub chat_id: String,
     pub text: String,
 }
 
@@ -23,7 +25,7 @@ pub struct TurnOutcome {
     pub tool_calls: Vec<ToolCall>,
 }
 
-async fn for_each_sse_event<F>(response: reqwest::Response, mut f: F)
+async fn for_each_sse_event<F>(response: reqwest::Response, chat_id: &str, mut f: F)
 where
     F: FnMut(&str, &str),
 {
@@ -31,7 +33,7 @@ where
     let mut stream = response.bytes_stream();
     let mut buf = String::new();
     while let Some(chunk) = stream.next().await {
-        if crate::agent::is_cancelled() {
+        if crate::agent::is_chat_cancelled(chat_id) {
             break;
         }
         if let Ok(c) = chunk {
@@ -130,6 +132,7 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
 pub async fn openai_turn(
     app: &AppHandle,
     cfg: &ChatConfig,
+    chat_id: &str,
     system: &str,
     messages: &[ChatMessage],
     tools: &[ToolDef],
@@ -211,7 +214,7 @@ pub async fn openai_turn(
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
     let mut global_extra_content: Option<Value> = None;
 
-    for_each_sse_event(resp, |_event, data| {
+    for_each_sse_event(resp, chat_id, |_event, data| {
         if data == "[DONE]" {
             return;
         }
@@ -229,6 +232,7 @@ pub async fn openai_turn(
                         let _ = app.emit(
                             "thinking-delta",
                             ThinkingDelta {
+                                chat_id: chat_id.to_string(),
                                 text: rc.to_string(),
                             },
                         );
@@ -238,6 +242,7 @@ pub async fn openai_turn(
                     if !content.is_empty() {
                         text.push_str(content);
                         let _ = ChatDeltaEvent {
+                            chat_id: chat_id.to_string(),
                             text: content.to_string(),
                         }
                         .emit(app);
@@ -454,6 +459,7 @@ fn save_image_temp(data_url: &str) -> Result<String, String> {
 pub async fn anthropic_turn(
     app: &AppHandle,
     cfg: &ChatConfig,
+    chat_id: &str,
     system: &str,
     messages: &[ChatMessage],
     tools: &[ToolDef],
@@ -594,7 +600,7 @@ pub async fn anthropic_turn(
     let mut tool_blocks: Vec<(String, String, String)> = Vec::new();
     let mut current_block: Option<usize> = None;
 
-    for_each_sse_event(resp, |_event, data| {
+    for_each_sse_event(resp, chat_id, |_event, data| {
         let v: Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(_) => return,
@@ -632,6 +638,7 @@ pub async fn anthropic_turn(
                         if let Some(t) = delta.get("text").and_then(|x| x.as_str()) {
                             text.push_str(t);
                             let _ = ChatDeltaEvent {
+                                chat_id: chat_id.to_string(),
                                 text: t.to_string(),
                             }
                             .emit(app);
@@ -652,6 +659,7 @@ pub async fn anthropic_turn(
                             let _ = app.emit(
                                 "thinking-delta",
                                 ThinkingDelta {
+                                    chat_id: chat_id.to_string(),
                                     text: t.to_string(),
                                 },
                             );

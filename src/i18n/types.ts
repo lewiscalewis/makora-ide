@@ -65,6 +65,9 @@ export interface TranslationSchema {
     emptyEditorHint: string;
     unsavedChanges: string;
     closeTab: string;
+    runningBackground: string;
+    closeSession: string;
+    newSessionTooltip: string;
   };
   explorer: {
     title: string;
@@ -110,6 +113,9 @@ export interface TranslationSchema {
     stop: string;
     planMode: string;
     actMode: string;
+    actModeHint: string;
+    planModeHint: string;
+    thinkingLevelHint: string;
     thinking: string;
     thinkingStreaming: string;
     thinkingWords: string;
@@ -139,6 +145,52 @@ export interface TranslationSchema {
     planProceed: string;
     planProceedHint: string;
     planProceedPrompt: string;
+    attach: string;
+    attachHint: string;
+    attachWorkspaceTitle: string;
+    attachWorkspaceSub: string;
+    attachSystemTitle: string;
+    attachSystemSub: string;
+    lastMessage: string;
+    scrollToBottom: string;
+    copyResult: string;
+    copiedResult: string;
+  };
+  multiagent: {
+    toggle: string;
+    toggleHint: string;
+    planTitle: string;
+    running: string;
+    failed: string;
+    auto: string;
+    always: string;
+    off: string;
+    autoHint: string;
+    alwaysHint: string;
+    offHint: string;
+  };
+  editor: {
+    save: string;
+    saveFile: string;
+    revert: string;
+    code: string;
+    diff: string;
+    preview: string;
+    split: string;
+    graphic: string;
+    codeXml: string;
+    lines: string;
+    chars: string;
+  };
+  onboarding: {
+    recommended: string;
+    localDetected: string;
+    deepseekDesc: string;
+    openaiDesc: string;
+    anthropicDesc: string;
+    openrouterDesc: string;
+    ollamaDesc: string;
+    customDesc: string;
   };
   git: {
     title: string;
@@ -179,6 +231,9 @@ export interface TranslationSchema {
     apiKey: string;
     apiKeyPlaceholder: string;
     models: string;
+    allModels: string;
+    thinkingBadge: string;
+    visionBadge: string;
     modelPlaceholder: string;
     contextWindow: string;
     savedSecurely: string;

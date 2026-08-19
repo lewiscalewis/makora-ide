@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import type { ReactNode } from "react";
 import {
-  chat,
-  chatCancel,
   detectProjectRules,
   searchPaths,
   pickFiles,
@@ -12,6 +10,7 @@ import Markdown from "./Markdown";
 import { isModelReasoningSupported } from "../defaults";
 import {
   Zap,
+  Cpu,
   ScrollText,
   FlaskConical,
   Copy,
@@ -35,9 +34,16 @@ import {
   Coins,
   Clock,
   Rocket,
+  Workflow,
 } from "lucide-react";
 import { useI18n } from "../i18n";
-import { computeCostUsd } from "../defaults";
+import { shouldAutoUseMultiAgent } from "../autoRouter";
+import {
+  appendAssistantMessage,
+  cancelTurn,
+  sendTurn,
+  useSessionRuntime,
+} from "../sessionStore";
 
 function formatPathDisplay(fullPath: string) {
   const normalized = fullPath.replace(/\\/g, "/");
@@ -89,109 +95,11 @@ import type {
   ChatMessage,
   ChatUsage,
   ModelConfig,
+  MultiAgentPlanState,
+  SubagentRole,
   ThinkingLevel,
   ToolActivity,
-  ToolEnd,
-  ToolOutputEvent,
-  ToolStart,
-  TurnMetrics,
-  UiMessage,
 } from "../types";
-
-// Survives component remounts so a stream already running in a detached
-// instance still blocks accidental double-sends from a fresh instance.
-let globalStreamActive = false;
-
-function stripTrailingEmptyAssistants(transcript: ChatMessage[]): ChatMessage[] {
-  const out = [...transcript];
-  while (out.length > 0) {
-    const last = out[out.length - 1];
-    const isDanglingEmptyAssistant =
-      last.role === "assistant" &&
-      (!last.content || !last.content.trim()) &&
-      (!last.toolCalls || last.toolCalls.length === 0);
-    if (!isDanglingEmptyAssistant) break;
-    out.pop();
-  }
-  return out;
-}
-
-function transcriptToUi(transcript: ChatMessage[], existingUi?: UiMessage[]): UiMessage[] {
-  const out: UiMessage[] = [];
-  let id = 0;
-  let currentAssistant: UiMessage | null = null;
-  let assistantCount = 0;
-
-  for (let i = 0; i < transcript.length; i++) {
-    const m = transcript[i];
-    if (m.role === "user") {
-      if (currentAssistant) {
-        out.push(currentAssistant);
-        currentAssistant = null;
-      }
-      out.push({
-        id: ++id,
-        role: "user",
-        text: m.content || "(adjuntos)",
-      });
-    } else if (m.role === "assistant") {
-      if (!currentAssistant) {
-        const existingMetrics = existingUi
-          ? existingUi.filter((x) => x.role === "assistant")[assistantCount]?.metrics
-          : undefined;
-        assistantCount++;
-        currentAssistant = {
-          id: ++id,
-          role: "assistant",
-          text: m.content || "",
-          activities: [],
-          metrics: m.metrics ?? existingMetrics,
-        };
-      } else if (m.content) {
-        currentAssistant.text = m.content;
-        if (m.metrics) currentAssistant.metrics = m.metrics;
-      }
-
-      if (m.toolCalls && m.toolCalls.length > 0) {
-        currentAssistant.activities = currentAssistant.activities || [];
-        for (const tc of m.toolCalls) {
-          let toolLog = "";
-          for (let j = i + 1; j < transcript.length; j++) {
-            if (
-              transcript[j].role === "tool" &&
-              (transcript[j].toolCallId === tc.id || !transcript[j].toolCallId)
-            ) {
-              toolLog = transcript[j].content || "";
-              break;
-            }
-          }
-          if (!currentAssistant.activities.some((a) => a.id === tc.id)) {
-            currentAssistant.activities.push({
-              id: tc.id || `tc_${id}_${currentAssistant.activities.length}`,
-              name: tc.name,
-              arguments: tc.arguments,
-              log: toolLog,
-              ok: true,
-            });
-          }
-        }
-      }
-    } else if (m.role === "tool") {
-      if (currentAssistant && currentAssistant.activities && currentAssistant.activities.length > 0) {
-        const lastAct = currentAssistant.activities[currentAssistant.activities.length - 1];
-        if (lastAct && !lastAct.log) {
-          lastAct.log = m.content || "";
-        }
-      }
-    }
-  }
-
-  if (currentAssistant) {
-    out.push(currentAssistant);
-  }
-
-  return out;
-}
 
 function thinkingNudge(level: ThinkingLevel): string {
   switch (level) {
@@ -257,17 +165,19 @@ function AntigravityToolItem({
   activity,
   copied,
   onCopyLog,
+  t,
 }: {
   activity: ToolActivity;
   copied: boolean;
   onCopyLog: (log: string) => void;
+  t: ReturnType<typeof useI18n>["t"];
 }) {
   const [open, setOpen] = useState(false);
   const isRunning = activity.ok === null;
   const isErr = activity.ok === false;
   const title = getAntigravityToolTitle(activity);
 
-  const outputLog = activity.log || (isRunning ? "Ejecutando..." : "Completado sin salida.");
+  const outputLog = activity.log || (isRunning ? t.chat.toolsRunning : "Completado sin salida.");
 
   return (
     <details
@@ -292,17 +202,17 @@ function AntigravityToolItem({
                 e.stopPropagation();
                 onCopyLog(activity.log || activity.arguments);
               }}
-              title="Copiar resultado"
+              title={t.chat.copyResult}
             >
               {copied ? (
                 <>
                   <Check size={11} className="text-green" />
-                  <span>Copiado</span>
+                  <span>{t.chat.copiedResult}</span>
                 </>
               ) : (
                 <>
                   <Copy size={11} />
-                  <span>Copiar</span>
+                  <span>{t.chat.copyResult}</span>
                 </>
               )}
             </button>
@@ -329,6 +239,7 @@ function GroupedToolsDropdown({
   copiedLogId: string | null;
   onCopyLog: (id: string, log: string) => void;
 }) {
+  const { t } = useI18n();
   const runningTool = activities.find((a) => a.ok === null);
   const isRunning = Boolean(runningTool);
   const hasFailed = activities.some((a) => a.ok === false);
@@ -336,10 +247,10 @@ function GroupedToolsDropdown({
 
   const count = activities.length;
   const summary = isRunning
-    ? `Ejecutando ${runningTool!.name}...`
+    ? `${t.chat.toolsRunning} (${runningTool!.name})`
     : count === 1
       ? getAntigravityToolTitle(activities[0])
-      : `${count} herramientas ejecutadas (${summarizeToolNames(activities)})`;
+      : `${count} ${t.chat.toolsExecuted.toLowerCase()} (${summarizeToolNames(activities)})`;
 
   return (
     <details
@@ -360,6 +271,7 @@ function GroupedToolsDropdown({
               activity={a}
               copied={copiedLogId === a.id}
               onCopyLog={(log) => onCopyLog(a.id, log)}
+              t={t}
             />
           ))}
         </div>
@@ -375,6 +287,7 @@ function ThinkingDropdown({
   text: string;
   isStreaming?: boolean;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
 
@@ -387,7 +300,7 @@ function ThinkingDropdown({
       <summary className="ag-meta-summary">
         <span className={`ag-meta-dot thinking ${isStreaming ? "running" : ""}`} />
         <span className="ag-meta-title">
-          {isStreaming ? "Razonando..." : `Razonamiento interno (${wordCount} palabras)`}
+          {isStreaming ? t.chat.thinkingStreaming : `${t.chat.thinking} (${wordCount} ${t.chat.thinkingWords})`}
         </span>
         <ChevronDown size={11} className="ag-meta-chevron" />
       </summary>
@@ -398,7 +311,85 @@ function ThinkingDropdown({
   );
 }
 
+const ROLE_ICONS: Record<SubagentRole, ReactNode> = {
+  explorer: <Search size={11} className="text-cyan" />,
+  coder: <FileCode size={11} className="text-purple" />,
+  tester: <FlaskConical size={11} className="text-gold" />,
+  reviewer: <ScrollText size={11} className="text-blue" />,
+};
+
+function MultiAgentPanel({ plan, busy }: { plan: MultiAgentPlanState; busy: boolean }) {
+  const { t } = useI18n();
+  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
+  const doneCount = plan.steps.filter((s) => s.status === "completed").length;
+
+  const toggleStep = (idx: number) => {
+    setExpandedSteps((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  return (
+    <div className={`ma-plan-card ${busy ? "running" : ""}`}>
+      <div className="ma-plan-header">
+        <Workflow size={13} className="text-cyan" />
+        <span className="ma-plan-title">{t.multiagent.planTitle}</span>
+        <span className="ma-plan-progress">
+          {doneCount}/{plan.steps.length}
+        </span>
+      </div>
+      <div className="ma-plan-objective font-mono">{plan.objective}</div>
+      <div className="ma-plan-steps">
+        {plan.steps.map((step) => {
+          const isExpanded = Boolean(expandedSteps[step.stepIndex]);
+          const hasDetails = Boolean(step.resultSummary && step.resultSummary.trim().length > 0);
+
+          return (
+            <div
+              key={step.stepIndex}
+              className={`ma-plan-step ${step.status} ${hasDetails ? "clickable" : ""}`}
+              onClick={() => hasDetails && toggleStep(step.stepIndex)}
+              title={hasDetails ? (isExpanded ? "Clic para contraer" : "Clic para ver detalle y diagnóstico") : ""}
+            >
+              <span className={`ma-plan-dot ${step.status}`} />
+              <span className="ma-plan-step-icon">{ROLE_ICONS[step.role]}</span>
+              <div className="ma-plan-step-body">
+                <div className="ma-plan-step-head-row">
+                  <span className="ma-plan-step-title">{step.title}</span>
+                  {hasDetails && (
+                    <span className="ma-plan-step-chevron">
+                      <ChevronDown size={11} className={isExpanded ? "chevron-open" : ""} />
+                    </span>
+                  )}
+                </div>
+                {step.status === "running" && (
+                  <span className="ma-plan-step-running">{t.multiagent.running}…</span>
+                )}
+                {step.status === "completed" && step.resultSummary && (
+                  <div className={`ma-plan-step-summary ${isExpanded ? "expanded" : ""}`}>
+                    {isExpanded ? step.resultSummary : (step.resultSummary.slice(0, 160) + (step.resultSummary.length > 160 ? "…" : ""))}
+                  </div>
+                )}
+                {step.status === "failed" && (
+                  <div className={`ma-plan-step-summary error ${isExpanded ? "expanded" : ""}`}>
+                    {step.resultSummary || t.multiagent.failed}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {plan.isCompleted && (
+        <div className="ma-plan-footer">
+          <Zap size={10} className="text-cyan" />
+          <span>{plan.totalTokens.toLocaleString()} tok</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ChatProps {
+  sessionId: string;
   config: ChatConfig;
   ready: boolean;
   folders: string[];
@@ -411,6 +402,8 @@ interface ChatProps {
   blockReason: string;
   agentMode?: AgentMode;
   onToggleMode?: (mode: AgentMode) => void;
+  multiAgentMode?: "auto" | "always" | "off";
+  onToggleMultiAgentMode?: (mode: "auto" | "always" | "off") => void;
   models?: string[];
   activeModel?: string;
   onSelectModel?: (model: string) => void;
@@ -418,15 +411,14 @@ interface ChatProps {
   providerId?: string;
   onUsage: (usage: ChatUsage) => void;
   onApplyArtifact: (path: string, content: string) => void;
-  onStatusChange?: (busy: boolean, runningToolName: string | null) => void;
   onClearSessionTrigger?: () => void;
-  initialTranscript?: ChatMessage[];
-  onTranscriptChange?: (messages: ChatMessage[]) => void;
+  onTranscriptChange: (messages: ChatMessage[]) => void;
   injectedPrompt?: string | null;
   onClearInjectedPrompt?: () => void;
 }
 
 export default function Chat({
+  sessionId,
   config,
   ready,
   folders,
@@ -439,6 +431,8 @@ export default function Chat({
   blockReason,
   agentMode = "act",
   onToggleMode,
+  multiAgentMode: multiAgentModeProp,
+  onToggleMultiAgentMode,
   models = [],
   activeModel,
   onSelectModel,
@@ -446,23 +440,21 @@ export default function Chat({
   providerId,
   onUsage,
   onApplyArtifact,
-  onStatusChange,
   onClearSessionTrigger,
-  initialTranscript = [],
   onTranscriptChange,
   injectedPrompt,
   onClearInjectedPrompt,
 }: ChatProps) {
   const { t } = useI18n();
-  const cleanInitialTranscript = stripTrailingEmptyAssistants(initialTranscript);
-  const [messages, setMessages] = useState<UiMessage[]>(() =>
-    transcriptToUi(cleanInitialTranscript),
-  );
-  const [transcript, setTranscript] = useState<ChatMessage[]>(cleanInitialTranscript);
+  const rt = useSessionRuntime(sessionId);
+  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool } = rt;
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [turnActivities, setTurnActivities] = useState<Record<number, ToolActivity[]>>({});
-  const [thinking, setThinking] = useState<{ id: number; text: string } | null>(null);
+  const [localMultiAgentMode, setLocalMultiAgentMode] = useState<"auto" | "always" | "off">("auto");
+  const multiAgentMode = multiAgentModeProp ?? localMultiAgentMode;
+  const setMultiAgentMode = (mam: "auto" | "always" | "off") => {
+    setLocalMultiAgentMode(mam);
+    onToggleMultiAgentMode?.(mam);
+  };
 
   // Handle injected prompt from viewers (e.g. PDF viewer "Analizar con Makora")
   useEffect(() => {
@@ -484,7 +476,6 @@ export default function Chat({
     }
   }, []);
 
-  const isAbortedRef = useRef(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mention, setMention] = useState<{
     query: string;
@@ -510,15 +501,7 @@ export default function Chat({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mentionTimer = useRef<number | null>(null);
   const lastAttachmentId = useRef<number>(0);
-  const currentAssistantId = useRef<number>(0);
   const isAutoScrollEnabled = useRef<boolean>(true);
-  const idCounter = useRef<number>(cleanInitialTranscript.length);
-  const didHydrate = useRef<boolean>(false);
-
-  const nextId = () => {
-    idCounter.current += 1;
-    return idCounter.current;
-  };
 
   // Auto-scroll selected mention item into view
   useEffect(() => {
@@ -547,24 +530,6 @@ export default function Chat({
   const filteredModels = models.filter((m) =>
     m.toLowerCase().includes(modelSearch.toLowerCase())
   );
-
-  const currentTurnActivities = turnActivities[currentAssistantId.current] ?? [];
-  const runningTool = currentTurnActivities.find((a) => a.ok === null);
-
-
-  useEffect(() => {
-    onStatusChange?.(busy, runningTool ? runningTool.name : null);
-  }, [busy, runningTool, onStatusChange]);
-
-  // Safety net: if this instance unmounts while busy (e.g. app teardown),
-  // clear the global busy status so the header never gets stuck "Ejecutando".
-  const onStatusChangeRef = useRef(onStatusChange);
-  onStatusChangeRef.current = onStatusChange;
-  useEffect(() => {
-    return () => {
-      onStatusChangeRef.current?.(false, null);
-    };
-  }, []);
 
   // Detect project rules in workspace
   useEffect(() => {
@@ -603,85 +568,36 @@ export default function Chat({
     }
   }, [messages, turnActivities, thinking, scrollToBottom]);
 
-  // Persist transcript changes upward once hydration has settled.
-  useEffect(() => {
-    if (!didHydrate.current) {
-      didHydrate.current = true;
-      return;
-    }
-    onTranscriptChange?.(transcript);
-  }, [transcript, onTranscriptChange]);
-
-  useEffect(() => {
-    let disposed = false;
-    const fns: Array<() => void> = [];
-    const addListener = <T,>(event: string, handler: (payload: T) => void) => {
-      listen<T>(event, (e) => {
-        if (!disposed) handler(e.payload);
-      }).then((unlisten) => {
-        if (disposed) unlisten();
-        else fns.push(unlisten);
-      });
-    };
-    addListener<ToolStart>("tool-start", (t) => {
-      const targetId = currentAssistantId.current;
-      setTurnActivities((map) => ({
-        ...map,
-        [targetId]: [
-          ...(map[targetId] ?? []),
-          { id: t.id, name: t.name, arguments: t.arguments, log: "", ok: null },
-        ],
-      }));
-    });
-    addListener<ToolOutputEvent>("tool-output", (t) => {
-      const targetId = currentAssistantId.current;
-      setTurnActivities((map) => ({
-        ...map,
-        [targetId]: (map[targetId] ?? []).map((x) =>
-          x.id === t.id ? { ...x, log: x.log + t.data } : x,
-        ),
-      }));
-    });
-    addListener<ToolEnd>("tool-end", (t) => {
-      const targetId = currentAssistantId.current;
-      setTurnActivities((map) => ({
-        ...map,
-        [targetId]: (map[targetId] ?? []).map((x) =>
-          x.id === t.id ? { ...x, ok: t.ok, log: x.log || t.summary } : x,
-        ),
-      }));
-    });
-    addListener<{ text: string }>("thinking-delta", (d) => {
-      setThinking((t) => ({
-        id: t?.id ?? currentAssistantId.current,
-        text: (t?.text ?? "") + d.text,
-      }));
-    });
-    return () => {
-      disposed = true;
-      fns.forEach((f) => f());
-    };
-  }, []);
-
-  const buildSystem = async (): Promise<string> => {
+  const buildSystem = async (effectiveMode: AgentMode = agentMode): Promise<string> => {
     let sys =
-      "Eres Makora, un asistente de desarrollo agéntico integrado en MakoraIDE. " +
-      "Trabajas sobre los archivos del workspace que se te muestran. " +
-      "Si el usuario simplemente te saluda, agradece o hace preguntas conceptuales o generales, responde directamente de manera concisa y cordial sin invocar herramientas innecesarias. " +
-      "Cuando el usuario te solicite una tarea técnica sobre el workspace, ejecuta directamente las herramientas adecuadas en el mismo turno. " +
-      "Si una ruta no existe, inspecciona la raíz del workspace con list_dir. " +
-      "Al terminar la tarea responde SIEMPRE con un texto final, aunque hayas usado herramientas. " +
-      "Cuando generes archivos de código completos, usa bloques con el formato ```lenguaje:ruta/del/archivo " +
-      "para que el usuario pueda aplicarlos al workspace con un clic. " +
+      "Eres Makora, un asistente de desarrollo agéntico de élite integrado en MakoraIDE.\n" +
+      "Trabajas directamente sobre los archivos del workspace que se te muestran.\n\n" +
+      "### I. Protocolo de Razonamiento Quirúrgico (Thinking Protocol)\n" +
+      "1. Respeta Contratos e Invariantes: Identifica tipos, firmas públicas y no rompas código existente.\n" +
+      "2. Mapeo Preciso: Localiza el archivo y líneas exactas con `grep` o `read_file_range` antes de proponer cambios.\n" +
+      "3. Validación Previa: Verifica imports, tipos y balance de llaves antes de aplicar parches.\n\n" +
+      "### II. Economía Extrema de Tokens (Token Economy Guard)\n" +
+      "1. Anti-Bloat: PROHIBIDO usar `read_file` en archivos de más de 150 líneas. Usa obligatoriamente `read_file_range`.\n" +
+      "2. Cirugía con `apply_patch`: Modifica archivos existentes EXCLUSIVAMENTE con `apply_patch` (3-5 líneas de anclaje). NUNCA reescribas archivos completos con `write_file`.\n" +
+      "3. Batching: Agrupa múltiples lecturas o búsquedas independientes en una única llamada.\n" +
+      "4. Aislamiento Efímero: Usa `explore_subagent` cuando debas examinar múltiples archivos o logs extensos para mantener el historial principal limpio.\n" +
+      "5. Cero Duplicación: No reimprimas el código completo en la respuesta final de texto cuando ya lo aplicaste con `apply_patch`.\n\n" +
+      "### III. Salida Técnica y Regla de Oro de Cierre\n" +
+      "1. Al terminar la tarea técnica, emite SIEMPRE un resumen estructurado y claro: `- ruta/al/archivo:línea — acción realizada` + estado de verificación.\n" +
+      "2. OBLIGACIÓN DE RESPUESTA: NUNCA finalices en silencio ni con texto vacío tras ejecutar herramientas. Confirma siempre las operaciones efectuadas al usuario.\n" +
       thinkingNudge(thinkingLevel);
 
-    if (agentMode === "plan") {
+    if (effectiveMode === "plan") {
       sys +=
         "\n\n## MODO DE PLANIFICACIÓN ACTIVO (PLAN MODE):\n" +
-        "El usuario ha activado el MODO PLAN. En este modo está ESTRICTAMENTE PROHIBIDO crear, editar o borrar archivos directamente con write_file o apply_patch, o ejecutar comandos bash destructivos. Tu objetivo es:\n" +
-        "1. Inspeccionar y analizar el código relevante usando read_file, read_file_range o grep.\n" +
-        "2. Formular un Plan de Implementación estructurado con el desglose de cambios, archivos a crear o modificar, y posibles riesgos.\n" +
-        "3. Pedir la aprobación explícita del usuario antes de proceder a la ejecución.";
+        "El usuario ha activado el MODO PLAN. En este modo está ESTRICTAMENTE PROHIBIDO crear, editar o borrar archivos directamente con write_file o apply_patch, o ejecutar comandos bash destructivos.\n" +
+        "Tu objetivo es explorar el workspace usando herramientas de solo lectura (`read_file_range`, `grep`, `list_dir`) y generar un Plan de Implementación estructurado en Markdown que contenga:\n" +
+        "1. `# Implementation Plan: [Título]`\n" +
+        "2. `## 1. Análisis y Diagnóstico`\n" +
+        "3. `## 2. Cambios Propuestos (Archivo por Archivo con rutas exactas y desglose)`\n" +
+        "4. `## 3. Plan de Verificación y Pruebas`\n" +
+        "5. Preguntas abiertas o decisiones críticas que requieran validación previa.\n" +
+        "Presenta el plan completo de forma clara y directa en tu respuesta para que el usuario pueda revisarlo y pulsar 'Proceder a Implementar'.";
     }
 
     if (projectRules) {
@@ -838,11 +754,6 @@ export default function Chat({
       onClearSessionTrigger();
       return;
     }
-    setMessages([]);
-    setTranscript([]);
-    setTurnActivities({});
-    setThinking(null);
-    setAttachments([]);
   };
 
   const copyTranscript = () => {
@@ -880,16 +791,17 @@ export default function Chat({
     }, 50);
   };
 
-  const send = async (overrideText?: string) => {
+  const send = async (overrideText?: string, targetMode?: AgentMode) => {
     const text = (overrideText ?? input).trim();
     if ((!text && attachments.length === 0) || busy || !ready) return;
-    if (globalStreamActive) return;
     if (blocked) {
-      setMessages((m) => [
-        ...m,
-        { id: Date.now(), role: "assistant", text: `⛔ ${blockReason}` },
-      ]);
+      appendAssistantMessage(sessionId, `⛔ ${blockReason}`);
       return;
+    }
+
+    const effectiveMode = targetMode || agentMode;
+    if (targetMode && targetMode !== agentMode) {
+      onToggleMode?.(targetMode);
     }
 
     let content = text;
@@ -903,14 +815,10 @@ export default function Chat({
     }
     const imageAtts = atts.filter((a) => a.kind === "image");
     if (imageAtts.length > 0 && !visionEnabled) {
-      setMessages((m) => [
-        ...m,
-        {
-          id: Date.now(),
-          role: "assistant",
-          text: `🖼 El modelo ${config.model} no soporta imágenes: se guardarán como archivo temporal y el agente verá la ruta de referencia. Activa "Visión" en ⚙ → Modelos si usas un modelo multimodal.`,
-        },
-      ]);
+      appendAssistantMessage(
+        sessionId,
+        `🖼 El modelo ${config.model} no soporta imágenes: se guardarán como archivo temporal y el agente verá la ruta de referencia. Activa "Visión" en ⚙ → Modelos si usas un modelo multimodal.`,
+      );
     }
     const images = imageAtts.map((a) => a.dataUrl ?? "");
 
@@ -922,142 +830,31 @@ export default function Chat({
       return;
     }
 
-    setBusy(true);
-    setThinking(null);
     isAutoScrollEnabled.current = true;
-    globalStreamActive = true;
 
-    const userMsg: ChatMessage = { role: "user", content, images };
-    const initialAssistantMsg: ChatMessage = { role: "assistant", content: "" };
-    const newTranscript = [...transcript, userMsg, initialAssistantMsg];
-    setTranscript(newTranscript);
-
-    const userDisplayId = nextId();
-    const assistantId = nextId();
-    currentAssistantId.current = assistantId;
-    setMessages((m) => [
-      ...m,
-      { id: userDisplayId, role: "user", text: text || "(adjuntos)" },
-      { id: assistantId, role: "assistant", text: "" },
-    ]);
-
-    let acc = "";
-    let lastSync = 0;
-    let rafPending = false;
-    let isDisposed = false;
-    let done = false;
-
-    const flushUi = () => {
-      if (isDisposed) return;
-      rafPending = false;
-      setMessages((m) =>
-        m.map((x) => (x.id === assistantId ? { ...x, text: acc } : x)),
-      );
-    };
-
-    const unlistenDelta = await listen<{ text: string }>("chat-delta-event", (e) => {
-      acc += e.payload.text;
-      if (!rafPending) {
-        rafPending = true;
-        requestAnimationFrame(flushUi);
+    const system = await buildSystem(effectiveMode);
+    let useMultiAgent = false;
+    if (effectiveMode === "act") {
+      if (multiAgentMode === "always") {
+        useMultiAgent = true;
+      } else if (multiAgentMode === "auto") {
+        const decision = shouldAutoUseMultiAgent(content, folders, messages.length);
+        useMultiAgent = decision.useMultiAgent;
       }
-      const now = Date.now();
-      if (now - lastSync > 300) {
-        lastSync = now;
-        setTranscript((t) => {
-          if (done) return t;
-          if (t.length === 0) return t;
-          const copy = [...t];
-          const lastIdx = copy.length - 1;
-          if (copy[lastIdx]?.role === "assistant") {
-            copy[lastIdx] = { ...copy[lastIdx], content: acc };
-          }
-          return copy;
-        });
-      }
-    });
-
-    const startTime = Date.now();
-    try {
-      const system = await buildSystem();
-      const result = await chat(config, system, newTranscript.slice(0, -1), folders);
-      const durationMs = Math.max(50, Date.now() - startTime);
-      onUsage(result);
-
-      const turnCostUsd = computeCostUsd(
-        { inputTokens: result.inputTokens, outputTokens: result.outputTokens, cachedTokens: result.cachedTokens },
-        modelConfig,
-        config.model,
-        providerId
-      );
-
-      const metrics: TurnMetrics = {
-        inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens,
-        cachedTokens: result.cachedTokens,
-        totalTokens: result.inputTokens + result.outputTokens,
-        durationMs,
-        costUsd: turnCostUsd,
-      };
-
-      const messagesWithMetrics = [...result.messages];
-      const lastAssistIdx = messagesWithMetrics.map((m) => m.role).lastIndexOf("assistant");
-      if (lastAssistIdx >= 0) {
-        messagesWithMetrics[lastAssistIdx] = {
-          ...messagesWithMetrics[lastAssistIdx],
-          metrics,
-        };
-      }
-
-      done = true;
-      setTranscript(messagesWithMetrics);
-      const uiMsgs = transcriptToUi(messagesWithMetrics, messages);
-      const finalText =
-        result.messages
-          .filter((m) => m.role === "assistant")
-          .map((m) => m.content)
-          .pop() ?? "";
-
-      if (uiMsgs.length > 0 && uiMsgs[uiMsgs.length - 1].role === "assistant") {
-        uiMsgs[uiMsgs.length - 1].text = acc || finalText || uiMsgs[uiMsgs.length - 1].text || "(sin respuesta)";
-        uiMsgs[uiMsgs.length - 1].metrics = metrics;
-      }
-      setMessages(uiMsgs);
-
-      // Notificación de sistema del SO si la ventana está minimizada o en segundo plano
-      if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
-        const wsName = folders[0]?.split(/[\\/]/).pop() || "Workspace";
-        new Notification("Makora IDE", {
-          body: `✅ Tarea completada con éxito en ${wsName}`,
-          silent: false,
-        });
-      }
-    } catch (err) {
-      const errStr = String(err);
-      const isCancelled = isAbortedRef.current || errStr.toLowerCase().includes("cancel") || errStr.toLowerCase().includes("abort");
-      const finalMsg = isCancelled
-        ? (acc ? `${acc}\n\n*(⏹️ Generación detenida por el usuario)*` : `*(⏹️ Generación detenida por el usuario)*`)
-        : (acc ? `${acc}\n\n⚠️ Error: ${errStr}` : `⚠️ Error: ${errStr}`);
-      setTranscript((t) => [...t, { role: "assistant", content: finalMsg }]);
-      setMessages((m) =>
-        m.map((x) => (x.id === assistantId ? { ...x, text: finalMsg } : x)),
-      );
-
-      if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden && !isCancelled) {
-        const wsName = folders[0]?.split(/[\\/]/).pop() || "Workspace";
-        new Notification("Makora IDE", {
-          body: `⚠️ Fallo en tarea de ${wsName}`,
-          silent: false,
-        });
-      }
-    } finally {
-      isDisposed = true;
-      done = true;
-      isAbortedRef.current = false;
-      unlistenDelta();
-      setBusy(false);
-      globalStreamActive = false;
     }
+    void sendTurn(sessionId, {
+      config,
+      system,
+      folders,
+      modelConfig,
+      providerId,
+      content,
+      images,
+      displayText: text,
+      useMultiAgent,
+      onUsage,
+      onTranscriptChange,
+    });
   };
 
   const applyArtifact = (path: string, content: string) => {
@@ -1114,7 +911,7 @@ export default function Chat({
           {busy ? (
             <span className="chat-badge-busy">
               <span className="pulse-dot" />
-              {runningTool ? `${t.chat.toolsRunning} ${runningTool.name}` : t.chat.thinkingStreaming}
+              {runningTool ? `${t.chat.toolsRunning} ${runningTool}` : t.chat.thinkingStreaming}
             </span>
           ) : (
             <span className="chat-badge-ready">
@@ -1135,7 +932,7 @@ export default function Chat({
             <button
               className={`mode-pill ${agentMode === "act" ? "active" : ""}`}
               onClick={() => onToggleMode?.("act")}
-              title="Modo Acción: El agente analiza y aplica ediciones directamente"
+              title={t.chat.actModeHint}
             >
               <Zap size={10} />
               <span>{t.chat.actMode}</span>
@@ -1143,10 +940,30 @@ export default function Chat({
             <button
               className={`mode-pill ${agentMode === "plan" ? "active" : ""}`}
               onClick={() => onToggleMode?.("plan")}
-              title="Modo Plan: El agente genera un plan y pide aprobación antes de escribir"
+              title={t.chat.planModeHint}
             >
               <ScrollText size={10} />
               <span>{t.chat.planMode}</span>
+            </button>
+            <button
+              className={`mode-pill ma-pill ${multiAgentMode !== "off" ? "active" : ""} ${multiAgentMode === "auto" ? "ma-auto" : ""}`}
+              onClick={() => {
+                const next: "auto" | "always" | "off" =
+                  multiAgentMode === "auto" ? "always" : multiAgentMode === "always" ? "off" : "auto";
+                setMultiAgentMode(next);
+              }}
+              title={
+                multiAgentMode === "auto"
+                  ? t.multiagent.autoHint
+                  : multiAgentMode === "always"
+                  ? t.multiagent.alwaysHint
+                  : t.multiagent.offHint
+              }
+            >
+              <Workflow size={10} />
+              <span>
+                {multiAgentMode === "auto" ? t.multiagent.auto : multiAgentMode === "always" ? t.multiagent.always : t.multiagent.off}
+              </span>
             </button>
           </div>
         </div>
@@ -1192,6 +1009,7 @@ export default function Chat({
         </div>
       </div>
 
+      {plan && <MultiAgentPanel plan={plan} busy={busy} />}
 
       <div
         className="chat-messages"
@@ -1243,7 +1061,7 @@ export default function Chat({
             );
           }
 
-          const isCurrentAssistant = m.role === "assistant" && m.id === currentAssistantId.current;
+          const isCurrentAssistant = m.role === "assistant" && m.id === currentAssistantId;
           const isBusyCurrent = isCurrentAssistant && busy;
           const thinkingText = (isCurrentAssistant && thinking?.text) || m.thinking || "";
           const hasThinking = thinkingText.trim().length > 0;
@@ -1345,8 +1163,12 @@ export default function Chat({
                       </div>
                     </div>
                   ) : (
-                    <div className="msg-text muted font-mono">
-                      (turno sin texto final guardado)
+                    <div className="msg-content">
+                      <div className="msg-text">
+                        {allActivities.length > 0
+                          ? "✅ Modificaciones y operaciones completadas con éxito mediante herramientas."
+                          : "✅ Operación procesada con éxito."}
+                      </div>
                     </div>
                   )}
 
@@ -1394,8 +1216,7 @@ export default function Chat({
                           type="button"
                           className="btn btn-primary btn-sm plan-proceed-btn"
                           onClick={() => {
-                            onToggleMode?.("act");
-                            send(t.chat.planProceedPrompt);
+                            send(t.chat.planProceedPrompt, "act");
                           }}
                           title={t.chat.planProceedHint}
                         >
@@ -1443,10 +1264,10 @@ export default function Chat({
             scrollToBottom(true);
             setShowScrollBottom(false);
           }}
-          title="Ir al último mensaje"
+          title={t.chat.scrollToBottom}
         >
           <ChevronDown size={13} />
-          <span>Último mensaje</span>
+          <span>{t.chat.lastMessage}</span>
           {busy && <span className="scroll-btn-pulse-dot" />}
         </button>
       )}
@@ -1491,12 +1312,13 @@ export default function Chat({
         <textarea
           ref={textareaRef}
           value={input}
-          onChange={(e) =>
+          onChange={(e) => {
+            setInput(e.target.value);
             handleInputChange(
-              e.currentTarget.value,
-              e.currentTarget.selectionStart ?? e.currentTarget.value.length,
-            )
-          }
+              e.target.value,
+              e.target.selectionStart ?? e.target.value.length,
+            );
+          }}
           onPaste={(e) => {
             const files = Array.from(e.clipboardData.items)
               .filter((i) => i.kind === "file")
@@ -1508,73 +1330,72 @@ export default function Chat({
             }
           }}
           placeholder={
-            ready
-              ? (agentMode === "plan" ? t.chat.inputPlaceholderPlan : t.chat.inputPlaceholderAct)
-              : t.chat.selectModelFirst
+            !config.model
+              ? t.chat.selectModelFirst
+              : agentMode === "plan"
+              ? t.chat.inputPlaceholderPlan
+              : t.chat.inputPlaceholderAct
           }
           rows={3}
-          disabled={!ready}
+          disabled={!config.model || busy}
           onKeyDown={handleKeyDown}
         />
 
-        {/* Dynamic In-Chat Bottom Toolbar */}
+        {/* Bottom Toolbar inside the chat input container */}
         <div className="chat-input-toolbar">
           <div className="chat-toolbar-left">
-            {/* Custom Makora Model Picker Combobox */}
-            <div className="custom-model-picker-wrap" ref={modelMenuRef}>
+            {/* Model Selector Dropdown Button */}
+            <div className="chat-model-btn-wrap" ref={modelMenuRef}>
               <button
                 type="button"
-                className={`model-picker-trigger ${modelMenuOpen ? "active" : ""}`}
+                className={`chat-pill-btn model-pill ${modelMenuOpen ? "active" : ""}`}
                 onClick={() => setModelMenuOpen((v) => !v)}
-                title={`${t.chat.selectModel} (Click)`}
+                title={(activeModel || config.model) ? `${t.chat.selectModel}: ${activeModel || config.model}` : t.chat.selectModelFirst}
               >
-                <Zap size={11} className="model-picker-icon text-cyan" />
-                <span className="model-picker-name font-mono">
-                  {(activeModel || config.model || "").replace(/^models\//, "") || t.chat.selectModel}
-                </span>
-                <ChevronDown size={11} className={`model-chevron ${modelMenuOpen ? "rotated" : ""}`} />
+                <Cpu size={11} className="text-cyan" />
+                <span className="chat-model-name font-mono">{(activeModel || config.model)?.replace(/^models\//, "") || t.chat.selectModel}</span>
+                <ChevronDown size={10} className={`text-muted chat-model-chevron ${modelMenuOpen ? "rotated" : ""}`} />
               </button>
 
+              {/* Enhanced Model Dropdown Popover */}
               {modelMenuOpen && (
-                <div className="model-picker-popover">
-                  {models.length > 5 && (
-                    <div className="model-search-wrap">
-                      <Search size={11} className="model-search-icon" />
-                      <input
-                        type="text"
-                        className="model-search-input"
-                        placeholder={t.chat.filterModels}
-                        value={modelSearch}
-                        onChange={(e) => setModelSearch(e.target.value)}
-                        autoFocus
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </div>
-                  )}
+                <div className="chat-model-popover">
+                  <div className="chat-model-search-wrap">
+                    <Search size={12} className="chat-model-search-icon" />
+                    <input
+                      type="text"
+                      className="chat-model-search font-mono"
+                      placeholder={t.chat.filterModels}
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
 
-                  <div className="model-options-list">
-                    {filteredModels.length === 0 ? (
-                      <div className="model-option-empty">
-                        <span>{models.length === 0 ? t.chat.noModels : t.chat.noMatches}</span>
-                      </div>
+                  <div className="chat-model-list">
+                    {models.length === 0 ? (
+                      <div className="chat-model-empty font-mono">{t.chat.noModels}</div>
+                    ) : filteredModels.length === 0 ? (
+                      <div className="chat-model-empty font-mono">{t.chat.noMatches}</div>
                     ) : (
                       filteredModels.map((m) => {
-                        const isSelected = (activeModel || config.model) === m;
+                        const isCurrent = m === (activeModel || config.model);
                         return (
                           <button
                             key={m}
                             type="button"
-                            className={`model-option-item ${isSelected ? "selected" : ""}`}
+                            className={`chat-model-item ${isCurrent ? "selected" : ""}`}
                             onClick={() => {
                               onSelectModel?.(m);
                               setModelMenuOpen(false);
+                              setModelSearch("");
                             }}
                           >
-                            <div className="model-option-left">
-                              <Zap size={11} className={isSelected ? "text-cyan" : "opacity-50"} />
-                              <span className="model-option-label font-mono">{m.replace(/^models\//, "")}</span>
+                            <div className="chat-model-item-main">
+                              <Cpu size={11} className={isCurrent ? "text-cyan" : "text-muted"} />
+                              <span className="chat-model-item-name font-mono">{m.replace(/^models\//, "")}</span>
                             </div>
-                            {isSelected && <Check size={12} className="text-cyan" />}
+                            {isCurrent && <Check size={12} className="text-cyan" />}
                           </button>
                         );
                       })
@@ -1590,10 +1411,10 @@ export default function Chat({
                 type="button"
                 className={`chat-pill-btn mode-pill ${agentMode === "plan" ? "plan-active" : "act-active"}`}
                 onClick={() => onToggleMode(agentMode === "plan" ? "act" : "plan")}
-                title={agentMode === "plan" ? "Modo Plan: Diseña e investiga" : "Modo Acción: Edita código directamente"}
+                title={agentMode === "plan" ? t.chat.planModeHint : t.chat.actModeHint}
               >
                 {agentMode === "plan" ? <ScrollText size={10} /> : <Zap size={10} />}
-                <span>{agentMode === "plan" ? "Plan" : "Act"}</span>
+                <span>{agentMode === "plan" ? t.chat.planMode : t.chat.actMode}</span>
               </button>
             )}
 
@@ -1607,7 +1428,7 @@ export default function Chat({
                   const nextIdx = (levels.indexOf(thinkingLevel) + 1) % levels.length;
                   onSelectThinkingLevel(levels[nextIdx]);
                 }}
-                title={`Nivel de razonamiento API: ${thinkingLevel} (Clic para cambiar)`}
+                title={`${t.chat.thinkingLevelHint}: ${thinkingLevel}`}
               >
                 <FlaskConical size={10} className="text-purple" />
                 <span style={{ textTransform: "capitalize" }}>{thinkingLevel}</span>
@@ -1620,10 +1441,10 @@ export default function Chat({
                 type="button"
                 className={`chat-pill-btn ${attachMenuOpen ? "active" : ""}`}
                 onClick={() => setAttachMenuOpen((v) => !v)}
-                title="Adjuntar archivo del workspace o examinar del sistema"
+                title={t.chat.attachHint}
               >
                 <Paperclip size={10} className="text-cyan" />
-                <span>Adjuntar</span>
+                <span>{t.chat.attach}</span>
               </button>
 
               {attachMenuOpen && (
@@ -1643,8 +1464,8 @@ export default function Chat({
                   >
                     <Folder size={14} className="text-cyan" />
                     <div className="chat-attach-text">
-                      <span className="attach-item-title">Archivos del Workspace (@)</span>
-                      <span className="attach-item-sub">Buscar y referenciar código del proyecto</span>
+                      <span className="attach-item-title">{t.chat.attachWorkspaceTitle}</span>
+                      <span className="attach-item-sub">{t.chat.attachWorkspaceSub}</span>
                     </div>
                   </button>
 
@@ -1667,8 +1488,8 @@ export default function Chat({
                   >
                     <UploadCloud size={14} className="text-purple" />
                     <div className="chat-attach-text">
-                      <span className="attach-item-title">Examinar del Sistema...</span>
-                      <span className="attach-item-sub">Adjuntar PDFs, datos, código o imágenes</span>
+                      <span className="attach-item-title">{t.chat.attachSystemTitle}</span>
+                      <span className="attach-item-sub">{t.chat.attachSystemSub}</span>
                     </div>
                   </button>
                 </div>
@@ -1693,16 +1514,7 @@ export default function Chat({
               <button
                 type="button"
                 className="btn btn-danger btn-sm"
-                onClick={async () => {
-                  isAbortedRef.current = true;
-                  try {
-                    await chatCancel();
-                  } catch (e) {
-                    console.warn("cancel error:", e);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
+                onClick={() => cancelTurn(sessionId)}
                 title={t.chat.stop}
               >
                 <Square size={11} />

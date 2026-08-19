@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatSession } from "./types";
+import type { AgentMode, ChatMessage, ChatSession, OpenFile, SessionWorkspaceState } from "./types";
 
 const STORAGE_KEY = "makora.sessions.v1";
 const ACTIVE_KEY = "makora.activeSession";
@@ -16,6 +16,18 @@ export function makeSessionId(): string {
     return crypto.randomUUID();
   }
   return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getStorage(): Storage | null {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage;
+    if (typeof globalThis !== "undefined" && (globalThis as unknown as { localStorage?: Storage }).localStorage) {
+      return (globalThis as unknown as { localStorage: Storage }).localStorage;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 function safeString(value: unknown, fallback = ""): string {
@@ -70,6 +82,57 @@ export function deriveTitle(messages: ChatMessage[]): string {
   return title || "Nueva Conversación";
 }
 
+function sanitizeWorkspace(raw: unknown): SessionWorkspaceState | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const w = raw as Partial<SessionWorkspaceState>;
+  const folders = Array.isArray(w.folders)
+    ? w.folders.filter((f): f is string => typeof f === "string").slice(0, 20)
+    : [];
+  const openFiles: OpenFile[] = Array.isArray(w.openFiles)
+    ? w.openFiles
+        .filter((f): f is OpenFile => Boolean(f) && typeof f.path === "string")
+        .slice(0, 20)
+        .map((f) => ({
+          path: f.path,
+          content: safeString(f.content).slice(0, 100_000),
+          originalContent:
+            typeof f.originalContent === "string"
+              ? f.originalContent.slice(0, 100_000)
+              : undefined,
+          isDirty: Boolean(f.isDirty),
+        }))
+    : [];
+  const status =
+    w.status === "running" || w.status === "completed" || w.status === "error"
+      ? w.status
+      : "idle";
+  const agentMode: AgentMode = w.agentMode === "plan" ? "plan" : "act";
+  const multiAgentMode: "auto" | "always" | "off" =
+    w.multiAgentMode === "always" || w.multiAgentMode === "off" ? w.multiAgentMode : "auto";
+  const thinkingLevel =
+    w.thinkingLevel === "none" ||
+    w.thinkingLevel === "minimal" ||
+    w.thinkingLevel === "low" ||
+    w.thinkingLevel === "medium" ||
+    w.thinkingLevel === "high"
+      ? w.thinkingLevel
+      : undefined;
+
+  return {
+    folders,
+    openFiles,
+    activeFilePath: typeof w.activeFilePath === "string" ? w.activeFilePath : null,
+    agentMode,
+    multiAgentMode,
+    thinkingLevel,
+    status,
+    diff:
+      w.diff && typeof w.diff.before === "string" && typeof w.diff.after === "string"
+        ? { before: w.diff.before.slice(0, 100_000), after: w.diff.after.slice(0, 100_000) }
+        : null,
+  };
+}
+
 function sanitizeSession(raw: unknown): ChatSession | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Partial<ChatSession>;
@@ -97,20 +160,20 @@ function sanitizeSession(raw: unknown): ChatSession | null {
     outputTokens: outTok,
     cachedTokens: cacheTok,
     totalTokens: totTok,
+    workspace: sanitizeWorkspace(s.workspace),
   };
 }
 
 export function loadSessions(): ChatSession[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = getStorage()?.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map(sanitizeSession)
       .filter((s): s is ChatSession => s !== null)
-      .slice(0, MAX_SESSIONS)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .slice(0, MAX_SESSIONS);
   } catch {
     return [];
   }
@@ -140,16 +203,19 @@ function shrinkSessions(sessions: ChatSession[]): string {
 }
 
 export function saveSessions(sessions: ChatSession[]): void {
-  const ordered = [...sessions]
-    .slice(0, MAX_SESSIONS)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  // El orden del array es el orden de pestañas (creación, más reciente primero):
+  // se conserva tal cual para que las pestañas no salten al recargar.
+  const ordered = sessions.slice(0, MAX_SESSIONS);
   const json = JSON.stringify(ordered);
+  const storage = getStorage();
+  if (!storage) return;
+
   try {
-    localStorage.setItem(STORAGE_KEY, json);
+    storage.setItem(STORAGE_KEY, json);
   } catch {
     // Tier 2: Truncate messages within sessions
     try {
-      localStorage.setItem(STORAGE_KEY, shrinkSessions(ordered));
+      storage.setItem(STORAGE_KEY, shrinkSessions(ordered));
     } catch {
       // Tier 3: Keep only the 10 most recent sessions with last 10 messages each
       try {
@@ -160,7 +226,7 @@ export function saveSessions(sessions: ChatSession[]): void {
             content: m.content.slice(0, 4000),
           })),
         }));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
+        storage.setItem(STORAGE_KEY, JSON.stringify(minimal));
       } catch {
         // Tier 4: Emergency session metadata headers only
         try {
@@ -168,7 +234,7 @@ export function saveSessions(sessions: ChatSession[]): void {
             ...s,
             messages: [] as ChatMessage[],
           }));
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(headersOnly));
+          storage.setItem(STORAGE_KEY, JSON.stringify(headersOnly));
         } catch {
           /* En caso de saturación extrema, el estado en memoria de React sigue preservado */
         }
@@ -179,7 +245,7 @@ export function saveSessions(sessions: ChatSession[]): void {
 
 export function getActiveSessionId(): string | null {
   try {
-    return localStorage.getItem(ACTIVE_KEY);
+    return getStorage()?.getItem(ACTIVE_KEY) ?? null;
   } catch {
     return null;
   }
@@ -187,14 +253,24 @@ export function getActiveSessionId(): string | null {
 
 export function setActiveSessionId(id: string): void {
   try {
-    localStorage.setItem(ACTIVE_KEY, id);
+    getStorage()?.setItem(ACTIVE_KEY, id);
   } catch {
     /* el estado en memoria sigue siendo la fuente de verdad */
   }
 }
 
-export function makeSession(model: string): ChatSession {
+export function makeSession(model: string, workspace?: SessionWorkspaceState): ChatSession {
   const now = Date.now();
+  const defaultWs: SessionWorkspaceState = {
+    folders: [],
+    openFiles: [],
+    activeFilePath: null,
+    agentMode: "act",
+    multiAgentMode: "auto",
+    thinkingLevel: "medium",
+    status: "idle",
+    diff: null,
+  };
   return {
     id: makeSessionId(),
     title: "Nueva Conversación",
@@ -208,19 +284,48 @@ export function makeSession(model: string): ChatSession {
     outputTokens: 0,
     cachedTokens: 0,
     totalTokens: 0,
+    workspace: workspace ? sanitizeWorkspace(workspace) : defaultWs,
   };
 }
 
 export function initSessions(): { sessions: ChatSession[]; activeId: string } {
-  const sessions = loadSessions();
-  const storedActive = getActiveSessionId();
-  const existing = storedActive ? sessions.find((s) => s.id === storedActive) : undefined;
-  if (existing) {
-    return { sessions, activeId: existing.id };
+  const loaded = loadSessions();
+  // Poda de sesiones zombie vacías (sin mensajes) acumuladas previamente
+  const nonEmptySessions = loaded.filter((s) => s.messages && s.messages.length > 0);
+
+  let folders: string[] = [];
+  try {
+    const raw = getStorage()?.getItem("makora.folders");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        folders = parsed.filter((f): f is string => typeof f === "string");
+      }
+    }
+  } catch {
+    /* ignore */
   }
-  const fresh = makeSession("");
-  const next = [fresh, ...sessions];
-  saveSessions(next);
-  setActiveSessionId(fresh.id);
-  return { sessions: next, activeId: fresh.id };
+
+  // Si no hay sesiones previas con contenido, iniciar exactamente con 1 sesión limpia
+  if (nonEmptySessions.length === 0) {
+    const fresh = makeSession("", {
+      folders,
+      openFiles: [],
+      activeFilePath: null,
+      status: "idle",
+      diff: null,
+    });
+    saveSessions([fresh]);
+    setActiveSessionId(fresh.id);
+    return { sessions: [fresh], activeId: fresh.id };
+  }
+
+  // Si hay sesiones con contenido previo, preservar la activa o la más reciente
+  const savedActiveId = getActiveSessionId();
+  const activeExists = savedActiveId && nonEmptySessions.some((s) => s.id === savedActiveId);
+  const activeId = activeExists ? savedActiveId! : nonEmptySessions[0].id;
+
+  saveSessions(nonEmptySessions);
+  setActiveSessionId(activeId);
+  return { sessions: nonEmptySessions, activeId };
 }

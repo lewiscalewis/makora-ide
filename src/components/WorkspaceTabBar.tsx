@@ -1,5 +1,6 @@
 import { Plus, X } from "lucide-react";
 import type { ChatSession } from "../types";
+import { useI18n } from "../i18n";
 
 interface WorkspaceTabBarProps {
   sessions: ChatSession[];
@@ -10,6 +11,23 @@ interface WorkspaceTabBarProps {
   runningSessionIds?: Set<string>;
 }
 
+const DEFAULT_SESSION_TITLES = new Set([
+  "Nueva Conversación",
+  "Nueva Sesión",
+  "New Chat",
+  "New Conversation",
+  "新建会话",
+  "新建对话",
+  "Neues Gespräch",
+  "Neuer Chat",
+  "Nouvelle Discussion",
+  "Nouveau Chat",
+  "Nuova Conversazione",
+  "Nuova chat",
+  "Nova Conversa",
+  "Novo Chat",
+]);
+
 export default function WorkspaceTabBar({
   sessions,
   activeSessionId,
@@ -18,6 +36,7 @@ export default function WorkspaceTabBar({
   onCloseSession,
   runningSessionIds = new Set(),
 }: WorkspaceTabBarProps) {
+  const { t } = useI18n();
 
   return (
     <div className="workspace-tab-bar">
@@ -25,7 +44,8 @@ export default function WorkspaceTabBar({
         {sessions.map((sess) => {
           const isActive = sess.id === activeSessionId;
           const isRunning = runningSessionIds.has(sess.id);
-          const title = sess.title || "Nueva Sesión";
+          const isDefault = !sess.title || DEFAULT_SESSION_TITLES.has(sess.title);
+          const title = isDefault ? t.chat.newConversation : sess.title;
 
           return (
             <div
@@ -36,7 +56,7 @@ export default function WorkspaceTabBar({
             >
               <div className="workspace-tab-status">
                 {isRunning ? (
-                  <span className="status-dot running" title="Ejecutando en segundo plano..." />
+                  <span className="status-dot running" title={t.workspace.runningBackground} />
                 ) : (
                   <span className="status-dot idle" />
                 )}
@@ -52,7 +72,7 @@ export default function WorkspaceTabBar({
                     e.stopPropagation();
                     onCloseSession(sess.id);
                   }}
-                  title="Cerrar sesión"
+                  title={t.workspace.closeSession}
                 >
                   <X size={12} />
                 </button>
@@ -66,7 +86,7 @@ export default function WorkspaceTabBar({
         type="button"
         className="workspace-tab-add"
         onClick={onNewSession}
-        title="Nueva Sesión Concurrente (+)"
+        title={t.workspace.newSessionTooltip}
       >
         <Plus size={14} />
       </button>

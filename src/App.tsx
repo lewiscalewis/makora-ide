@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   fetchBalance,
@@ -29,6 +29,14 @@ import CommandPalette from "./components/CommandPalette";
 import UnifiedWorkspace from "./components/UnifiedWorkspace";
 import AmbientCanvas3D from "./components/AmbientCanvas3D";
 import WorkspaceTabBar from "./components/WorkspaceTabBar";
+import {
+  cancelTurn,
+  destroySessionRuntime,
+  ensureSessionRuntime,
+  getSessionRuntime,
+  useBusySessionIds,
+  useSessionRuntime,
+} from "./sessionStore";
 
 // Lazy-loaded heavy components for instant initial startup & smaller initial JS chunk
 const SettingsModal = lazy(() => import("./components/SettingsModal"));
@@ -48,18 +56,16 @@ import {
 } from "./sessions";
 
 import type {
-  AgentMode,
   AppConfig,
   BalanceInfo,
   ChatConfig,
   ChatMessage,
   ChatSession,
   ChatUsage,
-  DiffInfo,
   GitStatusInfo,
   McpSpec,
   ModelConfig,
-  OpenFile,
+  SessionWorkspaceState,
   Settings,
   ThemeId,
   ThinkingLevel,
@@ -74,6 +80,21 @@ const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
   model: "",
 };
+
+const ZERO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+
+function defaultWorkspace(): SessionWorkspaceState {
+  return {
+    folders: [],
+    openFiles: [],
+    activeFilePath: null,
+    agentMode: "act",
+    multiAgentMode: "auto",
+    thinkingLevel: "medium",
+    status: "idle",
+    diff: null,
+  };
+}
 
 function loadSettings(): Settings {
   try {
@@ -91,16 +112,6 @@ function loadSettings(): Settings {
     /* ignore */
   }
   return DEFAULT_SETTINGS;
-}
-
-function loadFolders(): string[] {
-  try {
-    const raw = localStorage.getItem("makora.folders");
-    if (raw) return JSON.parse(raw);
-  } catch {
-    /* ignore */
-  }
-  return [];
 }
 
 function loadConfig(): AppConfig {
@@ -145,20 +156,12 @@ function loadConfig(): AppConfig {
 
 function App() {
   const { t } = useI18n();
-  const [folders, setFolders] = useState<string[]>(loadFolders);
   const [workspaceName, setWorkspaceName] = useState(
     () => localStorage.getItem("makora.wsname") ?? "Workspace",
   );
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [config, setConfig] = useState<AppConfig>(loadConfig);
   const [theme, setTheme] = useState<ThemeId>(loadSavedTheme);
-  const [agentMode, setAgentMode] = useState<AgentMode>(() => {
-    try {
-      return localStorage.getItem("makora.agentMode") === "plan" ? "plan" : "act";
-    } catch {
-      return "act";
-    }
-  });
   const [isSplit, setIsSplit] = useState(() => {
     try {
       return localStorage.getItem("makora.isSplit") === "true";
@@ -175,11 +178,6 @@ function App() {
   const [models, setModels] = useState<string[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
-  const [usage, setUsage] = useState<Usage>({
-    inputTokens: 0,
-    outputTokens: 0,
-    cachedTokens: 0,
-  });
   const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -190,14 +188,9 @@ function App() {
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [homePath, setHomePath] = useState<string>("");
   const lastBalanceAt = useRef<number>(0);
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
-  const [activePath, setActivePath] = useState<string | null>(null);
-  const [diff, setDiff] = useState<DiffInfo | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [mcpTools, setMcpTools] = useState<string[]>([]);
   const [lastUsage, setLastUsage] = useState<ChatUsage | null>(null);
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [runningToolName, setRunningToolName] = useState<string | null>(null);
   const [gitInfo, setGitInfo] = useState<GitStatusInfo | null>(null);
 
   // Panel Resizing & Background Glassmorphism State
@@ -318,30 +311,28 @@ function App() {
     }, 4500);
   }, []);
 
-  // Chat history state (persisted in localStorage)
-  const sessionCostRef = useRef(0);
-  const sessionTokensRef = useRef<{ inputTokens: number; outputTokens: number; cachedTokens: number }>({
-    inputTokens: 0,
-    outputTokens: 0,
-    cachedTokens: 0,
-  });
-  const [sessionState, setSessionState] = useState(() => {
-    const s = initSessions();
-    const act = s.sessions.find((x) => x.id === s.activeId);
-    sessionCostRef.current = act?.totalCostUsd ?? 0;
-    sessionTokensRef.current = {
-      inputTokens: act?.inputTokens ?? 0,
-      outputTokens: act?.outputTokens ?? 0,
-      cachedTokens: act?.cachedTokens ?? 0,
-    };
-    return s;
-  });
+  // Chat history state (persisted in localStorage), workspace incluido por sesión.
+  const [sessionState, setSessionState] = useState(initSessions);
   const sessions = sessionState.sessions;
   const activeSessionId = sessionState.activeId;
   const [showHistory, setShowHistory] = useState(false);
-  const activeSessionIdRef = useRef<string | null>(activeSessionId);
   const sessionStateRef = useRef(sessionState);
   const saveTimerRef = useRef<number | null>(null);
+
+  const activeSession = activeSessionId
+    ? sessions.find((s) => s.id === activeSessionId) ?? null
+    : null;
+  const activeWorkspace: SessionWorkspaceState = activeSession?.workspace ?? defaultWorkspace();
+  const activeWorkspaceRef = useRef(activeWorkspace);
+  activeWorkspaceRef.current = activeWorkspace;
+
+  const folders = activeWorkspace.folders;
+  const openFiles = activeWorkspace.openFiles;
+  const activePath = activeWorkspace.activeFilePath;
+  const diff = activeWorkspace.diff ?? null;
+
+  const activeRuntime = useSessionRuntime(activeSessionId);
+  const busySessionIds = useBusySessionIds();
 
   // Apply theme on load and change
   useEffect(() => {
@@ -443,23 +434,43 @@ function App() {
     modelConfig?.visionEnabled ??
     (settings.model ? inferModelConfig(settings.model, settings.providerId).visionEnabled : false);
 
-  const requestConfig: ChatConfig = {
-    kind: preset.kind,
-    baseUrl: settings.baseUrl || preset.baseUrl,
-    model: settings.model,
-    apiKey: settings.apiKey,
-    reasoningEffort: modelConfig?.reasoningEnabled ? modelConfig.thinkingLevel : null,
-    maxOutputTokens: modelConfig?.maxOutputTokens ?? null,
-    temperature: null,
-    visionEnabled: isVisionActive,
-  };
+  const requestConfig: ChatConfig = useMemo(
+    () => ({
+      kind: preset.kind,
+      baseUrl: settings.baseUrl || preset.baseUrl,
+      model: settings.model,
+      apiKey: settings.apiKey,
+      reasoningEffort: modelConfig?.reasoningEnabled ? modelConfig.thinkingLevel : null,
+      maxOutputTokens: modelConfig?.maxOutputTokens ?? null,
+      temperature: null,
+      visionEnabled: isVisionActive,
+    }),
+    [
+      preset.kind,
+      preset.baseUrl,
+      settings.baseUrl,
+      settings.model,
+      settings.apiKey,
+      modelConfig,
+      isVisionActive,
+    ],
+  );
 
   const skillsContent = config.skills
     .map((s) => `### ${s.name}\n${s.content}`)
     .join("\n\n");
 
-  const costUsd = sessionCostRef.current > 0
-    ? sessionCostRef.current
+  // Uso y coste derivados de la sesión activa (los acumulados viven en la sesión).
+  const usage: Usage = activeSession
+    ? {
+        inputTokens: activeSession.inputTokens,
+        outputTokens: activeSession.outputTokens,
+        cachedTokens: activeSession.cachedTokens,
+      }
+    : ZERO_USAGE;
+
+  const costUsd = (activeSession?.totalCostUsd ?? 0) > 0
+    ? activeSession!.totalCostUsd
     : computeCostUsd(usage, modelConfig, settings.model, settings.providerId);
 
   const balanceBlocked =
@@ -473,9 +484,6 @@ function App() {
     localStorage.setItem("makora.settings", JSON.stringify(safeSettings));
   }, [settings]);
   useEffect(() => {
-    localStorage.setItem("makora.agentMode", agentMode);
-  }, [agentMode]);
-  useEffect(() => {
     localStorage.setItem("makora.isSplit", String(isSplit));
   }, [isSplit]);
   useEffect(() => {
@@ -484,28 +492,31 @@ function App() {
 
   const [connectionSuccess, setConnectionSuccess] = useState<string | null>(null);
 
-  const refreshBalance = async (force = false) => {
-    if (settings.providerId !== "deepseek" && settings.providerId !== "openrouter") {
-      setBalance(null);
-      return;
-    }
-    const now = Date.now();
-    if (!force && now - lastBalanceAt.current < 60_000) return;
-    lastBalanceAt.current = now;
-    setBalanceLoading(true);
-    try {
-      const b = await fetchBalance(
-        settings.providerId,
-        settings.baseUrl || preset.baseUrl,
-        settings.apiKey,
-      );
-      setBalance(b);
-    } catch {
-      setBalance(null);
-    } finally {
-      setBalanceLoading(false);
-    }
-  };
+  const refreshBalance = useCallback(
+    async (force = false) => {
+      if (settings.providerId !== "deepseek" && settings.providerId !== "openrouter") {
+        setBalance(null);
+        return;
+      }
+      const now = Date.now();
+      if (!force && now - lastBalanceAt.current < 60_000) return;
+      lastBalanceAt.current = now;
+      setBalanceLoading(true);
+      try {
+        const b = await fetchBalance(
+          settings.providerId,
+          settings.baseUrl || preset.baseUrl,
+          settings.apiKey,
+        );
+        setBalance(b);
+      } catch {
+        setBalance(null);
+      } finally {
+        setBalanceLoading(false);
+      }
+    },
+    [settings.providerId, settings.baseUrl, settings.apiKey, preset.baseUrl],
+  );
 
   const [injectedPrompt, setInjectedPrompt] = useState<string | null>(null);
 
@@ -565,6 +576,11 @@ function App() {
     sessionStateRef.current = sessionState;
   }, [sessionState]);
 
+  // Seed del store de streaming por cada sesión conocida (idempotente).
+  useEffect(() => {
+    sessions.forEach((s) => ensureSessionRuntime(s.id, s.messages));
+  }, [sessions]);
+
   // Flush pending writes when the window is hidden or closed.
   useEffect(() => {
     const flush = () => {
@@ -583,7 +599,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
     if (activeSessionId) persistActiveSessionId(activeSessionId);
   }, [activeSessionId]);
 
@@ -659,60 +674,110 @@ function App() {
       .catch((e) => console.warn("mcp:", e));
   }, [config.mcps]);
 
+  const updateActiveWorkspace = useCallback(
+    (
+      patch:
+        | Partial<SessionWorkspaceState>
+        | ((ws: SessionWorkspaceState) => SessionWorkspaceState),
+      targetSessionId?: string,
+    ) => {
+      setSessionState((prev) => {
+        const idToUpdate = targetSessionId || prev.activeId;
+        return {
+          ...prev,
+          sessions: prev.sessions.map((s) => {
+            if (s.id !== idToUpdate) return s;
+            const ws = s.workspace ?? defaultWorkspace();
+            const next = typeof patch === "function" ? patch(ws) : { ...ws, ...patch };
+            return { ...s, workspace: next };
+          }),
+        };
+      });
+    },
+    [],
+  );
 
-  const addFolder = async (pathOverride?: string) => {
-    if (pathOverride) {
-      if (!folders.includes(pathOverride)) setFolders((f) => [...f, pathOverride]);
-      return;
-    }
-    const p = await pickFolder();
-    if (p && !folders.includes(p)) setFolders((f) => [...f, p]);
-  };
+  // Sincroniza el estado (running/completed/error) de CADA sesión de forma aislada
+  const prevBusyMapRef = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    sessions.forEach((s) => {
+      const rt = getSessionRuntime(s.id);
+      const prev = prevBusyMapRef.current[s.id];
+      if (prev !== undefined && prev !== rt.busy) {
+        updateActiveWorkspace(
+          {
+            status: rt.busy ? "running" : rt.error ? "error" : "completed",
+          },
+          s.id,
+        );
+      }
+      prevBusyMapRef.current[s.id] = rt.busy;
+    });
+  }, [sessions, busySessionIds, updateActiveWorkspace]);
 
-  const newWorkspace = () => {
-    setFolders([]);
+  const addFolder = useCallback(
+    async (pathOverride?: string) => {
+      if (pathOverride) {
+        const ws = activeWorkspaceRef.current;
+        if (!ws.folders.includes(pathOverride)) {
+          updateActiveWorkspace({ folders: [...ws.folders, pathOverride] });
+        }
+        return;
+      }
+      const p = await pickFolder();
+      if (p) {
+        const ws = activeWorkspaceRef.current;
+        if (!ws.folders.includes(p)) {
+          updateActiveWorkspace({ folders: [...ws.folders, p] });
+        }
+      }
+    },
+    [updateActiveWorkspace],
+  );
+
+  const newWorkspace = useCallback(() => {
+    updateActiveWorkspace({ folders: [], openFiles: [], activeFilePath: null, diff: null });
     setWorkspaceName("Workspace");
-  };
+  }, [updateActiveWorkspace]);
 
-  const removeFolder = (path: string) =>
-    setFolders((f) => f.filter((x) => x !== path));
+  const removeFolder = useCallback(
+    (path: string) => {
+      updateActiveWorkspace((ws) => ({
+        ...ws,
+        folders: ws.folders.filter((x) => x !== path),
+      }));
+    },
+    [updateActiveWorkspace],
+  );
 
-  const addUsage = (u: ChatUsage) => {
-    sessionTokensRef.current = {
-      inputTokens: sessionTokensRef.current.inputTokens + u.inputTokens,
-      outputTokens: sessionTokensRef.current.outputTokens + u.outputTokens,
-      cachedTokens: sessionTokensRef.current.cachedTokens + u.cachedTokens,
-    };
-    setUsage({ ...sessionTokensRef.current });
-    setLastUsage(u);
-    refreshBalance();
-    const turnCost = computeCostUsd(u, modelConfig, settings.model, settings.providerId);
-    if (Number.isFinite(turnCost)) {
-      sessionCostRef.current += turnCost;
-    }
-    const id = activeSessionIdRef.current;
-    if (id) {
-      const inTok = sessionTokensRef.current.inputTokens;
-      const outTok = sessionTokensRef.current.outputTokens;
-      const cacheTok = sessionTokensRef.current.cachedTokens;
+  const addUsage = useCallback(
+    (id: string, u: ChatUsage, sessionModel?: string) => {
+      setLastUsage(u);
+      refreshBalance();
+      const usedModel = sessionModel || settings.model;
+      const turnCost = computeCostUsd(u, modelConfig, usedModel, settings.providerId);
       setSessionState((prev) => ({
         ...prev,
-        sessions: prev.sessions.map((s) =>
-          s.id === id
-            ? {
-                ...s,
-                inputTokens: inTok,
-                outputTokens: outTok,
-                cachedTokens: cacheTok,
-                totalTokens: inTok + outTok,
-                totalCostUsd: sessionCostRef.current,
-                updatedAt: Date.now(),
-              }
-            : s,
-        ),
+        sessions: prev.sessions.map((s) => {
+          if (s.id !== id) return s;
+          const inputTokens = (s.inputTokens ?? 0) + u.inputTokens;
+          const outputTokens = (s.outputTokens ?? 0) + u.outputTokens;
+          const cachedTokens = (s.cachedTokens ?? 0) + u.cachedTokens;
+          return {
+            ...s,
+            inputTokens,
+            outputTokens,
+            cachedTokens,
+            totalTokens: inputTokens + outputTokens,
+            totalCostUsd:
+              (s.totalCostUsd ?? 0) + (Number.isFinite(turnCost) ? turnCost : 0),
+            updatedAt: Date.now(),
+          };
+        }),
       }));
-    }
-  };
+    },
+    [modelConfig, settings.model, settings.providerId, refreshBalance],
+  );
 
   const isFileSafe = useCallback((path: string): boolean => {
     const ext = path.split(".").pop()?.toLowerCase() || "";
@@ -720,57 +785,80 @@ function App() {
     return !UNSAFE.includes(ext);
   }, []);
 
-  const openFile = useCallback(async (path: string) => {
-    const lower = path.toLowerCase();
-    // Image or PDF direct visualizers
-    if (/\.(png|jpg|jpeg|webp|gif|avif|pdf)$/i.test(lower)) {
-      setOpenFiles((fs) => {
-        if (fs.some((f) => f.path === path)) return fs;
-        return [...fs, { path, content: "", originalContent: "", isDirty: false }];
-      });
-      setActivePath(path);
-      return;
-    }
-
-    try {
-      const raw = await readTextFile(path);
-      const content = raw.replace(/\r\n/g, "\n");
-      setOpenFiles((fs) => {
-        if (fs.some((f) => f.path === path)) {
-          return fs.map((f) => (f.path === path ? { ...f, content, originalContent: content, isDirty: false } : f));
-        }
-        return [...fs, { path, content, originalContent: content, isDirty: false }];
-      });
-      setActivePath(path);
-    } catch (e) {
-      setOpenFiles((fs) => [...fs.filter((f) => f.path !== path), { path, content: String(e), isDirty: false }]);
-      setActivePath(path);
-    }
-  }, []);
-
-  const handleDroppedPath = useCallback((droppedPath: string) => {
-    if (!droppedPath) return;
-    if (!isFileSafe(droppedPath)) {
-      const baseName = droppedPath.split(/[\\/]/).pop() || droppedPath;
-      showToast(`${t.dragDrop.unsafeFileWarning} (${baseName})`, "warning");
-      return;
-    }
-
-    const ext = droppedPath.split(".").pop()?.toLowerCase() || "";
-    if (ext && ext.length <= 8) {
-      openFile(droppedPath);
-      const baseName = droppedPath.split(/[\\/]/).pop() || droppedPath;
-      showToast(`${t.dragDrop.openedFile} ${baseName}`, "info");
-    } else {
-      // Treat as directory
-      if (!folders.includes(droppedPath)) {
-        setFolders((f) => [...f, droppedPath]);
-        showToast(`📁 Carpeta añadida al workspace: ${droppedPath.split(/[\\/]/).pop()}`, "info");
+  const openFile = useCallback(
+    async (path: string) => {
+      const lower = path.toLowerCase();
+      // Image or PDF direct visualizers
+      if (/\.(png|jpg|jpeg|webp|gif|avif|pdf)$/i.test(lower)) {
+        updateActiveWorkspace((ws) => {
+          if (ws.openFiles.some((f) => f.path === path)) {
+            return { ...ws, activeFilePath: path };
+          }
+          return {
+            ...ws,
+            openFiles: [...ws.openFiles, { path, content: "", originalContent: "", isDirty: false }],
+            activeFilePath: path,
+          };
+        });
+        return;
       }
-    }
-  }, [folders, isFileSafe, openFile, showToast, t]);
 
-  // Initial CLI Argument file open ("Abrir con... MakoraIDE")
+      try {
+        const raw = await readTextFile(path);
+        const content = raw.replace(/\r\n/g, "\n");
+        updateActiveWorkspace((ws) => {
+          const exists = ws.openFiles.some((f) => f.path === path);
+          return {
+            ...ws,
+            openFiles: exists
+              ? ws.openFiles.map((f) =>
+                  f.path === path ? { ...f, content, originalContent: content, isDirty: false } : f,
+                )
+              : [...ws.openFiles, { path, content, originalContent: content, isDirty: false }],
+            activeFilePath: path,
+          };
+        });
+      } catch (e) {
+        updateActiveWorkspace((ws) => ({
+          ...ws,
+          openFiles: [
+            ...ws.openFiles.filter((f) => f.path !== path),
+            { path, content: String(e), isDirty: false },
+          ],
+          activeFilePath: path,
+        }));
+      }
+    },
+    [updateActiveWorkspace],
+  );
+
+  const handleDroppedPath = useCallback(
+    (droppedPath: string) => {
+      if (!droppedPath) return;
+      if (!isFileSafe(droppedPath)) {
+        const baseName = droppedPath.split(/[\\/]/).pop() || droppedPath;
+        showToast(`${t.dragDrop.unsafeFileWarning} (${baseName})`, "warning");
+        return;
+      }
+
+      const ext = droppedPath.split(".").pop()?.toLowerCase() || "";
+      if (ext && ext.length <= 8) {
+        openFile(droppedPath);
+        const baseName = droppedPath.split(/[\\/]/).pop() || droppedPath;
+        showToast(`${t.dragDrop.openedFile} ${baseName}`, "info");
+      } else {
+        // Treat as directory
+        const ws = activeWorkspaceRef.current;
+        if (!ws.folders.includes(droppedPath)) {
+          updateActiveWorkspace({ folders: [...ws.folders, droppedPath] });
+          showToast(`📁 Carpeta añadida al workspace: ${droppedPath.split(/[\\/]/).pop()}`, "info");
+        }
+      }
+    },
+    [isFileSafe, openFile, showToast, t, updateActiveWorkspace],
+  );
+
+  // Initial CLI Argument file open ("Abrir con..." MakoraIDE)
   useEffect(() => {
     getInitialFile().then((initPath) => {
       if (initPath && isFileSafe(initPath)) {
@@ -809,78 +897,119 @@ function App() {
     };
   }, [handleDroppedPath]);
 
-  const closeFile = useCallback((path: string) => {
-    setOpenFiles((fs) => {
-      const next = fs.filter((f) => f.path !== path);
-      if (activePath === path) {
-        const remaining = next.length > 0 ? next[next.length - 1].path : null;
-        setActivePath(remaining);
-      }
-      return next;
-    });
-    setDiff((d) => (d && activePath === path ? null : d));
-  }, [activePath]);
+  const closeFile = useCallback(
+    (path: string) => {
+      updateActiveWorkspace((ws) => {
+        const next = ws.openFiles.filter((f) => f.path !== path);
+        const activeFilePath =
+          ws.activeFilePath === path
+            ? next.length > 0
+              ? next[next.length - 1].path
+              : null
+            : ws.activeFilePath;
+        return {
+          ...ws,
+          openFiles: next,
+          activeFilePath,
+          diff: ws.activeFilePath === path ? null : ws.diff,
+        };
+      });
+    },
+    [updateActiveWorkspace],
+  );
 
-  const updateFileContent = (path: string, content: string) => {
-    const normalized = content.replace(/\r\n/g, "\n");
-    setOpenFiles((fs) =>
-      fs.map((f) => {
-        if (f.path === path) {
-          const orig = f.originalContent !== undefined ? f.originalContent.replace(/\r\n/g, "\n") : undefined;
+  const updateFileContent = useCallback(
+    (path: string, content: string) => {
+      const normalized = content.replace(/\r\n/g, "\n");
+      updateActiveWorkspace((ws) => ({
+        ...ws,
+        openFiles: ws.openFiles.map((f) => {
+          if (f.path !== path) return f;
+          const orig =
+            f.originalContent !== undefined ? f.originalContent.replace(/\r\n/g, "\n") : undefined;
           const isDirty = orig !== undefined ? normalized !== orig : false;
           return { ...f, content: normalized, isDirty };
-        }
-        return f;
-      }),
-    );
-  };
+        }),
+      }));
+    },
+    [updateActiveWorkspace],
+  );
 
-  const saveFile = async (path: string) => {
-    const file = openFiles.find((f) => f.path === path);
-    if (!file) return;
-    try {
-      await writeFile(effectiveFolders, path, file.content);
-      setOpenFiles((fs) =>
-        fs.map((f) => (f.path === path ? { ...f, originalContent: file.content, isDirty: false } : f)),
-      );
-      setRefreshTick((t) => t + 1);
-    } catch (e) {
-      console.warn("save file:", e);
-    }
-  };
+  const saveFile = useCallback(
+    async (path: string) => {
+      const ws = activeWorkspaceRef.current;
+      const file = ws.openFiles.find((f) => f.path === path);
+      if (!file) return;
+      try {
+        const effFolders = ws.folders.length > 0 ? ws.folders : homePath ? [homePath] : [];
+        await writeFile(effFolders, path, file.content);
+        updateActiveWorkspace((ws2) => ({
+          ...ws2,
+          openFiles: ws2.openFiles.map((f) =>
+            f.path === path ? { ...f, originalContent: file.content, isDirty: false } : f,
+          ),
+        }));
+        setRefreshTick((t) => t + 1);
+      } catch (e) {
+        console.warn("save file:", e);
+      }
+    },
+    [homePath, updateActiveWorkspace],
+  );
 
-  const applyArtifact = async (path: string, content: string) => {
-    try {
-      const normalized = content.replace(/\r\n/g, "\n");
-      const old = await writeFile(effectiveFolders, path, normalized);
-      setDiff({ before: old ?? "", after: normalized });
-      setOpenFiles((fs) =>
-        fs.some((f) => f.path === path)
-          ? fs.map((f) => (f.path === path ? { ...f, content: normalized, originalContent: normalized, isDirty: false } : f))
-          : [...fs, { path, content: normalized, originalContent: normalized, isDirty: false }],
-      );
-      setActivePath(path);
-      setRefreshTick((t) => t + 1);
-    } catch (e) {
-      console.warn("apply artifact:", e);
-    }
-  };
+  const applyArtifact = useCallback(
+    async (path: string, content: string) => {
+      try {
+        const normalized = content.replace(/\r\n/g, "\n");
+        const ws = activeWorkspaceRef.current;
+        const effFolders = ws.folders.length > 0 ? ws.folders : homePath ? [homePath] : [];
+        const old = await writeFile(effFolders, path, normalized);
+        updateActiveWorkspace((ws2) => ({
+          ...ws2,
+          openFiles: ws2.openFiles.some((f) => f.path === path)
+            ? ws2.openFiles.map((f) =>
+                f.path === path
+                  ? { ...f, content: normalized, originalContent: normalized, isDirty: false }
+                  : f,
+              )
+            : [
+                ...ws2.openFiles,
+                { path, content: normalized, originalContent: normalized, isDirty: false },
+              ],
+          activeFilePath: path,
+          diff: { before: old ?? "", after: normalized },
+        }));
+        setRefreshTick((t) => t + 1);
+      } catch (e) {
+        console.warn("apply artifact:", e);
+      }
+    },
+    [homePath, updateActiveWorkspace],
+  );
 
-  const revertDiff = async () => {
-    if (!diff || !activePath) return;
+  const revertDiff = useCallback(async () => {
+    const ws = activeWorkspaceRef.current;
+    const d = ws.diff ?? null;
+    const path = ws.activeFilePath;
+    if (!d || !path) return;
     try {
-      const beforeNormalized = diff.before.replace(/\r\n/g, "\n");
-      await writeFile(effectiveFolders, activePath, beforeNormalized);
-      setDiff({ before: diff.after, after: diff.before });
-      setOpenFiles((fs) =>
-        fs.map((f) => (f.path === activePath ? { ...f, content: beforeNormalized, originalContent: beforeNormalized, isDirty: false } : f)),
-      );
+      const beforeNormalized = d.before.replace(/\r\n/g, "\n");
+      const effFolders = ws.folders.length > 0 ? ws.folders : homePath ? [homePath] : [];
+      await writeFile(effFolders, path, beforeNormalized);
+      updateActiveWorkspace((ws2) => ({
+        ...ws2,
+        openFiles: ws2.openFiles.map((f) =>
+          f.path === path
+            ? { ...f, content: beforeNormalized, originalContent: beforeNormalized, isDirty: false }
+            : f,
+        ),
+        diff: { before: d.after, after: d.before },
+      }));
       setRefreshTick((t) => t + 1);
     } catch (e) {
       console.warn("revert:", e);
     }
-  };
-
+  }, [homePath, updateActiveWorkspace]);
 
   const updateModelConfig = (patch: Partial<ModelConfig>) => {
     if (!settings.model) return;
@@ -907,58 +1036,55 @@ function App() {
     });
   };
 
-  const activeSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId) ?? null
-    : null;
+  const persistTranscript = useCallback(
+    (id: string, messages: ChatMessage[], sessionModel?: string) => {
+      if (!id) return;
+      const cleaned = sanitizeMessages(messages);
+      setSessionState((prev) => {
+        const target = prev.sessions.find((s) => s.id === id);
+        if (!target) return prev;
+        const title =
+          !target.title || target.title === "Nueva Conversación"
+            ? deriveTitle(cleaned)
+            : target.title;
+        const updated: ChatSession = {
+          ...target,
+          model: sessionModel || target.model || settings.model,
+          title,
+          updatedAt: Date.now(),
+          messageCount: cleaned.length,
+          messages: cleaned,
+        };
+        // Actualización in-place: las pestañas no se reordenan.
+        return {
+          ...prev,
+          sessions: prev.sessions.map((s) => (s.id === id ? updated : s)),
+        };
+      });
+    },
+    [settings.model],
+  );
 
-  const persistTranscript = useCallback((messages: ChatMessage[]) => {
-    const id = activeSessionIdRef.current;
-    if (!id) return;
-    const cleaned = sanitizeMessages(messages);
+  const handleNewSession = useCallback(() => {
     setSessionState((prev) => {
-      const target = prev.sessions.find((s) => s.id === id);
-      if (!target) return prev;
-      const title =
-        !target.title || target.title === "Nueva Conversación"
-          ? deriveTitle(cleaned)
-          : target.title;
-      const inTok = sessionTokensRef.current.inputTokens || target.inputTokens || 0;
-      const outTok = sessionTokensRef.current.outputTokens || target.outputTokens || 0;
-      const cacheTok = sessionTokensRef.current.cachedTokens || target.cachedTokens || 0;
-      const updated: ChatSession = {
-        ...target,
-        model: settings.model || target.model,
-        title,
-        updatedAt: Date.now(),
-        messageCount: cleaned.length,
-        messages: cleaned,
-        totalCostUsd: sessionCostRef.current,
-        inputTokens: inTok,
-        outputTokens: outTok,
-        cachedTokens: cacheTok,
-        totalTokens: inTok + outTok,
-      };
+      const current = prev.sessions.find((s) => s.id === prev.activeId);
+      if (current && current.messages.length === 0) {
+        return prev;
+      }
+      const inheritFolders = [...activeWorkspaceRef.current.folders];
+      const fresh = makeSession(settings.model || "", {
+        folders: inheritFolders,
+        openFiles: [],
+        activeFilePath: null,
+        status: "idle",
+        diff: null,
+      });
       return {
-        ...prev,
-        sessions: [updated, ...prev.sessions.filter((s) => s.id !== id)],
+        sessions: [fresh, ...prev.sessions],
+        activeId: fresh.id,
       };
     });
   }, [settings.model]);
-
-  const handleNewSession = useCallback(() => {
-    if (agentBusy) {
-      showToast(t.chat.agentBusyBlock, "warning");
-      return;
-    }
-    const fresh = makeSession(settings.model || "");
-    sessionCostRef.current = 0;
-    sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    setUsage(sessionTokensRef.current);
-    setSessionState((prev) => ({
-      sessions: [fresh, ...prev.sessions],
-      activeId: fresh.id,
-    }));
-  }, [settings.model, agentBusy, showToast, t]);
 
   const handleOpenSession = useCallback(
     (id: string) => {
@@ -966,55 +1092,31 @@ function App() {
         setShowHistory(false);
         return;
       }
-      if (agentBusy) {
-        showToast(t.chat.agentBusyBlock, "warning");
-        return;
-      }
       const target = sessions.find((s) => s.id === id);
       if (!target) return;
-      sessionCostRef.current = target.totalCostUsd ?? 0;
-      sessionTokensRef.current = {
-        inputTokens: target.inputTokens ?? 0,
-        outputTokens: target.outputTokens ?? 0,
-        cachedTokens: target.cachedTokens ?? 0,
-      };
-      setUsage(sessionTokensRef.current);
       setSessionState((prev) => ({ ...prev, activeId: id }));
       setShowHistory(false);
     },
-    [sessions, activeSessionId, agentBusy, showToast, t],
+    [sessions, activeSessionId],
   );
 
   const handleDeleteSession = useCallback(
     (id: string) => {
-      if (agentBusy) {
-        showToast(t.chat.agentBusyBlock, "warning");
-        return;
-      }
-      const remaining = sessions.filter((s) => s.id !== id);
-      if (activeSessionId !== id) {
-        setSessionState((prev) => ({ ...prev, sessions: remaining }));
-        return;
-      }
-      if (remaining.length > 0) {
-        const nextActive = remaining[0];
-        sessionCostRef.current = nextActive.totalCostUsd ?? 0;
-        sessionTokensRef.current = {
-          inputTokens: nextActive.inputTokens ?? 0,
-          outputTokens: nextActive.outputTokens ?? 0,
-          cachedTokens: nextActive.cachedTokens ?? 0,
-        };
-        setUsage(sessionTokensRef.current);
-        setSessionState({ sessions: remaining, activeId: nextActive.id });
-      } else {
+      cancelTurn(id);
+      destroySessionRuntime(id);
+      setSessionState((prev) => {
+        const remaining = prev.sessions.filter((s) => s.id !== id);
+        if (prev.activeId !== id) {
+          return { ...prev, sessions: remaining };
+        }
+        if (remaining.length > 0) {
+          return { sessions: remaining, activeId: remaining[0].id };
+        }
         const fresh = makeSession(settings.model || "");
-        sessionCostRef.current = 0;
-        sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-        setUsage(sessionTokensRef.current);
-        setSessionState({ sessions: [fresh], activeId: fresh.id });
-      }
+        return { sessions: [fresh], activeId: fresh.id };
+      });
     },
-    [sessions, activeSessionId, settings.model, agentBusy, showToast, t],
+    [settings.model],
   );
 
   const handleRenameSession = useCallback((id: string, title: string) => {
@@ -1027,16 +1129,25 @@ function App() {
   }, []);
 
   const handleClearSessions = useCallback(() => {
-    if (agentBusy) {
-      showToast(t.chat.agentBusyBlock, "warning");
+    sessions.forEach((s) => {
+      cancelTurn(s.id);
+      destroySessionRuntime(s.id);
+    });
+    const fresh = makeSession(settings.model || "");
+    setSessionState({ sessions: [fresh], activeId: fresh.id });
+  }, [sessions, settings.model]);
+
+  // Terminal: el cwd se fija al abrir el terminal en el workspace activo de ese momento.
+  const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
+  const toggleTerminal = useCallback(() => {
+    if (terminalOpen) {
+      setTerminalOpen(false);
       return;
     }
-    const fresh = makeSession(settings.model || "");
-    sessionCostRef.current = 0;
-    sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    setUsage(sessionTokensRef.current);
-    setSessionState({ sessions: [fresh], activeId: fresh.id });
-  }, [settings.model, agentBusy, showToast, t]);
+    const ws = activeWorkspaceRef.current;
+    setTerminalCwd(ws.folders[0] || homePath || null);
+    setTerminalOpen(true);
+  }, [terminalOpen, homePath]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -1051,7 +1162,7 @@ function App() {
         setExplorerOpen((prev) => !prev);
       } else if (isCmdOrCtrl && (e.key.toLowerCase() === "j" || e.key === "`")) {
         e.preventDefault();
-        setTerminalOpen((prev) => !prev);
+        toggleTerminal();
       } else if (isCmdOrCtrl && e.key === ",") {
         e.preventDefault();
         setShowSettings((prev) => !prev);
@@ -1071,43 +1182,67 @@ function App() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [activePath, closeFile]);
+  }, [activePath, closeFile, toggleTerminal]);
 
-  // Chat Element instance to pass into Workspace
-  const chatNode = (
-    <Chat
-      key={activeSessionId ?? "new"}
-      config={requestConfig}
-      ready={settings.model !== ""}
-      folders={effectiveFolders}
-      skillsContent={skillsContent}
-      thinkingLevel={thinkingLevel}
-      onSelectThinkingLevel={(t) => updateModelConfig({ thinkingLevel: t })}
-      models={models}
-      activeModel={settings.model}
-      onSelectModel={(m) => setSettings((s) => ({ ...s, model: m }))}
-      includeWorkspace={config.context.includeWorkspace}
-      visionEnabled={modelConfig?.visionEnabled ?? false}
-      blocked={balanceBlocked}
-      blockReason={blockReason}
-      agentMode={agentMode}
-      onToggleMode={setAgentMode}
-      modelConfig={modelConfig}
-      providerId={settings.providerId}
-      onUsage={addUsage}
-      onApplyArtifact={applyArtifact}
-      onStatusChange={(busy, tool) => {
-        setAgentBusy(busy);
-        setRunningToolName(tool);
-      }}
-      onClearSessionTrigger={handleNewSession}
-      initialTranscript={activeSession?.messages ?? []}
-      onTranscriptChange={persistTranscript}
-      injectedPrompt={injectedPrompt}
-      onClearInjectedPrompt={() => setInjectedPrompt(null)}
-    />
-  );
+  // Chat Element instance to pass into Workspace (memoized; survives re-renders).
+  const chatNode = useMemo(() => {
+    if (!activeSessionId) return null;
+    return (
+      <Chat
+        key={activeSessionId}
+        sessionId={activeSessionId}
+        config={requestConfig}
+        ready={settings.model !== ""}
+        folders={effectiveFolders}
+        skillsContent={skillsContent}
+        thinkingLevel={thinkingLevel}
+        onSelectThinkingLevel={(t) => updateModelConfig({ thinkingLevel: t })}
+        models={models}
+        activeModel={settings.model}
+        onSelectModel={(m) => setSettings((s) => ({ ...s, model: m }))}
+        includeWorkspace={config.context.includeWorkspace}
+        visionEnabled={modelConfig?.visionEnabled ?? false}
+        blocked={balanceBlocked}
+        blockReason={blockReason}
+        agentMode={activeWorkspace.agentMode ?? "act"}
+        onToggleMode={(mode) => updateActiveWorkspace((w) => ({ ...w, agentMode: mode }), activeSessionId)}
+        multiAgentMode={activeWorkspace.multiAgentMode ?? "auto"}
+        onToggleMultiAgentMode={(mam) => updateActiveWorkspace((w) => ({ ...w, multiAgentMode: mam }), activeSessionId)}
+        modelConfig={modelConfig}
+        providerId={settings.providerId}
+        onUsage={(u) => addUsage(activeSessionId, u, settings.model)}
+        onApplyArtifact={applyArtifact}
+        onClearSessionTrigger={handleNewSession}
+        onTranscriptChange={(m) => persistTranscript(activeSessionId, m, settings.model)}
+        injectedPrompt={injectedPrompt}
+        onClearInjectedPrompt={() => setInjectedPrompt(null)}
+      />
+    );
+  }, [
+    activeSessionId,
+    requestConfig,
+    settings.model,
+    effectiveFolders,
+    skillsContent,
+    thinkingLevel,
+    models,
+    config.context.includeWorkspace,
+    modelConfig,
+    balanceBlocked,
+    blockReason,
+    activeWorkspace.agentMode,
+    activeWorkspace.multiAgentMode,
+    settings.providerId,
+    addUsage,
+    applyArtifact,
+    handleNewSession,
+    persistTranscript,
+    injectedPrompt,
+    updateActiveWorkspace,
+  ]);
 
+  const agentBusy = activeRuntime.busy;
+  const runningToolName = activeRuntime.runningTool;
 
   const showLeftSidebar = explorerOpen && !zenMode;
   const showRightPanel = panelOpen && !zenMode;
@@ -1198,7 +1333,7 @@ function App() {
         onSelectSession={handleOpenSession}
         onNewSession={handleNewSession}
         onCloseSession={handleDeleteSession}
-        runningSessionIds={new Set(agentBusy ? [activeSessionId] : [])}
+        runningSessionIds={busySessionIds}
       />
 
       <div className="layout-root">
@@ -1229,7 +1364,7 @@ function App() {
           <UnifiedWorkspace
             openFiles={openFiles}
             activePath={activePath}
-            onActivateFile={setActivePath}
+            onActivateFile={(path) => updateActiveWorkspace({ activeFilePath: path })}
             onCloseFile={closeFile}
             onUpdateContent={updateFileContent}
             onSaveFile={saveFile}
@@ -1244,7 +1379,7 @@ function App() {
             chatElement={chatNode}
             onNewChat={handleNewSession}
             onAskAgent={(prompt) => {
-              setActivePath(null);
+              updateActiveWorkspace({ activeFilePath: null });
               setInjectedPrompt(prompt);
             }}
           />
@@ -1258,7 +1393,7 @@ function App() {
               />
               <div className="bottom-terminal-drawer" style={{ height: `${terminalHeight}px` }}>
                 <TerminalPanel
-                  cwd={effectiveFolders[0] || homePath || null}
+                  cwd={terminalCwd}
                   currentTheme={theme}
                   onCollapse={() => setTerminalOpen(false)}
                 />
@@ -1317,7 +1452,7 @@ function App() {
         costUsd={costUsd}
         currentTheme={theme}
         onCycleTheme={cycleTheme}
-        onToggleTerminal={() => setTerminalOpen((prev) => !prev)}
+        onToggleTerminal={toggleTerminal}
         onOpenPalette={() => setShowPalette(true)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenGit={() => setShowGitModal(true)}
@@ -1330,13 +1465,13 @@ function App() {
         folders={effectiveFolders}
         onOpenFile={openFile}
         onSelectTheme={setTheme}
-        onToggleTerminal={() => setTerminalOpen((prev) => !prev)}
+        onToggleTerminal={toggleTerminal}
         onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenOnboarding={() => setShowOnboarding(true)}
         onOpenGit={() => setShowGitModal(true)}
         onOpenAnalytics={() => setShowAnalyticsModal(true)}
-        onToggleMode={() => setAgentMode((m) => (m === "act" ? "plan" : "act"))}
+        onToggleMode={() => updateActiveWorkspace((w) => ({ ...w, agentMode: w.agentMode === "plan" ? "act" : "plan" }))}
         onAddFolder={() => addFolder()}
         onNewWorkspace={newWorkspace}
         onClearChat={handleNewSession}
@@ -1426,4 +1561,3 @@ function App() {
 }
 
 export default App;
-

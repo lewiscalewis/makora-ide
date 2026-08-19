@@ -66,6 +66,33 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   1. **Motor de Temas CSS Dinámico:** 5 temas Makora (`Makora Void`, `Makora Obsidian Emerald`, `Makora Tokyo Night`, `Makora Solar Flare`, `Makora Synthwave 84`) mediante CSS Custom Properties reactivas inyectadas en `document.documentElement` y sincronizadas en xterm.js, CodeMirror, markdown y menús con persistencia en `localStorage`.
   2. **Command Palette (`Ctrl+P` / `Ctrl+K`):** Spotlight flotante con búsqueda difusa en archivos de todos los workspaces (`searchPaths`) y catálogo de comandos de navegación y configuración.
   3. **Status Bar Inferior:** Barra de estado permanente que ancla la interfaz, mostrando el estado del workspace, estado de actividad del agente (Listo / Ejecutando / Pensando), badge de modelo, métricas de tokens y coste en vivo, toggle de terminal y selector de tema.
-  4. **Editor CodeMirror con Guardado (`Ctrl+S`):** Modo editable con detección de cambios no guardados (`isDirty` dot) y guardado directo en disco con `writeFile`.
-  5. **Terminal PTY Conectada a Workspace:** `term_spawn` hereda el directorio raíz del workspace activo del usuario.
+   4. **Editor CodeMirror con Guardado (`Ctrl+S`):** Modo editable con detección de cambios no guardados (`isDirty` dot) y guardado directo en disco con `writeFile`.
+   5. **Terminal PTY Conectada a Workspace:** `term_spawn` hereda el directorio raíz del workspace activo del usuario.
+
+## ADR-017 — Concurrencia por sesión: chatId end-to-end + SessionRuntimeStore + workspace por sesión + orquestación multiagente (2026-08-19)
+
+- **Problema:** `agentBusy` booleano global (App.tsx) y `CANCEL: AtomicBool` global (agent.rs) impedían cambiar de sesión con un stream en curso; los eventos (`chat-delta-event`, `tool-*`, `thinking-delta`) se emitían sin id y dos sesiones concurrentes se contaminaban; `persistTranscript`/`addUsage` escribían en la sesión activa *en el momento de terminar* (corrupción); el `session_id` de historial derivaba del path del workspace (colisiones); el workspace (folders/editor/diff) era global.
+- **Decisión:**
+  1. **`chatId` end-to-end:** el id de sesión del frontend viaja en `chat`, `run_multiagent_plan`, `chat_cancel(chatId)` y en TODOS los payloads de eventos (`ChatDeltaEvent.chat_id`, `ThinkingDelta.chat_id`, `ToolStart/ToolOutput/ToolEnd.chat_id`, `MultiAgentPlanEvent.chat_id`). El frontend filtra todo por `chatId`.
+  2. **Cancelación por chat en backend:** `agent.rs` sustituye el `AtomicBool` global por `CANCELLED: HashSet<String>` (`cancel_chat`/`clear_cancel`/`is_chat_cancelled`); `run()` y `run_multiagent()` limpian su bandera al inicio. `run_bash` espera el hijo con polling de 300 ms y **mata el proceso bash al cancelar** (además del timeout de 60 s).
+  3. **SessionRuntimeStore (frontend):** `src/sessionStore.ts` — store externo por sesión (`useSyncExternalStore`) que posee transcript/UI/busy/activities/thinking/plan; el enrutado de eventos es módulo-nivel (sobrevive al cambio de pestaña); `Chat` pasa a ser **vista pura** (input/adjuntos/menús locales, todo lo demás del store). Sin `globalStreamActive`, sin "safety net" de desmontaje.
+  4. **Persistencia correcta:** `addUsage(id, usage)` y `persistTranscript(id, messages)` reciben el id explícito y actualizan la sesión **in-place** (las pestañas no se reordenan; `saveSessions` conserva el orden del array).
+  5. **Workspace por sesión (Fase 2):** `ChatSession.workspace?: SessionWorkspaceState` (folders, openFiles, activeFilePath, status, diff) sanitizado y persistido en `makora.sessions.v1`; explorador/editor/diff/terminal y git operan sobre la rebanada de la sesión activa; las sesiones nuevas heredan las carpetas de la activa. El cwd del terminal se fija al abrirlo (no se regenera al cambiar de pestaña).
+  6. **Multiagente dinámico (Fase 3):** comando `run_multiagent_plan(chatId, objective)` ejecuta `MultiAgentPlanState` (Explorer → Coder → Tester → Reviewer) con toolset restringido por rol, briefing condensado entre pasos (≤600 chars), eventos `multiagent-plan-event` scoped por chatId y panel de supervisión en el Chat (toggle "Multi").
+  7. **Sesión nueva por defecto:** `initSessions()` ya no restaura la última activa; crea una sesión nueva (migrando las carpetas globales previas) y las pestañas conservan su orden entre recargas.
+  8. **Historial:** `session_id` de SQLite deriva del `chatId` (FNV-1a); `with_conn` usa `busy_timeout` de 2 s para escrituras concurrentes (WAL).
+- **Riesgos aceptados:** la concurrencia real multiplica llamadas/tokens simultáneos (vigilar límites del proveedor); SQLite sigue tolerando errores silenciosos en checkpoints si dos turnos coinciden al ms.
+
+## ADR-018 — Robustecimiento del motor Multi-Agente y Aislamiento Concurrente Multisesión (2026-08-19)
+
+- **Problema:**
+  1. En `run_multiagent`, los 4 subagentes emitían eventos de streaming directamente al `chat_id` principal, concatenando de forma caótica las reflexiones intermedias en el chat del usuario; la respuesta final descartaba la labor del Coder y solo guardaba la frase final del Revisor.
+  2. En ejecución multisesión concurrente, al cambiar de pestaña mientras una sesión trabajaba, `persistTranscript` y `addUsage` leían `settings.model` de la pestaña activa en pantalla, sobreescribiendo el modelo de la sesión en segundo plano. El detector de ocupación solo evaluaba `activeSessionId`, congelando las sesiones en segundo plano en estado `running` permanente.
+- **Decisión:**
+  1. **Aislamiento de flujo de subagentes:** Los subagentes intermedios operan con ID con prefijo (`{chat_id}__sub_{step_index}`) para no contaminar el stream del usuario, mientras que sus herramientas (`tool-start`/`tool-end`) siguen asociadas al `chat_id` base para visualización interactiva en tiempo real.
+  2. **Fase 5 de Síntesis del Orquestador:** Se añadió una fase maestra final donde el Orquestador toma el briefing consolidado de todos los subagentes y genera una respuesta completa, estructurada y en streaming limpio hacia la ventana de chat.
+  3. **Aislamiento multisesión en `App.tsx`:** `updateActiveWorkspace` admite `targetSessionId` explícito; el hook de supervisión monitoriza el estado de cada sesión individualmente; `persistTranscript` y `addUsage` vinculan el modelo inmutable de cada sesión.
+  4. **Corrección visual de selector de modelos:** Unificación y estilización del dropdown popover (`bottom-up`, glassmorphic dark theme, buscador con iconos e interactividad fluida).
+
+
 

@@ -94,6 +94,7 @@ pub struct ChatResult {
 #[derive(Clone, serde::Serialize, Type, Event)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatDeltaEvent {
+    pub chat_id: String,
     pub text: String,
 }
 
@@ -353,15 +354,32 @@ async fn chat(
     system: String,
     messages: Vec<ChatMessage>,
     folders: Vec<String>,
+    chat_id: String,
 ) -> Result<ChatResult, String> {
     let folders = effective_folders(folders);
-    agent::run(&app, &config, &system, &messages, &folders, &MCP).await
+    agent::run(&app, &config, &chat_id, &system, &messages, &folders, &MCP).await
 }
 
 #[tauri::command]
 #[specta::specta]
-fn chat_cancel() {
-    agent::cancel();
+fn chat_cancel(chat_id: String) {
+    agent::cancel_chat(&chat_id);
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn run_multiagent_plan(
+    app: AppHandle,
+    config: ChatConfig,
+    system: String,
+    messages: Vec<ChatMessage>,
+    folders: Vec<String>,
+    chat_id: String,
+    objective: String,
+) -> Result<ChatResult, String> {
+    let folders = effective_folders(folders);
+    agent::run_multiagent(&app, &config, &chat_id, &system, &messages, &folders, &objective, &MCP)
+        .await
 }
 
 #[tauri::command]
@@ -1207,6 +1225,7 @@ pub fn run() {
             list_models,
             chat,
             chat_cancel,
+            run_multiagent_plan,
             create_multiagent_plan,
             mcp_configure,
             fetch_balance,
@@ -1242,7 +1261,7 @@ pub fn run() {
             get_initial_file,
             check_beta_validity
         ])
-        .events(collect_events![StreamEvent, ChatDeltaEvent]);
+        .events(collect_events![StreamEvent, ChatDeltaEvent, multiagent::MultiAgentPlanEvent]);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

@@ -11,6 +11,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
 import { Edit3, Lock, Save, RotateCcw, FileCode } from "lucide-react";
+import { useI18n } from "../i18n";
 
 import type { DiffInfo, OpenFile } from "../types";
 
@@ -133,13 +134,13 @@ export default function EditorPanel({
   onUpdateContent,
   onSaveFile,
 }: EditorPanelProps) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<"code" | "diff">("code");
   const [isEditable, setIsEditable] = useState(true);
   const active = files.find((f) => f.path === activePath) ?? null;
 
   const lineCount = active ? active.content.split("\n").length : 0;
   const charCount = active ? active.content.length : 0;
-
 
   return (
     <div className="editor-panel">
@@ -148,10 +149,10 @@ export default function EditorPanel({
         <div className="sub-bar-left">
           <FileCode size={13} className="text-cyan" />
           <span className="breadcrumb-path" title={active?.path || ""}>
-            {active?.path || "Ningún archivo abierto"}
+            {active?.path || t.workspace.emptyEditorHint}
           </span>
           {active?.isDirty && (
-            <span className="dirty-badge">● Modificado</span>
+            <span className="dirty-badge">● {t.workspace.unsavedChanges}</span>
           )}
         </div>
 
@@ -161,20 +162,20 @@ export default function EditorPanel({
               <button
                 className={`action-pill ${isEditable ? "active" : ""}`}
                 onClick={() => setIsEditable(!isEditable)}
-                title={isEditable ? "Modo Edición activo (Ctrl+S para guardar)" : "Modo Solo Lectura"}
+                title={isEditable ? t.editor.saveFile : t.common.view}
               >
                 {isEditable ? <Edit3 size={11} /> : <Lock size={11} />}
-                <span>{isEditable ? "Editable" : "Lectura"}</span>
+                <span>{isEditable ? t.common.edit : t.common.view}</span>
               </button>
 
               {active.isDirty && onSaveFile && (
                 <button
                   className="btn btn-save"
                   onClick={() => onSaveFile(active.path)}
-                  title="Guardar archivo (Ctrl+S)"
+                  title={t.editor.saveFile}
                 >
                   <Save size={11} />
-                  <span>Guardar</span>
+                  <span>{t.editor.save}</span>
                 </button>
               )}
             </div>
@@ -187,20 +188,20 @@ export default function EditorPanel({
                   className={`seg-btn ${mode === "code" ? "active" : ""}`}
                   onClick={() => setMode("code")}
                 >
-                  Código
+                  {t.editor.code}
                 </button>
                 <button
                   className={`seg-btn ${mode === "diff" ? "active" : ""}`}
                   onClick={() => setMode("diff")}
                 >
-                  Diff
+                  {t.editor.diff}
                 </button>
               </div>
 
               {mode === "diff" && (
                 <button className="btn btn-danger" onClick={onRevertDiff}>
                   <RotateCcw size={11} />
-                  <span>Revertir</span>
+                  <span>{t.editor.revert}</span>
                 </button>
               )}
             </div>
@@ -208,9 +209,9 @@ export default function EditorPanel({
 
           {active && (
             <div className="editor-metrics">
-              <span>{lineCount} líneas</span>
+              <span>{lineCount} {t.editor.lines}</span>
               <span className="metric-sep">•</span>
-              <span>{charCount} carácteres</span>
+              <span>{charCount} {t.editor.chars}</span>
             </div>
           )}
         </div>

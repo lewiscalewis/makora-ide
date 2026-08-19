@@ -660,7 +660,7 @@ export default function SettingsModal({
                   className={`provider-filter-pill ${modelFilterProvider === "all" ? "active" : ""}`}
                   onClick={() => setModelFilterProvider("all")}
                 >
-                  <span>Todos</span>
+                  <span>{t.settings.allModels}</span>
                   <span className="provider-pill-count">{config.models.length}</span>
                 </button>
               </div>
@@ -673,11 +673,11 @@ export default function SettingsModal({
                     className="btn btn-connect"
                     disabled={liveQueryLoading}
                     onClick={() => queryLiveApiModels(modelFilterProvider)}
-                    title="Hacer petición GET a la API en vivo del proveedor para consultar los modelos reales disponibles con tu API Key"
+                    title="API Query"
                     style={{ background: "rgba(0, 200, 214, 0.12)", borderColor: "rgba(0, 200, 214, 0.4)" }}
                   >
                     {liveQueryLoading ? <Loader2 size={12} className="spin" /> : <Globe size={12} className="text-cyan" />}
-                    <span>{liveQueryLoading ? "Consultando API..." : `Consultar API en Vivo (${presetById(modelFilterProvider).label.split(" ")[0]})`}</span>
+                    <span>{liveQueryLoading ? t.common.loading : `API (${presetById(modelFilterProvider).label.split(" ")[0]})`}</span>
                   </button>
                 )}
                 <button type="button" className="btn btn-connect" onClick={addModel}>
@@ -721,8 +721,8 @@ export default function SettingsModal({
                             <span className="badge-provider-tag font-mono">
                               {m.providerId || "deepseek"}
                             </span>
-                            {m.reasoningEnabled && canReason && <span className="badge-pill">Thinking</span>}
-                            {m.visionEnabled && canVision && <span className="badge-pill">Vision</span>}
+                            {m.reasoningEnabled && canReason && <span className="badge-pill">{t.settings.thinkingBadge}</span>}
+                            {m.visionEnabled && canVision && <span className="badge-pill">{t.settings.visionBadge}</span>}
                           </div>
                           <button
                             type="button"

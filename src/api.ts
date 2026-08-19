@@ -25,8 +25,26 @@ export const chat = (
   system: string,
   messages: ChatMessage[],
   folders: string[],
-) => invoke<ChatResult>("chat", { config, system, messages, folders });
-export const chatCancel = () => invoke<void>("chat_cancel");
+  chatId: string,
+) => invoke<ChatResult>("chat", { config, system, messages, folders, chatId });
+export const chatCancel = (chatId: string) =>
+  invoke<void>("chat_cancel", { chatId });
+export const runMultiagentPlan = (
+  config: ChatConfig,
+  system: string,
+  messages: ChatMessage[],
+  folders: string[],
+  chatId: string,
+  objective: string,
+) =>
+  invoke<ChatResult>("run_multiagent_plan", {
+    config,
+    system,
+    messages,
+    folders,
+    chatId,
+    objective,
+  });
 export const workspaceSummary = (folders: string[]) =>
   invoke<string>("workspace_summary", { folders });
 export const searchPaths = (folders: string[], query: string) =>

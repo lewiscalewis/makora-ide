@@ -149,9 +149,22 @@ pub fn vault_delete(key: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_db_path() -> Option<PathBuf> {
+    {
+        let guard = DB_PATH.lock().unwrap();
+        if let Some(p) = guard.clone() {
+            return Some(p);
+        }
+    }
+    init();
+    DB_PATH.lock().unwrap().clone()
+}
+
 fn with_conn<T>(f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T> {
-    let path = DB_PATH.lock().unwrap().clone()?;
+    let path = ensure_db_path()?;
     let conn = Connection::open(path).ok()?;
+    // Varias sesiones pueden escribir en paralelo: esperar hasta 2s por el lock WAL.
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(2));
     f(&conn).ok()
 }
 
@@ -301,4 +314,74 @@ pub fn requests_summary(session_id: &str) -> Value {
         }))
     })
     .unwrap_or(serde_json::json!({"turns": 0}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xor_cipher_roundtrip() {
+        let plain = "sk-test-secret-key-1234567890";
+        let encrypted = xor_cipher(plain);
+        assert_ne!(plain, encrypted);
+        let decrypted = xor_decipher(&encrypted).expect("decipher");
+        assert_eq!(plain, decrypted);
+    }
+
+    #[test]
+    fn test_xor_cipher_invalid_hex() {
+        assert!(xor_decipher("odd_length").is_none());
+        assert!(xor_decipher("zz").is_none());
+    }
+
+    #[test]
+    fn test_history_schema_creation_in_memory() {
+        let conn = Connection::open_in_memory().expect("open in memory db");
+        let res = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                workspace TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                model TEXT
+            );
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                tool_call_id TEXT,
+                tool_calls TEXT
+            );
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                transcript TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                cached_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                cost_usd REAL DEFAULT 0.0,
+                latency_ms INTEGER DEFAULT 0,
+                cache_read_ratio REAL DEFAULT 0.0,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS makora_vault (
+                key TEXT PRIMARY KEY,
+                secret TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );",
+        );
+        assert!(res.is_ok());
+    }
 }

@@ -3,6 +3,7 @@ import { detectOllama, fetchBalance, keyringGet, listModels, pickFolder } from "
 import { PROVIDERS } from "../providers";
 import { THEME_LIST } from "../themes";
 import type { BalanceInfo, ChatConfig, Settings, ThemeId } from "../types";
+import { useI18n } from "../i18n";
 
 interface Props {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export default function OnboardingModal({
   folders,
   onAddFolder,
 }: Props) {
+  const { t } = useI18n();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [providerId, setProviderId] = useState(settings.providerId || "deepseek");
   const [apiKey, setApiKey] = useState(settings.apiKey || "");
@@ -159,16 +161,16 @@ export default function OnboardingModal({
                     >
                       <div className="provider-card-head">
                         <strong>{p.label}</strong>
-                        {p.id === "deepseek" && <span className="rec-badge">Recomendado</span>}
-                        {isOllama && ollamaDetected && <span className="local-badge">🟢 Local Detectado</span>}
+                        {p.id === "deepseek" && <span className="rec-badge">{t.onboarding.recommended}</span>}
+                        {isOllama && ollamaDetected && <span className="local-badge">{t.onboarding.localDetected}</span>}
                       </div>
                       <p className="provider-desc">
-                        {p.id === "deepseek" && "Ultra-económico, razonamiento profundo y compatible con tool-calling."}
-                        {p.id === "openai" && "Modelos GPT-4.5, GPT-4o y serie o1/o3 con alta capacidad de código."}
-                        {p.id === "anthropic" && "Claude 3.7 Sonnet / 3.5 con razonamiento híbrido y artefactos."}
-                        {p.id === "openrouter" && "Acceso unificado a cientos de modelos en una sola API key."}
-                        {p.id === "ollama" && "100% offline y gratis en tu propia GPU/CPU local."}
-                        {p.id === "custom" && "Cualquier servidor compatible con OpenAI (vLLM, LiteLLM, LM Studio)."}
+                        {p.id === "deepseek" && t.onboarding.deepseekDesc}
+                        {p.id === "openai" && t.onboarding.openaiDesc}
+                        {p.id === "anthropic" && t.onboarding.anthropicDesc}
+                        {p.id === "openrouter" && t.onboarding.openrouterDesc}
+                        {p.id === "ollama" && t.onboarding.ollamaDesc}
+                        {p.id === "custom" && t.onboarding.customDesc}
                       </p>
                     </div>
                   );
