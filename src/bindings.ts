@@ -91,6 +91,7 @@ export type ChatConfig = {
 	maxOutputTokens: number | null,
 	temperature: number | null,
 	visionEnabled?: boolean,
+	contextWindow?: number | null,
 };
 
 export type ChatDeltaEvent = {

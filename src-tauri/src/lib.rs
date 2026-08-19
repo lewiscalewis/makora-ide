@@ -48,6 +48,8 @@ pub struct ChatConfig {
     pub temperature: Option<f64>,
     #[serde(default)]
     pub vision_enabled: bool,
+    #[serde(default)]
+    pub context_window: Option<u32>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Type)]
@@ -63,18 +65,26 @@ pub struct ToolCall {
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct TurnMetrics {
+    pub duration_ms: u64,
+    pub input_tokens: u32,
+    pub cached_tokens: u32,
+    pub output_tokens: u32,
+    pub cost_usd: f64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
     #[serde(default)]
     pub images: Vec<String>,
-    #[serde(default)]
     pub tool_calls: Option<Vec<ToolCall>>,
-    #[serde(default)]
     pub tool_call_id: Option<String>,
 }
 
-#[derive(Clone, serde::Serialize, Type, Default)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Default, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatUsage {
     pub input_tokens: u32,
@@ -117,29 +127,35 @@ fn home_dir() -> Result<String, String> {
 
 #[tauri::command]
 #[specta::specta]
-fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
-    let mut entries = Vec::new();
-    let rd = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
-    for entry in rd.flatten() {
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        entries.push(DirEntry {
-            name: entry.file_name().to_string_lossy().to_string(),
-            path: entry.path().to_string_lossy().to_string(),
-            is_dir,
+async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut entries = Vec::new();
+        let rd = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+        for entry in rd.flatten() {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            entries.push(DirEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: entry.path().to_string_lossy().to_string(),
+                is_dir,
+            });
+        }
+        entries.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
-    }
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-    Ok(entries)
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
-fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+async fn read_text_file(path: String) -> Result<String, String> {
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -178,74 +194,94 @@ fn path_within(folders: &[String], path: &str) -> bool {
 
 #[tauri::command]
 #[specta::specta]
-fn write_file(folders: Vec<String>, path: String, content: String) -> Result<Option<String>, String> {
-    let p = std::path::Path::new(&path);
-    let abs = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        let root = folders.first().ok_or("no hay workspace activo")?;
-        std::path::Path::new(root).join(&path)
-    };
-    if !path_within(&folders, &abs.to_string_lossy()) {
-        return Err(format!("la ruta está fuera del workspace: {path}"));
-    }
-    let old = std::fs::read_to_string(&abs).ok();
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&abs, content).map_err(|e| e.to_string())?;
-    Ok(old)
-}
-
-
-#[tauri::command]
-#[specta::specta]
-fn rename_path(folders: Vec<String>, old_path: String, new_path: String) -> Result<(), String> {
-    if !path_within(&folders, &old_path) {
-        return Err(format!("la ruta está fuera del workspace: {old_path}"));
-    }
-    if let Some(parent) = std::path::Path::new(&new_path).parent() {
-        if !path_within(&folders, &parent.to_string_lossy()) {
-            return Err(format!("la ruta está fuera del workspace: {new_path}"));
-        }
-    }
-    std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-fn create_file(folders: Vec<String>, path: String) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        if !path_within(&folders, &parent.to_string_lossy()) {
+async fn write_file(folders: Vec<String>, path: String, content: String) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let p = std::path::Path::new(&path);
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            let root = folders.first().ok_or("no hay workspace activo")?;
+            std::path::Path::new(root).join(&path)
+        };
+        if !path_within(&folders, &abs.to_string_lossy()) {
             return Err(format!("la ruta está fuera del workspace: {path}"));
         }
-    }
-    std::fs::write(&path, "").map_err(|e| e.to_string())
+        let old = std::fs::read_to_string(&abs).ok();
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&abs, content).map_err(|e| e.to_string())?;
+        Ok(old)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+
+#[tauri::command]
+#[specta::specta]
+async fn rename_path(folders: Vec<String>, old_path: String, new_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if !path_within(&folders, &old_path) {
+            return Err(format!("la ruta está fuera del workspace: {old_path}"));
+        }
+        if let Some(parent) = std::path::Path::new(&new_path).parent() {
+            if !path_within(&folders, &parent.to_string_lossy()) {
+                return Err(format!("la ruta está fuera del workspace: {new_path}"));
+            }
+        }
+        std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
-fn create_dir(folders: Vec<String>, path: String) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        if !path_within(&folders, &parent.to_string_lossy()) {
+async fn create_file(folders: Vec<String>, path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            if !path_within(&folders, &parent.to_string_lossy()) {
+                return Err(format!("la ruta está fuera del workspace: {path}"));
+            }
+        }
+        std::fs::write(&path, "").map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn create_dir(folders: Vec<String>, path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            if !path_within(&folders, &parent.to_string_lossy()) {
+                return Err(format!("la ruta está fuera del workspace: {path}"));
+            }
+        }
+        std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn delete_path(folders: Vec<String>, path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if !path_within(&folders, &path) {
             return Err(format!("la ruta está fuera del workspace: {path}"));
         }
-    }
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-fn delete_path(folders: Vec<String>, path: String) -> Result<(), String> {
-    if !path_within(&folders, &path) {
-        return Err(format!("la ruta está fuera del workspace: {path}"));
-    }
-    let p = std::path::Path::new(&path);
-    if p.is_dir() {
-        std::fs::remove_dir_all(p).map_err(|e| e.to_string())
-    } else {
-        std::fs::remove_file(p).map_err(|e| e.to_string())
-    }
+        let p = std::path::Path::new(&path);
+        if p.is_dir() {
+            std::fs::remove_dir_all(p).map_err(|e| e.to_string())
+        } else {
+            std::fs::remove_file(p).map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -281,8 +317,10 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-fn read_file_binary(path: String) -> Result<Vec<u8>, String> {
-    std::fs::read(&path).map_err(|e| format!("Error al leer archivo: {e}"))
+async fn read_file_binary(path: String) -> Result<Vec<u8>, String> {
+    tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("Error al leer archivo: {e}"))
 }
 
 #[tauri::command]
@@ -311,8 +349,7 @@ fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {
 #[tauri::command]
 #[specta::specta]
 fn count_tokens(text: String) -> Result<u32, String> {
-    let bpe = tiktoken_rs::o200k_base().map_err(|e| e.to_string())?;
-    Ok(bpe.encode_ordinary(&text).len() as u32)
+    Ok(token_engine::global().count(&text) as u32)
 }
 
 #[tauri::command]
@@ -396,6 +433,12 @@ async fn fetch_balance(
     api_key: String,
 ) -> Result<Option<balance::BalanceInfo>, String> {
     balance::fetch_balance(&provider, &base_url, &api_key).await
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_history_summary(session_id: String) -> Result<serde_json::Value, String> {
+    Ok(history::requests_summary(&session_id))
 }
 
 #[tauri::command]
@@ -548,23 +591,12 @@ fn keyring_get(provider_id: String) -> Result<Option<String>, String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
 
-    // 1. Try OS Keyring
+    // OS Native Secure Store (Windows Credential Manager / Keychain / Secret Service)
     if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
         if let Ok(p) = entry.get_password() {
             if !p.trim().is_empty() {
-                let _ = history::vault_set(&key, &p);
                 return Ok(Some(p));
             }
-        }
-    }
-
-    // 2. Fallback to Local Encrypted SQLite Vault
-    if let Ok(Some(vault_val)) = history::vault_get(&key) {
-        if !vault_val.trim().is_empty() {
-            if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
-                let _ = entry.set_password(&vault_val);
-            }
-            return Ok(Some(vault_val));
         }
     }
 
@@ -577,13 +609,9 @@ fn keyring_set(provider_id: String, secret: String) -> Result<(), String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
 
-    // 1. Always save to Local Encrypted SQLite Vault
-    let _ = history::vault_set(&key, &secret);
-
-    // 2. Also save to OS Keyring
-    if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
-        let _ = entry.set_password(&secret);
-    }
+    // OS Native Secure Store
+    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
+    entry.set_password(&secret).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -593,8 +621,6 @@ fn keyring_set(provider_id: String, secret: String) -> Result<(), String> {
 fn keyring_delete(provider_id: String) -> Result<(), String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
-
-    let _ = history::vault_delete(&key);
 
     if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
         let _ = entry.delete_credential();
@@ -1235,6 +1261,7 @@ pub fn run() {
             term_kill,
             search_paths,
             workspace_summary,
+            get_history_summary,
             keyring_get,
             keyring_set,
             keyring_delete,

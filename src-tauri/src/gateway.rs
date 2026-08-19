@@ -25,26 +25,38 @@ pub struct TurnOutcome {
     pub tool_calls: Vec<ToolCall>,
 }
 
+pub static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .unwrap_or_default()
+});
+
 async fn for_each_sse_event<F>(response: reqwest::Response, chat_id: &str, mut f: F)
 where
     F: FnMut(&str, &str),
 {
     use futures_util::StreamExt;
     let mut stream = response.bytes_stream();
-    let mut buf = String::new();
+    let mut raw_bytes: Vec<u8> = Vec::with_capacity(8192);
     while let Some(chunk) = stream.next().await {
         if crate::agent::is_chat_cancelled(chat_id) {
             break;
         }
         if let Ok(c) = chunk {
-            buf.push_str(&String::from_utf8_lossy(&c).replace("\r\n", "\n"));
+            raw_bytes.extend_from_slice(&c);
         }
-        while let Some(pos) = buf.find("\n\n") {
-            let block = buf[..pos].to_string();
-            buf.drain(..pos + 2);
+        while let Some(pos) = raw_bytes.windows(2).position(|w| w == b"\n\n" || w == b"\r\n\r\n") {
+            let (delim_len, slice_end) = if raw_bytes[pos..].starts_with(b"\r\n\r\n") {
+                (4, pos)
+            } else {
+                (2, pos)
+            };
+            let block_bytes: Vec<u8> = raw_bytes.drain(..slice_end + delim_len).collect();
+            let block_str = String::from_utf8_lossy(&block_bytes[..slice_end]);
             let mut event = String::new();
             let mut data_lines: Vec<String> = Vec::new();
-            for line in block.lines() {
+            for line in block_str.lines() {
                 if let Some(r) = line.strip_prefix("event:") {
                     event = r.trim().to_string();
                 } else if let Some(r) = line.strip_prefix("data:") {
@@ -56,8 +68,8 @@ where
             }
         }
     }
-    let rest = buf.trim().to_string();
-    if !rest.is_empty() {
+    if !raw_bytes.is_empty() {
+        let rest = String::from_utf8_lossy(&raw_bytes).trim().to_string();
         let mut data_lines: Vec<String> = Vec::new();
         for line in rest.lines() {
             if let Some(r) = line.strip_prefix("data:") {
@@ -195,7 +207,7 @@ pub async fn openai_turn(
         body["tool_choice"] = json!("auto");
     }
 
-    let client = reqwest::Client::new();
+    let client = &*HTTP_CLIENT;
     let api_key = cfg.api_key.trim();
     let mut req = client.post(&url).bearer_auth(api_key).json(&body);
     if is_gemini {
@@ -325,34 +337,104 @@ pub async fn openai_turn(
     })
 }
 
+static RE_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?invoke\s+name=["']([^"']+)["']\s*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
+});
+
+static RE_PARAM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?parameter\s+name=["']([^"']+)["'][^>]*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?parameter\s*>"#).unwrap()
+});
+
+static RE_TAG_JSON: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?s)<\s*tool_calls?\s*>(.*?)<\s*/\s*tool_calls?\s*>"#).unwrap()
+});
+
+static RE_CLEAN_TOOL_CALLS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?tool_calls?\s*>.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?tool_calls?\s*>"#).unwrap()
+});
+
+static RE_CLEAN_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?invoke.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
+});
+
+static RE_CLEAN_STRAY_TAGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"<\s*/?\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|invoke|parameter|DSML).*?>"#).unwrap()
+});
+
 fn sanitize_and_extract_embedded_tool_calls(
     text: &mut String,
     tool_calls: &mut Vec<ToolCall>,
     now_ts: u128,
 ) {
-    if text.contains("DSML") || text.contains("<tool_call>") || text.contains("<|tool_calls|>") {
-        // 1. Extract DSML invoke tags
-        let invoke_re = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*invoke\s+name=["']([^"']+)["']\s*>(.*?)<\s*/\s*\|\s*DSML\s*\|\s*invoke\s*>"#);
-        let param_re = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*parameter\s+name=["']([^"']+)["'][^>]*>(.*?)<\s*/\s*\|\s*DSML\s*\|\s*parameter\s*>"#);
+    if text.contains("DSML")
+        || text.contains("invoke")
+        || text.contains("tool_call")
+        || text.contains("tool_calls")
+        || text.contains("<parameter")
+    {
+        // 1. Extract DSML and standard XML invoke tags (<invoke name="...">...)
+        for cap in RE_INVOKE.captures_iter(text) {
+            let name = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
+            let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            let mut args_map = serde_json::Map::new();
+            for p_cap in RE_PARAM.captures_iter(body) {
+                let p_name = p_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
+                let p_val = p_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("").to_string();
+                args_map.insert(p_name, Value::String(p_val));
+            }
+            let args_str = Value::Object(args_map).to_string();
+            if !name.is_empty() {
+                let id = format!("call_xml_{}_{now_ts}", tool_calls.len());
+                tool_calls.push(ToolCall {
+                    id,
+                    name,
+                    arguments: args_str,
+                    extra_content: None,
+                });
+            }
+        }
 
-        if let Ok(re_inv) = invoke_re {
-            if let Ok(re_param) = param_re {
-                for cap in re_inv.captures_iter(text) {
-                    let name = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-                    let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                    let mut args_map = serde_json::Map::new();
-                    for p_cap in re_param.captures_iter(body) {
-                        let p_name = p_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-                        let p_val = p_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-                        args_map.insert(p_name, Value::String(p_val));
-                    }
-                    let args_str = Value::Object(args_map).to_string();
-                    if !name.is_empty() {
-                        let id = format!("call_dsml_{}_{now_ts}", tool_calls.len());
+        // 2. Extract <tool_call> / <tool_calls> JSON format
+        for cap in RE_TAG_JSON.captures_iter(text) {
+            if let Some(body) = cap.get(1) {
+                let trimmed = body.as_str().trim();
+                if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+                    if let Some(arr) = v.as_array() {
+                        for item in arr {
+                            if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
+                                let arguments = if let Some(args) = item.get("arguments") {
+                                    if args.is_string() {
+                                        args.as_str().unwrap().to_string()
+                                    } else {
+                                        args.to_string()
+                                    }
+                                } else {
+                                    "{}".to_string()
+                                };
+                                let id = format!("call_tag_{}_{now_ts}", tool_calls.len());
+                                tool_calls.push(ToolCall {
+                                    id,
+                                    name: name.to_string(),
+                                    arguments,
+                                    extra_content: None,
+                                });
+                            }
+                        }
+                    } else if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+                        let arguments = if let Some(args) = v.get("arguments") {
+                            if args.is_string() {
+                                args.as_str().unwrap().to_string()
+                            } else {
+                                args.to_string()
+                            }
+                        } else {
+                            "{}".to_string()
+                        };
+                        let id = format!("call_tag_{}_{now_ts}", tool_calls.len());
                         tool_calls.push(ToolCall {
                             id,
-                            name,
-                            arguments: args_str,
+                            name: name.to_string(),
+                            arguments,
                             extra_content: None,
                         });
                     }
@@ -360,51 +442,11 @@ fn sanitize_and_extract_embedded_tool_calls(
             }
         }
 
-        // 2. Extract <tool_call> JSON format
-        if let Ok(re_json) = regex::Regex::new(r#"(?s)<\s*tool_call\s*>(.*?)<\s*/\s*tool_call\s*>"#) {
-            for cap in re_json.captures_iter(text) {
-                if let Some(body) = cap.get(1) {
-                    if let Ok(v) = serde_json::from_str::<Value>(body.as_str().trim()) {
-                        if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
-                            let arguments = if let Some(args) = v.get("arguments") {
-                                if args.is_string() {
-                                    args.as_str().unwrap().to_string()
-                                } else {
-                                    args.to_string()
-                                }
-                            } else {
-                                "{}".to_string()
-                            };
-                            let id = format!("call_tag_{}_{now_ts}", tool_calls.len());
-                            tool_calls.push(ToolCall {
-                                id,
-                                name: name.to_string(),
-                                arguments,
-                                extra_content: None,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Clean all DSML & tool_call tags from user-facing text
-        if let Ok(re_clean1) = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*tool_calls\s*>.*?<\s*/\s*\|\s*DSML\s*\|\s*tool_calls\s*>"#) {
-            *text = re_clean1.replace_all(text, "").to_string();
-        }
-        if let Ok(re_clean2) = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*invoke.*?<\s*/\s*\|\s*DSML\s*\|\s*invoke\s*>"#) {
-            *text = re_clean2.replace_all(text, "").to_string();
-        }
-        if let Ok(re_clean3) = regex::Regex::new(r#"(?s)<\s*tool_call\s*>.*?<\s*/\s*tool_call\s*>"#) {
-            *text = re_clean3.replace_all(text, "").to_string();
-        }
-        if let Ok(re_clean4) = regex::Regex::new(r#"<\s*\|?\s*DSML\s*\|?.*?>"#) {
-            *text = re_clean4.replace_all(text, "").to_string();
-        }
-        if let Ok(re_clean5) = regex::Regex::new(r#"<\s*/\s*\|?\s*DSML\s*\|?.*?>"#) {
-            *text = re_clean5.replace_all(text, "").to_string();
-        }
-        *text = text.trim().to_string();
+        // 3. Clean all DSML, XML, & tool_call tags from user-facing text
+        let mut cleaned = RE_CLEAN_TOOL_CALLS.replace_all(text, "").to_string();
+        cleaned = RE_CLEAN_INVOKE.replace_all(&cleaned, "").to_string();
+        cleaned = RE_CLEAN_STRAY_TAGS.replace_all(&cleaned, "").to_string();
+        *text = cleaned.trim().to_string();
     }
 }
 
@@ -579,7 +621,7 @@ pub async fn anthropic_turn(
         body["tool_choice"] = json!({"type": "auto"});
     }
 
-    let client = reqwest::Client::new();
+    let client = &*HTTP_CLIENT;
     let resp = client
         .post(&url)
         .header("x-api-key", &cfg.api_key)
@@ -598,43 +640,44 @@ pub async fn anthropic_turn(
     let mut text = String::new();
     let mut output_chars = 0usize;
     let mut tool_blocks: Vec<(String, String, String)> = Vec::new();
-    let mut current_block: Option<usize> = None;
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         let v: Value = match serde_json::from_str(data) {
             Ok(v) => v,
             Err(_) => return,
         };
-        match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+        let t = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        match t {
             "message_start" => {
-                if let Some(u) = v.pointer("/message/usage") {
-                    usage.input_tokens =
-                        u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-                    usage.cached_tokens = u
-                        .get("cache_read_input_tokens")
-                        .and_then(|x| x.as_u64())
-                        .unwrap_or(0) as u32;
+                if let Some(msg) = v.get("message") {
+                    if let Some(u) = msg.get("usage") {
+                        usage.input_tokens =
+                            u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                        usage.cached_tokens = u
+                            .get("cache_read_input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32;
+                    }
                 }
             }
             "content_block_start" => {
-                let block = &v["content_block"];
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    let id = block.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let name = block
-                        .get("name")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    tool_blocks.push((id, name, String::new()));
-                    current_block = Some(tool_blocks.len() - 1);
-                } else {
-                    current_block = None;
+                if let Some(cb) = v.get("content_block") {
+                    let cbt = cb.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                    if cbt == "tool_use" {
+                        let id = cb.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        let name = cb
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        tool_blocks.push((id, name, String::new()));
+                    }
                 }
             }
             "content_block_delta" => {
-                let delta = &v["delta"];
-                match delta.get("type").and_then(|t| t.as_str()).unwrap_or("") {
-                    "text_delta" => {
+                if let Some(delta) = v.get("delta") {
+                    let dt = delta.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                    if dt == "text_delta" {
                         if let Some(t) = delta.get("text").and_then(|x| x.as_str()) {
                             text.push_str(t);
                             let _ = ChatDeltaEvent {
@@ -644,17 +687,7 @@ pub async fn anthropic_turn(
                             .emit(app);
                             output_chars += t.len();
                         }
-                    }
-                    "input_json_delta" => {
-                        if let Some(i) = current_block {
-                            if let Some(part) =
-                                delta.get("partial_json").and_then(|x| x.as_str())
-                            {
-                                tool_blocks[i].2.push_str(part);
-                            }
-                        }
-                    }
-                    "thinking_delta" => {
+                    } else if dt == "thinking_delta" {
                         if let Some(t) = delta.get("thinking").and_then(|x| x.as_str()) {
                             let _ = app.emit(
                                 "thinking-delta",
@@ -664,8 +697,13 @@ pub async fn anthropic_turn(
                                 },
                             );
                         }
+                    } else if dt == "input_json_delta" {
+                        if let Some(p) = delta.get("partial_json").and_then(|x| x.as_str()) {
+                            if let Some(last) = tool_blocks.last_mut() {
+                                last.2.push_str(p);
+                            }
+                        }
                     }
-                    _ => {}
                 }
             }
             "message_delta" => {
@@ -699,7 +737,7 @@ pub async fn anthropic_turn(
 }
 
 pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
-    let client = reqwest::Client::new();
+    let client = &*HTTP_CLIENT;
     let api_key = cfg.api_key.trim();
     match cfg.kind.as_str() {
         "anthropic" => {
@@ -801,6 +839,7 @@ mod tests {
             max_output_tokens: None,
             temperature: None,
             vision_enabled: false,
+            context_window: None,
         };
         let msg = ChatMessage {
             role: "assistant".into(),
@@ -854,6 +893,23 @@ mod tests {
         assert_eq!(tool_calls[0].name, "bash");
         let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
         assert_eq!(args["command"], "python _deploy_vps.py build 2>&1");
+    }
+
+    #[test]
+    fn test_sanitize_and_extract_standard_xml_tool_calls() {
+        let mut text = "<tool_calls> <invoke name=\"bash\"> <parameter name=\"command\" string=\"true\">git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" status --short && git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" diff --stat</parameter> <parameter name=\"description\" string=\"true\">Inspect working tree changes</parameter> </invoke> </tool_calls>".to_string();
+        let mut tool_calls = Vec::new();
+        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 987654);
+
+        assert_eq!(text, "");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "bash");
+        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
+        assert_eq!(
+            args["command"],
+            "git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" status --short && git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" diff --stat"
+        );
+        assert_eq!(args["description"], "Inspect working tree changes");
     }
 }
 

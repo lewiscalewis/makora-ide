@@ -38,6 +38,7 @@ export interface ChatConfig {
   maxOutputTokens: number | null;
   temperature: number | null;
   visionEnabled: boolean;
+  contextWindow?: number | null;
 }
 
 export interface ToolCall {

@@ -410,8 +410,10 @@ function App() {
       .catch(() => setHomePath(""));
   }, []);
 
-  const effectiveFolders =
-    folders.length > 0 ? folders : homePath ? [homePath] : [];
+  const effectiveFolders = useMemo(
+    () => (folders.length > 0 ? folders : homePath ? [homePath] : []),
+    [folders, homePath],
+  );
 
   // Poll Git Status for active folder
   useEffect(() => {
@@ -444,6 +446,7 @@ function App() {
       maxOutputTokens: modelConfig?.maxOutputTokens ?? null,
       temperature: null,
       visionEnabled: isVisionActive,
+      contextWindow: modelConfig?.contextWindow ?? config.context?.maxTokens ?? 128000,
     }),
     [
       preset.kind,
@@ -453,6 +456,7 @@ function App() {
       settings.apiKey,
       modelConfig,
       isVisionActive,
+      config.context?.maxTokens,
     ],
   );
 

@@ -72,81 +72,8 @@ pub fn init() {
             cache_read_ratio REAL DEFAULT 0.0,
             created_at INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id, created_at);
-        CREATE TABLE IF NOT EXISTS makora_vault (
-            key TEXT PRIMARY KEY,
-            secret TEXT NOT NULL,
-            updated_at INTEGER NOT NULL
-        );",
+        CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id, created_at);",
     );
-}
-
-fn xor_cipher(input: &str) -> String {
-    let key = b"Makora_Vault_Hardware_Salt_2026";
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    for (i, b) in bytes.iter().enumerate() {
-        out.push(b ^ key[i % key.len()]);
-    }
-    let mut hex = String::with_capacity(out.len() * 2);
-    for b in out {
-        hex.push_str(&format!("{:02x}", b));
-    }
-    hex
-}
-
-fn xor_decipher(hex: &str) -> Option<String> {
-    if hex.len() % 2 != 0 {
-        return None;
-    }
-    let key = b"Makora_Vault_Hardware_Salt_2026";
-    let mut bytes = Vec::new();
-    for i in (0..hex.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex[i..i + 2], 16).ok()?;
-        bytes.push(byte);
-    }
-    let mut out = Vec::with_capacity(bytes.len());
-    for (i, b) in bytes.iter().enumerate() {
-        out.push(b ^ key[i % key.len()]);
-    }
-    String::from_utf8(out).ok()
-}
-
-pub fn vault_set(key: &str, secret: &str) -> Result<(), String> {
-    init();
-    let enc = xor_cipher(secret);
-    let t = now_ms();
-    let path = DB_PATH.lock().unwrap().clone().ok_or("Database path unavailable")?;
-    let conn = Connection::open(path).map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT INTO makora_vault (key, secret, updated_at) VALUES (?1, ?2, ?3)
-         ON CONFLICT(key) DO UPDATE SET secret = ?2, updated_at = ?3",
-        rusqlite::params![key, enc, t],
-    ).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub fn vault_get(key: &str) -> Result<Option<String>, String> {
-    init();
-    let path = DB_PATH.lock().unwrap().clone().ok_or("Database path unavailable")?;
-    let conn = Connection::open(path).map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT secret FROM makora_vault WHERE key = ?1").map_err(|e| e.to_string())?;
-    let mut rows = stmt.query(rusqlite::params![key]).map_err(|e| e.to_string())?;
-    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let enc: String = row.get(0).map_err(|e| e.to_string())?;
-        if let Some(dec) = xor_decipher(&enc) {
-            return Ok(Some(dec));
-        }
-    }
-    Ok(None)
-}
-
-pub fn vault_delete(key: &str) -> Result<(), String> {
-    init();
-    let path = DB_PATH.lock().unwrap().clone().ok_or("Database path unavailable")?;
-    let conn = Connection::open(path).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM makora_vault WHERE key = ?1", rusqlite::params![key]).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 fn ensure_db_path() -> Option<PathBuf> {
@@ -321,21 +248,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_xor_cipher_roundtrip() {
-        let plain = "sk-test-secret-key-1234567890";
-        let encrypted = xor_cipher(plain);
-        assert_ne!(plain, encrypted);
-        let decrypted = xor_decipher(&encrypted).expect("decipher");
-        assert_eq!(plain, decrypted);
-    }
-
-    #[test]
-    fn test_xor_cipher_invalid_hex() {
-        assert!(xor_decipher("odd_length").is_none());
-        assert!(xor_decipher("zz").is_none());
-    }
-
-    #[test]
     fn test_history_schema_creation_in_memory() {
         let conn = Connection::open_in_memory().expect("open in memory db");
         let res = conn.execute_batch(
@@ -376,11 +288,7 @@ mod tests {
                 cache_read_ratio REAL DEFAULT 0.0,
                 created_at INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS makora_vault (
-                key TEXT PRIMARY KEY,
-                secret TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            );",
+            CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id, created_at);",
         );
         assert!(res.is_ok());
     }

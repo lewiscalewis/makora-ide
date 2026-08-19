@@ -1192,15 +1192,17 @@ pub async fn run(
         if is_chat_cancelled(chat_id) {
             return Err("cancelado por el usuario".into());
         }
-        // ADR-014: poda de resultados antiguos de tools (evicción local)
+        // Motor M2 (D2): podado de historia y límite presupuestario por contexto
+        let composer = token_engine::ContextComposer::for_window(cfg.context_window.unwrap_or(128_000), None);
         msgs = evict_tool_results(&msgs);
+        let wire_msgs = composer.fit_history(counter, &msgs);
         turn += 1;
         let started = std::time::Instant::now();
-        let local_tokens = counter.count_messages(&full_system, &msgs);
+        let local_tokens = counter.count_messages(&full_system, &wire_msgs);
         let outcome = if cfg.kind == "anthropic" {
-            gateway::anthropic_turn(app, cfg, chat_id, &full_system, &msgs, &tools).await?
+            gateway::anthropic_turn(app, cfg, chat_id, &full_system, &wire_msgs, &tools).await?
         } else {
-            gateway::openai_turn(app, cfg, chat_id, &full_system, &msgs, &tools).await?
+            gateway::openai_turn(app, cfg, chat_id, &full_system, &wire_msgs, &tools).await?
         };
         total.input_tokens += outcome.usage.input_tokens;
         total.output_tokens += outcome.usage.output_tokens;
@@ -1563,17 +1565,19 @@ pub async fn run_multiagent(
             ),
         };
 
-        let mut sub_msgs = vec![ChatMessage {
+        let mut sub_msgs = messages.to_vec();
+        sub_msgs.push(ChatMessage {
             role: "user".into(),
             content: role_instruction,
             images: vec![],
             tool_calls: None,
             tool_call_id: None,
-        }];
+        });
 
         let subagent_chat_id = format!("{chat_id}__sub_{step_index}");
         let mut step_text = String::new();
         let mut step_success = true;
+        let mut executed_tool_names: Vec<String> = Vec::new();
 
         for _ in 0..6 {
             if is_chat_cancelled(chat_id) {
@@ -1621,6 +1625,7 @@ pub async fn run_multiagent(
                 if is_chat_cancelled(chat_id) {
                     return Err("cancelado por el usuario".into());
                 }
+                executed_tool_names.push(tc.name.clone());
                 let _ = app.emit(
                     "tool-start",
                     ToolStart {
@@ -1659,8 +1664,10 @@ pub async fn run_multiagent(
 
         let summary = if !step_text.trim().is_empty() {
             truncate(&step_text, 600)
+        } else if !executed_tool_names.is_empty() {
+            format!("Herramientas ejecutadas: {}", executed_tool_names.join(", "))
         } else {
-            "Fase completada exitosamente sin notas adicionales.".to_string()
+            "Fase completada exitosamente.".to_string()
         };
 
         briefing.push_str(&format!(
@@ -1686,13 +1693,14 @@ pub async fn run_multiagent(
         "Genera la síntesis final estructurada para el objetivo: {objective}"
     );
 
-    let synth_msgs = vec![ChatMessage {
+    let mut synth_msgs = messages.to_vec();
+    synth_msgs.push(ChatMessage {
         role: "user".into(),
         content: synth_user_content,
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
-    }];
+    });
 
     turn += 1;
     let started = std::time::Instant::now();
