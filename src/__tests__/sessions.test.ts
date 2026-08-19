@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { sanitizeMessages, deriveTitle, makeSession, initSessions } from "../sessions";
+import {
+  setSessionDraftInput,
+  setSessionDraftAttachments,
+  getSessionRuntime,
+  clearSessionDraft,
+} from "../sessionStore";
 import type { ChatMessage } from "../types";
 
 describe("Session Management and Sanitization", () => {
@@ -94,5 +100,25 @@ describe("Session Management and Sanitization", () => {
     expect(sessions.length).toBe(1);
     expect(activeId).toBe(sessions[0].id);
     expect(sessions[0].messages).toEqual([]);
+  });
+
+  it("persists and isolates input drafts across independent sessions", () => {
+    const sessionA = "sess_test_a";
+    const sessionB = "sess_test_b";
+
+    setSessionDraftInput(sessionA, "Borrador de texto para sesión A");
+    setSessionDraftAttachments(sessionA, [{ id: 1, name: "test.png", kind: "image" }]);
+
+    setSessionDraftInput(sessionB, "Borrador de texto para sesión B");
+
+    expect(getSessionRuntime(sessionA).draftInput).toBe("Borrador de texto para sesión A");
+    expect(getSessionRuntime(sessionA).draftAttachments.length).toBe(1);
+    expect(getSessionRuntime(sessionB).draftInput).toBe("Borrador de texto para sesión B");
+    expect(getSessionRuntime(sessionB).draftAttachments.length).toBe(0);
+
+    clearSessionDraft(sessionA);
+    expect(getSessionRuntime(sessionA).draftInput).toBe("");
+    expect(getSessionRuntime(sessionA).draftAttachments.length).toBe(0);
+    expect(getSessionRuntime(sessionB).draftInput).toBe("Borrador de texto para sesión B");
   });
 });

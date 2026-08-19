@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { chat, chatCancel, runMultiagentPlan } from "./api";
 import { computeCostUsd } from "./defaults";
 import type {
+  Attachment,
   ChatConfig,
   ChatDeltaEvent,
   ChatMessage,
@@ -130,6 +131,8 @@ export interface SessionRuntimeSnapshot {
   currentAssistantId: number;
   plan: MultiAgentPlanState | null;
   error: string | null;
+  draftInput: string;
+  draftAttachments: Attachment[];
 }
 
 interface SessionRuntime extends SessionRuntimeSnapshot {
@@ -153,6 +156,8 @@ const EMPTY_RUNTIME: SessionRuntime = Object.freeze({
   currentAssistantId: 0,
   plan: null,
   error: null,
+  draftInput: "",
+  draftAttachments: [],
   nextUiId: 0,
   abortRequested: false,
   seeded: false,
@@ -188,6 +193,8 @@ function createRuntime(transcript: ChatMessage[] = []): SessionRuntime {
     currentAssistantId: 0,
     plan: null,
     error: null,
+    draftInput: "",
+    draftAttachments: [],
     nextUiId,
     abortRequested: false,
     seeded: transcript.length > 0,
@@ -217,6 +224,27 @@ export function destroySessionRuntime(sessionId: string): void {
 
 export function getSessionRuntime(sessionId: string): SessionRuntimeSnapshot {
   return runtimes.get(sessionId) ?? EMPTY_RUNTIME;
+}
+
+export function setSessionDraftInput(sessionId: string, draftInput: string): void {
+  if (!sessionId) return;
+  if (!runtimes.has(sessionId)) ensureSessionRuntime(sessionId);
+  update(sessionId, () => ({ draftInput }));
+}
+
+export function setSessionDraftAttachments(
+  sessionId: string,
+  draftAttachments: Attachment[],
+): void {
+  if (!sessionId) return;
+  if (!runtimes.has(sessionId)) ensureSessionRuntime(sessionId);
+  update(sessionId, () => ({ draftAttachments }));
+}
+
+export function clearSessionDraft(sessionId: string): void {
+  if (!sessionId) return;
+  if (!runtimes.has(sessionId)) return;
+  update(sessionId, () => ({ draftInput: "", draftAttachments: [] }));
 }
 
 export function isSessionBusy(sessionId: string): boolean {
@@ -345,6 +373,8 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     error: null,
     abortRequested: false,
     plan: opts.useMultiAgent ? r.plan : null,
+    draftInput: "",
+    draftAttachments: [],
     transcript: newTranscript,
     nextUiId: r.nextUiId + 2,
     currentAssistantId: r.nextUiId + 2,

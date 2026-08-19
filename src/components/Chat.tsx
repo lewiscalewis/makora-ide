@@ -41,7 +41,10 @@ import { shouldAutoUseMultiAgent } from "../autoRouter";
 import {
   appendAssistantMessage,
   cancelTurn,
+  clearSessionDraft,
   sendTurn,
+  setSessionDraftAttachments,
+  setSessionDraftInput,
   useSessionRuntime,
 } from "../sessionStore";
 
@@ -447,8 +450,42 @@ export default function Chat({
 }: ChatProps) {
   const { t } = useI18n();
   const rt = useSessionRuntime(sessionId);
-  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool } = rt;
-  const [input, setInput] = useState("");
+  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments } = rt;
+  const [input, setInputState] = useState(() => draftInput ?? "");
+  const [attachments, setAttachmentsState] = useState<Attachment[]>(() => draftAttachments ?? []);
+
+  // Sync draft state if session changes or store is updated
+  const prevSessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    if (prevSessionIdRef.current !== sessionId) {
+      prevSessionIdRef.current = sessionId;
+      setInputState(draftInput ?? "");
+      setAttachmentsState(draftAttachments ?? []);
+    }
+  }, [sessionId, draftInput, draftAttachments]);
+
+  const setInput = useCallback(
+    (val: string | ((prev: string) => string)) => {
+      setInputState((prev) => {
+        const next = typeof val === "function" ? val(prev) : val;
+        setSessionDraftInput(sessionId, next);
+        return next;
+      });
+    },
+    [sessionId],
+  );
+
+  const setAttachments = useCallback(
+    (val: Attachment[] | ((prev: Attachment[]) => Attachment[])) => {
+      setAttachmentsState((prev) => {
+        const next = typeof val === "function" ? val(prev) : val;
+        setSessionDraftAttachments(sessionId, next);
+        return next;
+      });
+    },
+    [sessionId],
+  );
+
   const [localMultiAgentMode, setLocalMultiAgentMode] = useState<"auto" | "always" | "off">("auto");
   const multiAgentMode = multiAgentModeProp ?? localMultiAgentMode;
   const setMultiAgentMode = (mam: "auto" | "always" | "off") => {
@@ -468,7 +505,7 @@ export default function Chat({
         }
       }, 50);
     }
-  }, [injectedPrompt, onClearInjectedPrompt]);
+  }, [injectedPrompt, onClearInjectedPrompt, setInput]);
 
   useEffect(() => {
     if (typeof Notification !== "undefined" && Notification.permission === "default") {
@@ -476,7 +513,6 @@ export default function Chat({
     }
   }, []);
 
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mention, setMention] = useState<{
     query: string;
     start: number;
@@ -750,6 +786,9 @@ export default function Chat({
 
   const clearChat = () => {
     if (busy) return;
+    clearSessionDraft(sessionId);
+    setInput("");
+    setAttachments([]);
     if (onClearSessionTrigger) {
       onClearSessionTrigger();
       return;
