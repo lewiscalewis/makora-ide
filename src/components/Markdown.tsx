@@ -76,7 +76,20 @@ interface MarkdownProps {
   onApplyArtifact?: (path: string, content: string) => void;
 }
 
+function cleanLeakedTags(t: string): string {
+  if (!t) return "";
+  if (!t.includes("DSML") && !t.includes("<tool_call>") && !t.includes("<|tool_calls|>")) return t;
+  return t
+    .replace(/<\s*\|\s*DSML\s*\|\s*tool_calls\s*>[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*tool_calls\s*>/gi, "")
+    .replace(/<\s*\|\s*DSML\s*\|\s*invoke[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*invoke\s*>/gi, "")
+    .replace(/<\s*tool_call\s*>[\s\S]*?<\s*\/\s*tool_call\s*>/gi, "")
+    .replace(/<\s*\|?\s*DSML\s*\|?.*?>/gi, "")
+    .replace(/<\s*\/\s*\|?\s*DSML\s*\|?.*?>/gi, "")
+    .trim();
+}
+
 export default function Markdown({ text, onApplyArtifact }: MarkdownProps) {
+  const sanitized = cleanLeakedTags(text);
   return (
     <div className="markdown">
       <ReactMarkdown
@@ -109,7 +122,7 @@ export default function Markdown({ text, onApplyArtifact }: MarkdownProps) {
           },
         }}
       >
-        {text}
+        {sanitized}
       </ReactMarkdown>
     </div>
   );

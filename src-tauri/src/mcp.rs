@@ -63,8 +63,14 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
 
     let mut all: Vec<String> = Vec::new();
     for spec in specs.iter().filter(|s| s.enabled) {
-        let mut child = Command::new(&spec.command)
-            .args(&spec.args)
+        let mut cmd = Command::new(&spec.command);
+        cmd.args(&spec.args);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

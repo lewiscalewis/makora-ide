@@ -291,7 +291,7 @@ pub async fn openai_turn(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let tool_calls: Vec<ToolCall> = tcs
+    let mut tool_calls: Vec<ToolCall> = tcs
         .into_values()
         .enumerate()
         .map(|(i, (mut id, name, arguments, mut extra_content))| {
@@ -310,11 +310,97 @@ pub async fn openai_turn(
         })
         .collect();
 
+    // Sanitize text and extract embedded DSML / XML tool calls (e.g. DeepSeek V3/R1 text outputs)
+    sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, now_ts);
+
     Ok(TurnOutcome {
         usage,
         text,
         tool_calls,
     })
+}
+
+fn sanitize_and_extract_embedded_tool_calls(
+    text: &mut String,
+    tool_calls: &mut Vec<ToolCall>,
+    now_ts: u128,
+) {
+    if text.contains("DSML") || text.contains("<tool_call>") || text.contains("<|tool_calls|>") {
+        // 1. Extract DSML invoke tags
+        let invoke_re = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*invoke\s+name=["']([^"']+)["']\s*>(.*?)<\s*/\s*\|\s*DSML\s*\|\s*invoke\s*>"#);
+        let param_re = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*parameter\s+name=["']([^"']+)["'][^>]*>(.*?)<\s*/\s*\|\s*DSML\s*\|\s*parameter\s*>"#);
+
+        if let Ok(re_inv) = invoke_re {
+            if let Ok(re_param) = param_re {
+                for cap in re_inv.captures_iter(text) {
+                    let name = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
+                    let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+                    let mut args_map = serde_json::Map::new();
+                    for p_cap in re_param.captures_iter(body) {
+                        let p_name = p_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
+                        let p_val = p_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("").to_string();
+                        args_map.insert(p_name, Value::String(p_val));
+                    }
+                    let args_str = Value::Object(args_map).to_string();
+                    if !name.is_empty() {
+                        let id = format!("call_dsml_{}_{now_ts}", tool_calls.len());
+                        tool_calls.push(ToolCall {
+                            id,
+                            name,
+                            arguments: args_str,
+                            extra_content: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2. Extract <tool_call> JSON format
+        if let Ok(re_json) = regex::Regex::new(r#"(?s)<\s*tool_call\s*>(.*?)<\s*/\s*tool_call\s*>"#) {
+            for cap in re_json.captures_iter(text) {
+                if let Some(body) = cap.get(1) {
+                    if let Ok(v) = serde_json::from_str::<Value>(body.as_str().trim()) {
+                        if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+                            let arguments = if let Some(args) = v.get("arguments") {
+                                if args.is_string() {
+                                    args.as_str().unwrap().to_string()
+                                } else {
+                                    args.to_string()
+                                }
+                            } else {
+                                "{}".to_string()
+                            };
+                            let id = format!("call_tag_{}_{now_ts}", tool_calls.len());
+                            tool_calls.push(ToolCall {
+                                id,
+                                name: name.to_string(),
+                                arguments,
+                                extra_content: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Clean all DSML & tool_call tags from user-facing text
+        if let Ok(re_clean1) = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*tool_calls\s*>.*?<\s*/\s*\|\s*DSML\s*\|\s*tool_calls\s*>"#) {
+            *text = re_clean1.replace_all(text, "").to_string();
+        }
+        if let Ok(re_clean2) = regex::Regex::new(r#"(?s)<\s*\|\s*DSML\s*\|\s*invoke.*?<\s*/\s*\|\s*DSML\s*\|\s*invoke\s*>"#) {
+            *text = re_clean2.replace_all(text, "").to_string();
+        }
+        if let Ok(re_clean3) = regex::Regex::new(r#"(?s)<\s*tool_call\s*>.*?<\s*/\s*tool_call\s*>"#) {
+            *text = re_clean3.replace_all(text, "").to_string();
+        }
+        if let Ok(re_clean4) = regex::Regex::new(r#"<\s*\|?\s*DSML\s*\|?.*?>"#) {
+            *text = re_clean4.replace_all(text, "").to_string();
+        }
+        if let Ok(re_clean5) = regex::Regex::new(r#"<\s*/\s*\|?\s*DSML\s*\|?.*?>"#) {
+            *text = re_clean5.replace_all(text, "").to_string();
+        }
+        *text = text.trim().to_string();
+    }
 }
 
 fn parse_data_url(url: &str) -> Option<(String, String)> {
@@ -747,6 +833,19 @@ mod tests {
         });
         let ids = extract_ids(&body);
         assert_eq!(ids, vec!["gemini-3.7-flash", "gemini-3.6-flash", "deepseek-chat"]);
+    }
+
+    #[test]
+    fn test_sanitize_and_extract_embedded_dsml_tool_calls() {
+        let mut text = "Voy a inspeccionar el estado del repositorio... < | DSML | tool_calls > < | DSML | invoke name=\"bash\" > < | DSML | parameter name=\"command\" string=\"true\">python _deploy_vps.py build 2>&1</ | DSML | parameter > </ | DSML | invoke > </ | DSML | tool_calls >".to_string();
+        let mut tool_calls = Vec::new();
+        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 123456);
+
+        assert_eq!(text, "Voy a inspeccionar el estado del repositorio...");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "bash");
+        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
+        assert_eq!(args["command"], "python _deploy_vps.py build 2>&1");
     }
 }
 

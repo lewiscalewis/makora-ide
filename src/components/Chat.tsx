@@ -478,6 +478,12 @@ export default function Chat({
     }
   }, [injectedPrompt, onClearInjectedPrompt]);
 
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
   const isAbortedRef = useRef(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mention, setMention] = useState<{
@@ -1017,6 +1023,15 @@ export default function Chat({
         uiMsgs[uiMsgs.length - 1].metrics = metrics;
       }
       setMessages(uiMsgs);
+
+      // Notificación de sistema del SO si la ventana está minimizada o en segundo plano
+      if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+        const wsName = folders[0]?.split(/[\\/]/).pop() || "Workspace";
+        new Notification("Makora IDE", {
+          body: `✅ Tarea completada con éxito en ${wsName}`,
+          silent: false,
+        });
+      }
     } catch (err) {
       const errStr = String(err);
       const isCancelled = isAbortedRef.current || errStr.toLowerCase().includes("cancel") || errStr.toLowerCase().includes("abort");
@@ -1027,6 +1042,14 @@ export default function Chat({
       setMessages((m) =>
         m.map((x) => (x.id === assistantId ? { ...x, text: finalMsg } : x)),
       );
+
+      if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden && !isCancelled) {
+        const wsName = folders[0]?.split(/[\\/]/).pop() || "Workspace";
+        new Notification("Makora IDE", {
+          body: `⚠️ Fallo en tarea de ${wsName}`,
+          silent: false,
+        });
+      }
     } finally {
       isDisposed = true;
       done = true;

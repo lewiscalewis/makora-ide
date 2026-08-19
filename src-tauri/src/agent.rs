@@ -414,9 +414,13 @@ async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<
         });
 
     #[cfg(target_os = "windows")]
-    let mut cmd = tokio::process::Command::new("cmd.exe");
-    #[cfg(target_os = "windows")]
-    cmd.args(["/C", command]);
+    let mut cmd = {
+        let mut c = tokio::process::Command::new("cmd.exe");
+        c.args(["/C", command]);
+        #[cfg(windows)]
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW: completely silences background popup console windows
+        c
+    };
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = tokio::process::Command::new("sh");
