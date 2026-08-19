@@ -21,6 +21,14 @@ export interface Settings {
   model: string;
 }
 
+export interface VaultKeyEntry {
+  id: string;
+  name: string;
+  providerId: string;
+  createdAt: number;
+  lastUsedAt: number;
+}
+
 export interface ChatConfig {
   kind: string;
   baseUrl: string;

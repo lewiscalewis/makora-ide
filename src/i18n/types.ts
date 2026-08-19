@@ -135,6 +135,10 @@ export interface TranslationSchema {
     filterModels: string;
     noModels: string;
     noMatches: string;
+    agentBusyBlock: string;
+    planProceed: string;
+    planProceedHint: string;
+    planProceedPrompt: string;
   };
   git: {
     title: string;
@@ -240,6 +244,19 @@ export interface TranslationSchema {
     mcpArgs: string;
     colorPaletteTitle: string;
     languageTitle: string;
+    vaultTitle: string;
+    vaultDesc: string;
+    vaultEmpty: string;
+    vaultNamePlaceholder: string;
+    vaultKeyPlaceholder: string;
+    vaultAdd: string;
+    vaultUse: string;
+    vaultDelete: string;
+    vaultKeySaved: string;
+    vaultKeyApplied: string;
+    vaultKeyMissing: string;
+    vaultKeyRequired: string;
+    vaultLastUsed: string;
   };
   themes: {
     voidName: string;

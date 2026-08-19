@@ -6,6 +6,118 @@ interface AmbientCanvasProps {
   currentTheme: ThemeId;
 }
 
+function makeGlowTexture(inner: string, mid: string, outer: string): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, inner);
+  grad.addColorStop(0.32, mid);
+  grad.addColorStop(1, outer);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function makeSoftSpriteTexture(inner: string, outer: string): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, inner);
+  grad.addColorStop(0.55, outer);
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// Soft round particle (hot core â†’ transparent halo) for embers & stars
+function makeSoftDotTexture(inner: string, mid: string): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, inner);
+  grad.addColorStop(0.28, mid);
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// Crystalline six-armed snowflake with a bright core
+function makeFlakeTexture(): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.translate(size / 2, size / 2);
+  ctx.lineCap = "round";
+  for (let i = 0; i < 6; i++) {
+    const ang = (i * Math.PI) / 3;
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+    const grad = ctx.createLinearGradient(0, 0, dx * 26, dy * 26);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(1, "rgba(200,225,255,0)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(dx * 26, dy * 26);
+    ctx.stroke();
+  }
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, 7);
+  core.addColorStop(0, "rgba(255,255,255,0.95)");
+  core.addColorStop(1, "rgba(210,235,255,0)");
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(0, 0, 7, 0, Math.PI * 2);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// Vertical gradient (night sky backdrop)
+function makeVerticalGradientTexture(stops: Array<[number, string]>): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const grad = ctx.createLinearGradient(0, 0, 0, size);
+  for (const [off, color] of stops) grad.addColorStop(off, color);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function makeSprite(material: THREE.SpriteMaterial, x: number, y: number, z: number, sx: number, sy: number) {
+  const sprite = new THREE.Sprite(material);
+  sprite.position.set(x, y, z);
+  sprite.scale.set(sx, sy, 1);
+  return sprite;
+}
+
+// Recreation of the official Skyrim Imperial Dragon emblem:
+
 export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +156,13 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       container.appendChild(canvas);
 
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      if (!ctx) {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+        if (container.contains(canvas)) {
+          container.removeChild(canvas);
+        }
+        return;
+      }
 
       const resize = () => {
         canvas.width = window.innerWidth;
@@ -53,7 +171,7 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       resize();
       window.addEventListener("resize", resize);
 
-      const chars = "ｦｱｳｴｵｶｷｹｺｻｼｽｾｿﾀﾂﾃﾅﾆﾇﾈﾊﾋﾎﾏﾐﾑﾒﾓﾔﾕﾗﾘﾜ10234567890ABCDEF$#%&*+-=<>";
+      const chars = "ï½¦ï½±ï½³ï½´ï½µï½¶ï½·ï½¹ï½ºï½»ï½¼ï½½ï½¾ï½¿ï¾€ï¾‚ï¾ƒï¾…ï¾†ï¾‡ï¾ˆï¾Šï¾‹ï¾Žï¾ï¾ï¾‘ï¾’ï¾“ï¾”ï¾•ï¾—ï¾˜ï¾œ10234567890ABCDEF$#%&*+-=<>";
       const fontSize = 13;
       let columns = Math.floor(canvas.width / fontSize);
       let drops: number[] = Array(columns).fill(1).map(() => Math.floor(Math.random() * -50));
@@ -151,18 +269,45 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
     // Dynamic animation references
     let avPositionsRef: Float32Array | null = null;
     let avGeoRef: THREE.BufferGeometry | null = null;
-    let auroraPositionsRef: Float32Array | null = null;
-    let auroraGeoRef: THREE.BufferGeometry | null = null;
-    let snowPositionsRef: Float32Array | null = null;
-    let snowGeoRef: THREE.BufferGeometry | null = null;
-    let emberPositionsRef: Float32Array | null = null;
-    let emberGeoRef: THREE.BufferGeometry | null = null;
-    let riftRing1Ref: THREE.Mesh | null = null;
-    let riftRing2Ref: THREE.Mesh | null = null;
-    let grigoriHeadRef: THREE.Group | null = null;
-    let grigoriHeartRef: THREE.Mesh | null = null;
-    let dovahkiinRef: THREE.Group | null = null;
-    let shoutRingsRef: THREE.Mesh[] = [];
+    let frostPositionsRef: Float32Array | null = null;
+    let frostSpeedsRef: Float32Array | null = null;
+    let frostGeoRef: THREE.BufferGeometry | null = null;
+    let skyrimLogoRef: THREE.Group | null = null;
+    let ddDragonRingRef: THREE.Group | null = null;
+    let ddHeartGroupRef: THREE.Group | null = null;
+    let ddHeartCoreRef: THREE.Sprite | null = null;
+    let ddHeartGlowRef: THREE.Sprite | null = null;
+    let ddSealRef: THREE.Mesh | null = null;
+    let ddFloorGlowRef: THREE.Sprite | null = null;
+    let ddEmberSystemsRef: Array<{
+      positions: Float32Array;
+      speeds: Float32Array;
+      geo: THREE.BufferGeometry;
+      count: number;
+      floor: number;
+      ceiling: number;
+      spread: number;
+      mat: THREE.PointsMaterial;
+      baseOpacity: number;
+      flickerFreq: number;
+      flickerPhase: number;
+    }> = [];
+    let ddSmokeRefs: Array<{ sprite: THREE.Sprite; speed: number; baseX: number; phase: number; opacity: number }> = [];
+    let skyStarRefs: Array<{ mat: THREE.PointsMaterial; phase: number; freq: number; baseOpacity: number }> = [];
+    let skyFrostRefs: Array<{
+      positions: Float32Array;
+      speeds: Float32Array;
+      drift: Float32Array;
+      geo: THREE.BufferGeometry;
+      count: number;
+      mat: THREE.PointsMaterial;
+      baseOpacity: number;
+      freq: number;
+      phase: number;
+      floor: number;
+      ceiling: number;
+    }> = [];
+    let skyMistRefs: Array<{ sprite: THREE.Sprite; speed: number; baseY: number; phase: number; opacity: number }> = [];
     let samuraiMaskRef: THREE.Group | null = null;
 
     if (currentTheme === "cyberpunk") {
@@ -378,288 +523,611 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       group.add(wheelGroup);
     } else if (currentTheme === "skyrim") {
       // =======================================================================
-      // 3. SKYRIM: DOVAHKIIN HORNED HELMET, THU'UM SHOCKWAVES & AURORAS
+      // 3. SKYRIM: IMPERIAL DRAGON SEAL OF AKATOSH & TAMRIEL FROST NIGHT
       // =======================================================================
       const skyrimGroup = new THREE.Group();
       skyrimGroup.position.set(0, 0, -10);
 
-      const steelWire = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.85 });
-      const darkSteel = new THREE.MeshBasicMaterial({ color: 0x0284c7, wireframe: true, transparent: true, opacity: 0.65 });
-      const goldHorn = new THREE.MeshBasicMaterial({ color: 0xfacc15, wireframe: true, transparent: true, opacity: 0.85 });
-      const cyanEye = new THREE.MeshBasicMaterial({ color: 0x7dd3fc });
+      // --- Deep Night Sky Gradient Backdrop (Darker cold frost) ---
+      const nightMat = new THREE.MeshBasicMaterial({
+        map: makeVerticalGradientTexture([
+          [0, "#020408"],
+          [0.4, "#030610"],
+          [0.75, "#050e1e"],
+          [1, "#081528"],
+        ]),
+        transparent: true,
+        opacity: 0.98,
+        depthWrite: false,
+      });
+      const nightGeo = new THREE.PlaneGeometry(80, 56);
+      const night = new THREE.Mesh(nightGeo, nightMat);
+      night.position.set(0, 2, -9);
+      skyrimGroup.add(night);
 
-      // --- 3D Dovahkiin Horned Helmet ---
-      const helmetGroup = new THREE.Group();
-      helmetGroup.position.set(-2.6, 0.3, 1.5);
-      helmetGroup.scale.set(1.0, 1.0, 1.0);
+      // --- Central Skyrim Imperial Dragon Crest (Seal of Akatosh) ---
+      const skyrimLogo = new THREE.Group();
+      skyrimLogo.position.set(0, 0.15, 0);
 
-      // Dome
-      const domeGeo = new THREE.SphereGeometry(1.0, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2);
-      const dome = new THREE.Mesh(domeGeo, steelWire);
-      helmetGroup.add(dome);
-
-      // Lower Cheekguard Rim
-      const rimGeo = new THREE.CylinderGeometry(1.0, 1.05, 0.8, 12, 1, true);
-      const rim = new THREE.Mesh(rimGeo, darkSteel);
-      rim.position.y = -0.4;
-      helmetGroup.add(rim);
-
-      // Nasal Guard
-      const nasalGeo = new THREE.BoxGeometry(0.2, 0.7, 0.15);
-      const nasal = new THREE.Mesh(nasalGeo, steelWire);
-      nasal.position.set(0, -0.35, 1.0);
-      helmetGroup.add(nasal);
-
-      // Sweeping Viking Warrior Horns
-      [-1, 1].forEach((side) => {
-        const hornPoints = [
-          new THREE.Vector3(side * 0.9, 0.1, 0.0),
-          new THREE.Vector3(side * 1.5, 0.2, -0.2),
-          new THREE.Vector3(side * 2.0, 0.7, -0.3),
-          new THREE.Vector3(side * 2.2, 1.4, -0.1),
-          new THREE.Vector3(side * 2.0, 2.0, 0.2),
-        ];
-        const hornCurve = new THREE.CatmullRomCurve3(hornPoints);
-        const hornGeo = new THREE.TubeGeometry(hornCurve, 12, 0.16, 6, false);
-        const horn = new THREE.Mesh(hornGeo, goldHorn);
-        helmetGroup.add(horn);
-
-        // Glowing Ethereal Eye Slit
-        const eyeGeo = new THREE.SphereGeometry(0.08, 6, 6);
-        const eye = new THREE.Mesh(eyeGeo, cyanEye);
-        eye.position.set(side * 0.35, -0.2, 0.95);
-        helmetGroup.add(eye);
+      const steelMat = new THREE.MeshBasicMaterial({
+        color: 0xd6e2ef,
+        side: THREE.DoubleSide,
+      });
+      const steelWireMat = new THREE.MeshBasicMaterial({
+        color: 0x7dd3fc,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.9,
       });
 
-      dovahkiinRef = helmetGroup;
-      skyrimGroup.add(helmetGroup);
+      const extrudeOpt = {
+        depth: 0.22,
+        bevelEnabled: true,
+        bevelSegments: 4,
+        steps: 1,
+        bevelSize: 0.05,
+        bevelThickness: 0.06,
+      };
 
-      // --- Dragon Shout (Thu'um) Pulsing Shockwave Rings ---
-      shoutRingsRef = [];
-      for (let i = 0; i < 3; i++) {
-        const shoutRingGeo = new THREE.RingGeometry(1.5 + i * 0.8, 1.6 + i * 0.8, 32);
-        const shoutRingMat = new THREE.MeshBasicMaterial({
-          color: 0x38bdf8,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.5 - i * 0.1,
-        });
-        const shoutRing = new THREE.Mesh(shoutRingGeo, shoutRingMat);
-        shoutRing.position.set(-2.6, 0.0, 1.0);
-        shoutRingsRef.push(shoutRing);
-        skyrimGroup.add(shoutRing);
-      }
+      // 1. Left Wing Blade (Diamond / Rhombus Outer Wing)
+      const leftWingShape = new THREE.Shape();
+      leftWingShape.moveTo(-0.06, 3.8);
+      leftWingShape.lineTo(-0.45, 2.6);
+      leftWingShape.lineTo(-0.75, 1.6);
+      leftWingShape.lineTo(-0.52, 1.25);
+      leftWingShape.lineTo(-0.95, 0.45);
+      leftWingShape.lineTo(-0.65, -0.2);
+      leftWingShape.lineTo(-0.95, -1.2);
+      leftWingShape.lineTo(-0.16, -3.9);
+      leftWingShape.lineTo(-1.3, -1.3);
+      leftWingShape.lineTo(-1.85, 0.7);
+      leftWingShape.lineTo(-1.45, 2.3);
+      leftWingShape.closePath();
 
-      // Aurora Wave Particles
-      const auroraCount = 400;
-      const aGeo = new THREE.BufferGeometry();
-      const aPos = new Float32Array(auroraCount * 3);
-      const aCol = new Float32Array(auroraCount * 3);
+      const leftWingGeo = new THREE.ExtrudeGeometry(leftWingShape, extrudeOpt);
+      leftWingGeo.translate(0, 0, -0.11);
+      const leftWing = new THREE.Mesh(leftWingGeo, steelMat);
+      const leftWingWire = new THREE.Mesh(leftWingGeo, steelWireMat);
+      skyrimLogo.add(leftWing);
+      skyrimLogo.add(leftWingWire);
 
-      const aCyan = new THREE.Color(0x38bdf8);
-      const aEmerald = new THREE.Color(0x34d399);
+      // 2. Right Wing Blade (Lore-accurate broken / chipped bottom tip!)
+      const rightWingShape = new THREE.Shape();
+      rightWingShape.moveTo(0.06, 3.8);
+      rightWingShape.lineTo(1.45, 2.3);
+      rightWingShape.lineTo(1.85, 0.7);
+      rightWingShape.lineTo(1.35, -0.6);
+      // Broken Chipped Fracture Edge
+      rightWingShape.lineTo(1.15, -1.05);
+      rightWingShape.lineTo(0.9, -0.85);
+      rightWingShape.lineTo(0.65, -1.3);
+      // Inner contour back up
+      rightWingShape.lineTo(0.65, -0.2);
+      rightWingShape.lineTo(0.95, 0.45);
+      rightWingShape.lineTo(0.52, 1.25);
+      rightWingShape.lineTo(0.75, 1.6);
+      rightWingShape.lineTo(0.45, 2.6);
+      rightWingShape.closePath();
 
-      for (let i = 0; i < auroraCount; i++) {
-        const u = (i / auroraCount) * Math.PI * 4;
-        aPos[i * 3] = (i / auroraCount - 0.5) * 34;
-        aPos[i * 3 + 1] = 2.4 + Math.sin(u) * 1.5;
-        aPos[i * 3 + 2] = -4 + Math.cos(u * 0.5) * 3.5;
+      const rightWingGeo = new THREE.ExtrudeGeometry(rightWingShape, extrudeOpt);
+      rightWingGeo.translate(0, 0, -0.11);
+      const rightWing = new THREE.Mesh(rightWingGeo, steelMat);
+      const rightWingWire = new THREE.Mesh(rightWingGeo, steelWireMat);
+      skyrimLogo.add(rightWing);
+      skyrimLogo.add(rightWingWire);
 
-        const c = i % 2 === 0 ? aCyan : aEmerald;
-        aCol[i * 3] = c.r;
-        aCol[i * 3 + 1] = c.g;
-        aCol[i * 3 + 2] = c.b;
-      }
-      aGeo.setAttribute("position", new THREE.BufferAttribute(aPos, 3));
-      aGeo.setAttribute("color", new THREE.BufferAttribute(aCol, 3));
-      auroraPositionsRef = aPos;
-      auroraGeoRef = aGeo;
+      // 3. Central Akatosh Dragon (Head, S-neck, wing folds, zigzag tail)
+      const dragonBodyShape = new THREE.Shape();
+      // Dragon Head & Crown Horn
+      dragonBodyShape.moveTo(0.0, 2.85);
+      dragonBodyShape.lineTo(-0.16, 2.5);
+      dragonBodyShape.lineTo(-0.35, 2.35);
+      dragonBodyShape.lineTo(-0.58, 2.1);
+      dragonBodyShape.lineTo(-0.5, 1.9);
+      dragonBodyShape.lineTo(-0.32, 1.92);
+      dragonBodyShape.lineTo(-0.16, 1.75);
+      // S-Curved Neck
+      dragonBodyShape.bezierCurveTo(0.35, 1.6, 0.55, 1.15, 0.28, 0.7);
+      dragonBodyShape.lineTo(0.12, 0.55);
+      // Left Wing Fold
+      dragonBodyShape.bezierCurveTo(-0.45, 0.6, -1.35, 0.5, -1.5, 0.15);
+      dragonBodyShape.lineTo(-1.3, -0.05);
+      dragonBodyShape.bezierCurveTo(-0.9, -0.15, -0.4, -0.25, -0.15, -0.55);
+      // Right Wing Fold
+      dragonBodyShape.bezierCurveTo(0.4, -0.25, 0.9, -0.15, 1.3, -0.05);
+      dragonBodyShape.lineTo(1.5, 0.15);
+      dragonBodyShape.bezierCurveTo(1.35, 0.5, 0.45, 0.6, 0.15, 0.55);
+      // Zigzag Tail
+      dragonBodyShape.lineTo(0.08, -0.7);
+      dragonBodyShape.lineTo(-0.18, -1.4);
+      dragonBodyShape.lineTo(0.16, -2.1);
+      dragonBodyShape.lineTo(-0.25, -2.9);
+      dragonBodyShape.lineTo(0.2, -3.6);
+      dragonBodyShape.lineTo(0.0, -4.3); // Arrow point tip
+      dragonBodyShape.lineTo(-0.08, -3.6);
+      dragonBodyShape.lineTo(0.04, -2.9);
+      dragonBodyShape.lineTo(-0.06, -2.1);
+      dragonBodyShape.lineTo(0.05, -1.4);
+      dragonBodyShape.lineTo(-0.04, -0.7);
+      dragonBodyShape.closePath();
 
-      const aMat = new THREE.PointsMaterial({
-        size: 0.3,
-        vertexColors: true,
+      const dragonGeo = new THREE.ExtrudeGeometry(dragonBodyShape, {
+        depth: 0.3,
+        bevelEnabled: true,
+        bevelSegments: 4,
+        steps: 1,
+        bevelSize: 0.06,
+        bevelThickness: 0.08,
+      });
+      dragonGeo.translate(0, 0, -0.05);
+      const dragonMesh = new THREE.Mesh(dragonGeo, steelMat);
+      const dragonWire = new THREE.Mesh(dragonGeo, steelWireMat);
+      skyrimLogo.add(dragonMesh);
+      skyrimLogo.add(dragonWire);
+
+      // Frost Halo Sprite behind the logo
+      const skyrimHaloMat = new THREE.SpriteMaterial({
+        map: makeGlowTexture("rgba(180,225,255,0.85)", "rgba(56,189,248,0.4)", "rgba(14,165,233,0)"),
+        transparent: true,
+        opacity: 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const skyrimHalo = makeSprite(skyrimHaloMat, 0, 0, -0.5, 8.5, 8.5);
+      skyrimLogo.add(skyrimHalo);
+
+      skyrimLogoRef = skyrimLogo;
+      skyrimGroup.add(skyrimLogo);
+
+      // --- Pale moon with soft halo ---
+      const moonMat = new THREE.SpriteMaterial({
+        map: makeGlowTexture("rgba(240,248,255,1)", "rgba(190,220,250,0.9)", "rgba(140,180,230,0)"),
         transparent: true,
         opacity: 0.9,
         blending: THREE.AdditiveBlending,
+        depthWrite: false,
       });
-      const aurora = new THREE.Points(aGeo, aMat);
-      skyrimGroup.add(aurora);
+      const moon = makeSprite(moonMat, 6.6, 4.6, -7, 2.6, 2.6);
+      skyrimGroup.add(moon);
 
-      // Gentle Snowfall Particles
-      const snowCount = 200;
-      const snowGeo = new THREE.BufferGeometry();
-      const snowPos = new Float32Array(snowCount * 3);
-      for (let i = 0; i < snowCount; i++) {
-        snowPos[i * 3] = (Math.random() - 0.5) * 26;
-        snowPos[i * 3 + 1] = (Math.random() - 0.5) * 16;
-        snowPos[i * 3 + 2] = (Math.random() - 0.5) * 16;
-      }
-      snowGeo.setAttribute("position", new THREE.BufferAttribute(snowPos, 3));
-      snowPositionsRef = snowPos;
-      snowGeoRef = snowGeo;
-
-      const snowMat = new THREE.PointsMaterial({
-        color: 0xf0f9ff,
-        size: 0.1,
+      const moonHaloMat = new THREE.SpriteMaterial({
+        map: makeGlowTexture("rgba(190,220,250,0.7)", "rgba(150,190,235,0.3)", "rgba(120,160,220,0)"),
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.13,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
       });
-      const snowfall = new THREE.Points(snowGeo, snowMat);
-      skyrimGroup.add(snowfall);
+      const moonHalo = makeSprite(moonHaloMat, 6.6, 4.6, -7.2, 6.4, 6.4);
+      skyrimGroup.add(moonHalo);
+
+      // --- Twinkling star field (three depth layers) ---
+      skyStarRefs = [];
+      const starTexture = makeSoftDotTexture("rgba(255,255,255,1)", "rgba(180,210,255,0.7)");
+      const starLayers = [
+        { count: 340, size: 0.045, yMin: 1.5, yMax: 13.5, opacity: 0.7, freq: 1.6 },
+        { count: 210, size: 0.07, yMin: 2.5, yMax: 13.0, opacity: 0.55, freq: 1.1 },
+        { count: 90, size: 0.1, yMin: 3.0, yMax: 12.0, opacity: 0.5, freq: 0.7 },
+      ];
+      for (const layer of starLayers) {
+        const geo = new THREE.BufferGeometry();
+        const pos = new Float32Array(layer.count * 3);
+        for (let i = 0; i < layer.count; i++) {
+          pos[i * 3] = (Math.random() - 0.5) * 40;
+          pos[i * 3 + 1] = layer.yMin + Math.random() * (layer.yMax - layer.yMin);
+          pos[i * 3 + 2] = -8 + Math.random() * 5;
+        }
+        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const mat = new THREE.PointsMaterial({
+          size: layer.size,
+          map: starTexture,
+          color: 0xdfeaff,
+          transparent: true,
+          opacity: layer.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        skyrimGroup.add(new THREE.Points(geo, mat));
+        skyStarRefs.push({
+          mat,
+          phase: Math.random() * Math.PI * 2,
+          freq: layer.freq,
+          baseOpacity: layer.opacity,
+        });
+      }
+
+      // --- Drifting Frost Mist Banks (subtle) ---
+      skyMistRefs = [];
+      const mistTexture = makeSoftSpriteTexture("rgba(214,236,255,0.5)", "rgba(148,190,236,0.22)");
+      for (let i = 0; i < 6; i++) {
+        const mistMat = new THREE.SpriteMaterial({
+          map: mistTexture,
+          transparent: true,
+          opacity: 0.03 + Math.random() * 0.04,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const sc = 3.5 + Math.random() * 4.2;
+        const mist = makeSprite(
+          mistMat,
+          (Math.random() - 0.5) * 24,
+          -3.2 + Math.random() * 5.8,
+          -1.5 + Math.random() * 2.5,
+          sc,
+          sc * 0.45,
+        );
+        skyrimGroup.add(mist);
+        skyMistRefs.push({
+          sprite: mist,
+          speed: (Math.random() > 0.5 ? 1 : -1) * (0.03 + Math.random() * 0.05),
+          baseY: mist.position.y,
+          phase: Math.random() * Math.PI * 2,
+          opacity: mistMat.opacity,
+        });
+      }
+
+      // --- Frost falling across the whole IDE (three crystalline layers) ---
+      skyFrostRefs = [];
+      const flakeTexture = makeFlakeTexture();
+      const frostLayers = [
+        { count: 520, size: 0.13, color: 0xeaf4ff, min: 0.006, max: 0.012, spread: 40, opacity: 0.7, freq: 2.4 },
+        { count: 360, size: 0.22, color: 0xd9ecff, min: 0.01, max: 0.018, spread: 38, opacity: 0.92, freq: 1.8 },
+        { count: 170, size: 0.4, color: 0xc8ddff, min: 0.017, max: 0.028, spread: 36, opacity: 0.85, freq: 1.2 },
+      ];
+      for (const layer of frostLayers) {
+        const geo = new THREE.BufferGeometry();
+        const pos = new Float32Array(layer.count * 3);
+        const speeds = new Float32Array(layer.count);
+        const drift = new Float32Array(layer.count);
+        for (let i = 0; i < layer.count; i++) {
+          pos[i * 3] = (Math.random() - 0.5) * layer.spread;
+          pos[i * 3 + 1] = (Math.random() - 0.5) * 22;
+          pos[i * 3 + 2] = -6 + Math.random() * 5;
+          speeds[i] = layer.min + Math.random() * (layer.max - layer.min);
+          drift[i] = Math.random() * Math.PI * 2;
+        }
+        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const mat = new THREE.PointsMaterial({
+          size: layer.size,
+          map: flakeTexture,
+          color: layer.color,
+          transparent: true,
+          opacity: layer.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        skyrimGroup.add(new THREE.Points(geo, mat));
+        skyFrostRefs.push({
+          positions: pos,
+          speeds,
+          drift,
+          geo,
+          count: layer.count,
+          mat,
+          baseOpacity: layer.opacity,
+          freq: layer.freq,
+          phase: Math.random() * Math.PI * 2,
+          floor: -11,
+          ceiling: 11,
+        });
+      }
+
+      // --- Rising Frost Dust (icy motes drifting upward) ---
+      const frostCount = 160;
+      const frostGeo = new THREE.BufferGeometry();
+      const frostPos = new Float32Array(frostCount * 3);
+      const frostSpeeds = new Float32Array(frostCount);
+      for (let i = 0; i < frostCount; i++) {
+        frostPos[i * 3] = (Math.random() - 0.5) * 28;
+        frostPos[i * 3 + 1] = (Math.random() - 0.5) * 16;
+        frostPos[i * 3 + 2] = (Math.random() - 0.5) * 10;
+        frostSpeeds[i] = 0.02 + Math.random() * 0.05;
+      }
+      frostGeo.setAttribute("position", new THREE.BufferAttribute(frostPos, 3));
+      frostPositionsRef = frostPos;
+      frostSpeedsRef = frostSpeeds;
+      frostGeoRef = frostGeo;
+
+      const frostMat = new THREE.PointsMaterial({
+        size: 0.07,
+        map: starTexture,
+        color: 0xd0e8ff,
+        transparent: true,
+        opacity: 0.62,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const frostDust = new THREE.Points(frostGeo, frostMat);
+      skyrimGroup.add(frostDust);
 
       group.add(skyrimGroup);
     } else if (currentTheme === "dragons_dogma") {
       // =======================================================================
-      // 4. DRAGON'S DOGMA: GRIGORI THE GREAT DRAGON & WYRMFIRE RIFT
+      // 4. DRAGON'S DOGMA: THE ARISEN'S BEATING HEART & RISING EMBERS
       // =======================================================================
       const ddGroup = new THREE.Group();
       ddGroup.position.set(0, 0, -10);
 
-      const redWire = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, transparent: true, opacity: 0.85 });
-      const darkRed = new THREE.MeshBasicMaterial({ color: 0x991b1b, wireframe: true, transparent: true, opacity: 0.65 });
-      const goldHornMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.9 });
-      const eyeRed = new THREE.MeshBasicMaterial({ color: 0xff0033 });
+      // --- The Arisen's Heart (always visible, centered, lub-dub heartbeat) ---
+      const heartGroup = new THREE.Group();
+      heartGroup.position.set(0, 0.05, 0);
 
-      // --- 3D Grigori Dragon Head ---
-      const dragonHead = new THREE.Group();
-      dragonHead.position.set(2.4, 0.2, 1.2);
-      dragonHead.scale.set(1.05, 1.05, 1.05);
+      const heartBody = new THREE.Group();
+      heartBody.rotation.z = 0.1;
+      heartGroup.add(heartBody);
 
-      // Snout / Upper Jaw
-      const snoutGeo = new THREE.CylinderGeometry(0.35, 0.75, 2.2, 6);
-      snoutGeo.rotateX(Math.PI / 2);
-      const snout = new THREE.Mesh(snoutGeo, redWire);
-      snout.position.set(0, 0, 1.1);
-      dragonHead.add(snout);
+      // Anatomical silhouette: asymmetric atria, bulging ventricles,
+      // apex pointing down-left (no Valentine lobes, no vessels).
+      const heartShape = new THREE.Shape();
+      heartShape.moveTo(-0.52, -1.22);
+      heartShape.bezierCurveTo(-1.02, -0.95, -1.14, -0.45, -1.05, -0.08);
+      heartShape.bezierCurveTo(-0.99, 0.25, -0.82, 0.62, -0.66, 0.86);
+      heartShape.bezierCurveTo(-0.55, 1.0, -0.38, 1.1, -0.22, 1.08);
+      heartShape.bezierCurveTo(-0.08, 1.04, -0.02, 0.94, 0.02, 0.92);
+      heartShape.bezierCurveTo(0.14, 1.02, 0.26, 1.14, 0.42, 1.12);
+      heartShape.bezierCurveTo(0.68, 1.04, 0.88, 0.86, 0.96, 0.6);
+      heartShape.bezierCurveTo(1.06, 0.28, 1.04, -0.05, 0.94, -0.3);
+      heartShape.bezierCurveTo(0.82, -0.6, 0.6, -0.85, 0.28, -1.0);
+      heartShape.bezierCurveTo(0.02, -1.1, -0.26, -1.16, -0.52, -1.22);
 
-      // Skull Cranium
-      const skullGeo = new THREE.DodecahedronGeometry(1.0, 1);
-      const skull = new THREE.Mesh(skullGeo, redWire);
-      skull.scale.set(1.1, 0.9, 1.4);
-      skull.position.set(0, 0.2, -0.4);
-      dragonHead.add(skull);
-
-      // Lower Jaw
-      const jawGeo = new THREE.ConeGeometry(0.5, 1.8, 5);
-      jawGeo.rotateX(-Math.PI / 2);
-      const jaw = new THREE.Mesh(jawGeo, darkRed);
-      jaw.position.set(0, -0.45, 0.8);
-      dragonHead.add(jaw);
-
-      // Dragon Crown Horns & Glowing Crimson Eyes
-      [-1, 1].forEach((side) => {
-        // Main sweeping horn
-        const curvePoints = [
-          new THREE.Vector3(side * 0.6, 0.6, -0.6),
-          new THREE.Vector3(side * 1.3, 1.4, -1.2),
-          new THREE.Vector3(side * 1.9, 2.2, -1.8),
-          new THREE.Vector3(side * 2.3, 2.8, -2.4),
-        ];
-        const hornCurve = new THREE.CatmullRomCurve3(curvePoints);
-        const hornGeo = new THREE.TubeGeometry(hornCurve, 12, 0.14, 6, false);
-        const horn = new THREE.Mesh(hornGeo, goldHornMat);
-        dragonHead.add(horn);
-
-        // Secondary crest horn
-        const crestCurve = [
-          new THREE.Vector3(side * 0.35, 0.8, -0.2),
-          new THREE.Vector3(side * 0.7, 1.5, -0.7),
-          new THREE.Vector3(side * 1.0, 2.0, -1.1),
-        ];
-        const crestGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(crestCurve), 8, 0.09, 5, false);
-        const crest = new THREE.Mesh(crestGeo, redWire);
-        dragonHead.add(crest);
-
-        // Glowing red eye
-        const eyeGeo = new THREE.SphereGeometry(0.14, 8, 8);
-        const eye = new THREE.Mesh(eyeGeo, eyeRed);
-        eye.position.set(side * 0.55, 0.35, 0.5);
-        dragonHead.add(eye);
+      const heartGeo = new THREE.ExtrudeGeometry(heartShape, {
+        depth: 0.36,
+        bevelEnabled: true,
+        bevelThickness: 0.07,
+        bevelSize: 0.05,
+        bevelSegments: 5,
+        curveSegments: 24,
       });
+      heartGeo.translate(0.04, 0.04, -0.18);
 
-      // Dragon's Molten Throat Heart Core
-      const heartGeo = new THREE.OctahedronGeometry(0.45, 0);
-      const heartMat = new THREE.MeshBasicMaterial({ color: 0xff3b30, wireframe: true, transparent: true, opacity: 0.95 });
-      const heart = new THREE.Mesh(heartGeo, heartMat);
-      heart.position.set(0, -0.1, 0.1);
-      grigoriHeartRef = heart;
-      dragonHead.add(heart);
+      const heartMat = new THREE.MeshBasicMaterial({
+        color: 0xc4160f,
+        side: THREE.DoubleSide,
+      });
+      const heartMesh = new THREE.Mesh(heartGeo, heartMat);
+      heartBody.add(heartMesh);
 
-      grigoriHeadRef = dragonHead;
-      ddGroup.add(dragonHead);
+      // Brighter molten inner layer (glowing through the muscle)
+      const innerHeartGeo = heartGeo.clone();
+      innerHeartGeo.scale(0.74, 0.74, 0.74);
+      innerHeartGeo.translate(0, 0.02, 0.09);
+      const innerHeartMat = new THREE.MeshBasicMaterial({
+        color: 0xe8482a,
+        side: THREE.DoubleSide,
+      });
+      const innerHeart = new THREE.Mesh(innerHeartGeo, innerHeartMat);
+      heartBody.add(innerHeart);
 
-      // --- The Rift Stone Monolith (In Background) ---
-      const riftMat = new THREE.MeshBasicMaterial({
-        color: 0x818cf8,
+      // Surface grooves hugging the front face (sulci, flattened ribbons)
+      const grooveMat = new THREE.MeshBasicMaterial({ color: 0x6e0f13 });
+      const makeGroove = (pts: number[][], r: number) => {
+        const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+        const tubeGeo = new THREE.TubeGeometry(curve, 14, r, 6, false);
+        const tube = new THREE.Mesh(tubeGeo, grooveMat);
+        tube.scale.set(1, 1, 0.16);
+        heartBody.add(tube);
+      };
+      makeGroove(
+        [[0.28, 0.5, 0.2], [0.12, 0.15, 0.2], [-0.1, -0.35, 0.2], [-0.32, -0.8, 0.2], [-0.48, -1.12, 0.2]],
+        0.045,
+      );
+      makeGroove(
+        [[-0.72, 0.62, 0.2], [-0.42, 0.4, 0.2], [0.0, 0.36, 0.2], [0.42, 0.44, 0.2], [0.75, 0.66, 0.2]],
+        0.04,
+      );
+
+      // White-hot beating core sprite
+      const coreMat = new THREE.SpriteMaterial({
+        map: makeGlowTexture("rgba(255,240,210,1)", "rgba(255,170,90,0.6)", "rgba(255,90,30,0)"),
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const coreGlow = makeSprite(coreMat, 0, 0.15, 0.32, 1.05, 1.05);
+      ddHeartCoreRef = coreGlow;
+      heartGroup.add(coreGlow);
+
+      // Wide molten halo behind the heart
+      const haloMat = new THREE.SpriteMaterial({
+        map: makeGlowTexture("rgba(255,190,120,0.95)", "rgba(255,90,40,0.5)", "rgba(255,60,20,0)"),
+        transparent: true,
+        opacity: 0.32,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const halo = makeSprite(haloMat, 0, 0.15, -0.4, 3.6, 3.6);
+      ddHeartGlowRef = halo;
+      heartGroup.add(halo);
+
+      ddHeartGroupRef = heartGroup;
+      ddGroup.add(heartGroup);
+
+      // --- Dragon's Dogma Ouroboros Dragon Ring (Iconic Dragon Framing the Heart) ---
+      const dragonRingGroup = new THREE.Group();
+      dragonRingGroup.position.set(0, 0.05, -0.6);
+
+      // Curved circular dragon body (Ouroboros ring)
+      const ringGeo = new THREE.TorusGeometry(2.5, 0.12, 16, 64);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xef4444,
         wireframe: true,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.85,
       });
-      const pillarGeo = new THREE.CylinderGeometry(0.7, 1.1, 5.0, 6);
-      const pillar = new THREE.Mesh(pillarGeo, riftMat);
-      pillar.position.set(-2.0, 0, -2.0);
-      ddGroup.add(pillar);
-
-      // Rift Energy Rings
-      const riftRingGeo1 = new THREE.TorusGeometry(2.2, 0.05, 16, 32);
-      const riftRingMat1 = new THREE.MeshBasicMaterial({
-        color: 0x06b6d4,
+      const ringSolidMat = new THREE.MeshBasicMaterial({
+        color: 0x991b1b,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.45,
       });
-      const riftRing1 = new THREE.Mesh(riftRingGeo1, riftRingMat1);
-      riftRing1.position.set(-2.0, 0, -2.0);
-      riftRing1.rotation.x = Math.PI / 3;
-      riftRing1Ref = riftRing1;
-      ddGroup.add(riftRing1);
+      dragonRingGroup.add(new THREE.Mesh(ringGeo, ringMat));
+      dragonRingGroup.add(new THREE.Mesh(ringGeo, ringSolidMat));
 
-      const riftRingGeo2 = new THREE.TorusGeometry(2.8, 0.04, 16, 32);
-      const riftRingMat2 = new THREE.MeshBasicMaterial({
+      // Dragon scales / wyrm dorsal spikes along the Ouroboros ring
+      for (let i = 0; i < 20; i++) {
+        const ang = (i * Math.PI) / 10;
+        const spikeGeo = new THREE.ConeGeometry(0.09, 0.45, 4);
+        const spikeMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.85 });
+        const spike = new THREE.Mesh(spikeGeo, spikeMat);
+        spike.position.set(Math.cos(ang) * 2.65, Math.sin(ang) * 2.65, 0);
+        spike.rotation.z = ang - Math.PI / 2;
+        dragonRingGroup.add(spike);
+      }
+
+      // Dragon Head on top-right of the ring
+      const dHeadGeo = new THREE.ConeGeometry(0.35, 1.1, 5);
+      dHeadGeo.rotateZ(-Math.PI / 3.5);
+      const dHeadMat = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, transparent: true, opacity: 0.95 });
+      const dHead = new THREE.Mesh(dHeadGeo, dHeadMat);
+      dHead.position.set(1.6, 1.9, 0.1);
+      dragonRingGroup.add(dHead);
+
+      // Crown Horns on the dragon head
+      [-1, 1].forEach((side) => {
+        const hGeo = new THREE.ConeGeometry(0.08, 0.85, 4);
+        const hMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.9 });
+        const horn = new THREE.Mesh(hGeo, hMat);
+        horn.position.set(1.6 + side * 0.22, 2.4, 0.1);
+        horn.rotation.z = side * 0.35;
+        dragonRingGroup.add(horn);
+      });
+
+      // Spreading Dragon Wings Framing Upper Arc
+      [-1, 1].forEach((side) => {
+        const wingCurve = [
+          new THREE.Vector3(side * 1.0, 1.5, 0),
+          new THREE.Vector3(side * 2.4, 2.6, 0.1),
+          new THREE.Vector3(side * 3.8, 2.9, 0.2),
+          new THREE.Vector3(side * 4.6, 2.2, 0.1),
+        ];
+        const wingGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(wingCurve), 14, 0.08, 6, false);
+        const wingMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.8 });
+        dragonRingGroup.add(new THREE.Mesh(wingGeo, wingMat));
+      });
+
+      ddDragonRingRef = dragonRingGroup;
+      ddGroup.add(dragonRingGroup);
+
+      // --- Arisen's Sealing Rings (arcane gold rings behind the heart) ---
+      const sealMat = new THREE.MeshBasicMaterial({
+        color: 0xf59e0b,
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false,
+      });
+      const sealGeo = new THREE.TorusGeometry(3.2, 0.02, 8, 72);
+      const seal = new THREE.Mesh(sealGeo, sealMat);
+      seal.position.set(0, 0.05, -1.0);
+      seal.rotation.x = Math.PI / 2.6;
+      ddSealRef = seal;
+      ddGroup.add(seal);
+
+      const seal2Mat = new THREE.MeshBasicMaterial({
         color: 0xef4444,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.16,
+        depthWrite: false,
       });
-      const riftRing2 = new THREE.Mesh(riftRingGeo2, riftRingMat2);
-      riftRing2.position.set(-2.0, 0, -2.0);
-      riftRing2.rotation.y = Math.PI / 4;
-      riftRing2Ref = riftRing2;
-      ddGroup.add(riftRing2);
+      const seal2Geo = new THREE.TorusGeometry(3.9, 0.015, 8, 72);
+      const seal2 = new THREE.Mesh(seal2Geo, seal2Mat);
+      seal2.position.set(0, 0.05, -1.15);
+      seal2.rotation.x = Math.PI / 2.3;
+      ddGroup.add(seal2);
 
-      // Rising Molten Dragon Fire Embers
-      const emberCount = 220;
-      const emberGeo = new THREE.BufferGeometry();
-      const emberPos = new Float32Array(emberCount * 3);
-      const emberCol = new Float32Array(emberCount * 3);
-
-      const flameRed = new THREE.Color(0xef4444);
-      const moltenGold = new THREE.Color(0xf59e0b);
-
-      for (let i = 0; i < emberCount; i++) {
-        const theta = Math.random() * Math.PI * 2;
-        const r = 0.5 + Math.random() * 2.8;
-        emberPos[i * 3] = Math.cos(theta) * r;
-        emberPos[i * 3 + 1] = (Math.random() - 0.5) * 7.5;
-        emberPos[i * 3 + 2] = Math.sin(theta) * r;
-
-        const c = Math.random() > 0.5 ? flameRed : moltenGold;
-        emberCol[i * 3] = c.r;
-        emberCol[i * 3 + 1] = c.g;
-        emberCol[i * 3 + 2] = c.b;
+      // --- Rising Molten Embers covering the WHOLE IDE (five depth layers) ---
+      ddEmberSystemsRef = [];
+      const emberTexture = makeSoftDotTexture("rgba(255,255,235,1)", "rgba(255,170,80,0.85)");
+      const emberLayers = [
+        { count: 620, size: 0.055, colors: [0xffb066, 0xff7a2a], min: 0.0035, max: 0.009, spread: 19.0, yMin: -9.5, yMax: 13.5, zMin: -3.5, zMax: 1.5, opacity: 0.55, flicker: 2.3 },
+        { count: 430, size: 0.1, colors: [0xff8c42, 0xff5a1f], min: 0.0045, max: 0.011, spread: 18.0, yMin: -9.5, yMax: 13.5, zMin: -3.0, zMax: 2.0, opacity: 0.8, flicker: 1.7 },
+        { count: 240, size: 0.19, colors: [0xff6b2a, 0xffb84d], min: 0.008, max: 0.017, spread: 16.5, yMin: -9.5, yMax: 13.5, zMin: -2.5, zMax: 2.5, opacity: 0.9, flicker: 1.3 },
+        { count: 110, size: 0.34, colors: [0xffa04d, 0xffd066], min: 0.012, max: 0.024, spread: 14.5, yMin: -9.5, yMax: 13.5, zMin: -2.0, zMax: 2.8, opacity: 0.85, flicker: 1.0 },
+        { count: 380, size: 0.04, colors: [0xffe0a0, 0xffc46b], min: 0.02, max: 0.035, spread: 17.0, yMin: -9.5, yMax: 13.5, zMin: -3.0, zMax: 2.0, opacity: 0.65, flicker: 3.1 },
+      ];
+      for (const layer of emberLayers) {
+        const geo = new THREE.BufferGeometry();
+        const pos = new Float32Array(layer.count * 3);
+        const col = new Float32Array(layer.count * 3);
+        const speeds = new Float32Array(layer.count);
+        const cA = new THREE.Color(layer.colors[0]);
+        const cB = new THREE.Color(layer.colors[1]);
+        for (let i = 0; i < layer.count; i++) {
+          pos[i * 3] = (Math.random() - 0.5) * layer.spread;
+          pos[i * 3 + 1] = layer.yMin + Math.random() * (layer.yMax - layer.yMin);
+          pos[i * 3 + 2] = layer.zMin + Math.random() * (layer.zMax - layer.zMin);
+          const c = Math.random() > 0.5 ? cA : cB;
+          col[i * 3] = c.r;
+          col[i * 3 + 1] = c.g;
+          col[i * 3 + 2] = c.b;
+          speeds[i] = layer.min + Math.random() * (layer.max - layer.min);
+        }
+        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+        const mat = new THREE.PointsMaterial({
+          size: layer.size,
+          map: emberTexture,
+          vertexColors: true,
+          transparent: true,
+          opacity: layer.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        ddGroup.add(new THREE.Points(geo, mat));
+        ddEmberSystemsRef.push({
+          positions: pos,
+          speeds,
+          geo,
+          count: layer.count,
+          floor: layer.yMin,
+          ceiling: layer.yMax,
+          spread: layer.spread,
+          mat,
+          baseOpacity: layer.opacity,
+          flickerFreq: layer.flicker,
+          flickerPhase: Math.random() * Math.PI * 2,
+        });
       }
-      emberGeo.setAttribute("position", new THREE.BufferAttribute(emberPos, 3));
-      emberGeo.setAttribute("color", new THREE.BufferAttribute(emberCol, 3));
-      emberPositionsRef = emberPos;
-      emberGeoRef = emberGeo;
 
-      const emberMat = new THREE.PointsMaterial({
-        size: 0.18,
-        vertexColors: true,
+      // --- Drifting Cinder Smoke Wisps ---
+      ddSmokeRefs = [];
+      const smokeTexture = makeSoftSpriteTexture("rgba(112,78,58,0.85)", "rgba(86,58,42,0.5)");
+      for (let i = 0; i < 6; i++) {
+        const smokeMat = new THREE.SpriteMaterial({
+          map: smokeTexture,
+          transparent: true,
+          opacity: 0.05 + Math.random() * 0.05,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const sc = 2.4 + Math.random() * 2.6;
+        const smoke = makeSprite(
+          smokeMat,
+          (Math.random() - 0.5) * 12,
+          -4.5 + Math.random() * 7.5,
+          (Math.random() - 0.5) * 2.0,
+          sc,
+          sc * 0.6,
+        );
+        ddGroup.add(smoke);
+        ddSmokeRefs.push({
+          sprite: smoke,
+          speed: 0.06 + Math.random() * 0.12,
+          baseX: smoke.position.x,
+          phase: Math.random() * Math.PI * 2,
+          opacity: smokeMat.opacity,
+        });
+      }
+
+      // --- Smoldering ground glow ---
+      const floorGlowMat = new THREE.SpriteMaterial({
+        map: makeGlowTexture("rgba(255,130,45,0.85)", "rgba(255,70,30,0.4)", "rgba(255,40,20,0)"),
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.3,
         blending: THREE.AdditiveBlending,
+        depthWrite: false,
       });
-      const embers = new THREE.Points(emberGeo, emberMat);
-      ddGroup.add(embers);
+      const floorGlow = makeSprite(floorGlowMat, 0, -3.5, -0.2, 11.5, 3.8);
+      ddFloorGlowRef = floorGlow;
+      ddGroup.add(floorGlow);
 
       group.add(ddGroup);
     }
@@ -692,65 +1160,115 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         }
       }
 
-      // Skyrim Dovahkiin helmet, Thu'um shockwaves and Aurora undulation
+      // Skyrim night: Skyrim Akatosh Dragon Crest breathing, twinkling stars, falling frost & mist banks
       if (currentTheme === "skyrim") {
-        if (dovahkiinRef) {
-          dovahkiinRef.rotation.y = Math.sin(elapsed * 0.6) * 0.1 + mouseX * 0.08;
-          dovahkiinRef.rotation.x = Math.cos(elapsed * 0.4) * 0.05 + mouseY * 0.05;
-          dovahkiinRef.position.y = 0.3 + Math.sin(elapsed * 1.2) * 0.05;
+        if (skyrimLogoRef) {
+          skyrimLogoRef.rotation.y = Math.sin(elapsed * 0.4) * 0.08 + mouseX * 0.06;
+          skyrimLogoRef.rotation.x = Math.cos(elapsed * 0.3) * 0.04 + mouseY * 0.04;
+          skyrimLogoRef.position.y = 0.15 + Math.sin(elapsed * 0.6) * 0.08;
         }
 
-        // Dragon Shout shockwave rings expansion
-        shoutRingsRef.forEach((ring, idx) => {
-          const ringScale = ((elapsed * 0.8 + idx * 0.4) % 2.0) + 0.2;
-          ring.scale.set(ringScale, ringScale, ringScale);
-          (ring.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.4 - ringScale * 0.18);
-        });
-
-        if (auroraPositionsRef && auroraGeoRef) {
-          const total = auroraPositionsRef.length / 3;
-          for (let i = 0; i < total; i++) {
-            const u = (i / total) * Math.PI * 4;
-            auroraPositionsRef[i * 3 + 1] = 2.4 + Math.sin(u + elapsed * 1.2) * 1.4;
-          }
-          auroraGeoRef.attributes.position.needsUpdate = true;
+        for (const s of skyStarRefs) {
+          s.mat.opacity = s.baseOpacity * (0.65 + 0.35 * (0.5 + 0.5 * Math.sin(elapsed * s.freq + s.phase)));
         }
 
-        if (snowPositionsRef && snowGeoRef) {
-          for (let i = 0; i < snowPositionsRef.length / 3; i++) {
-            snowPositionsRef[i * 3 + 1] -= 0.025;
-            if (snowPositionsRef[i * 3 + 1] < -8) {
-              snowPositionsRef[i * 3 + 1] = 8;
+        for (const w of skyMistRefs) {
+          w.sprite.position.x += w.speed;
+          if (w.sprite.position.x > 14) w.sprite.position.x = -14;
+          if (w.sprite.position.x < -14) w.sprite.position.x = 14;
+          w.sprite.position.y = w.baseY + Math.sin(elapsed * 0.25 + w.phase) * 0.4;
+          (w.sprite.material as THREE.SpriteMaterial).opacity =
+            w.opacity * (0.75 + 0.25 * Math.sin(elapsed * 0.8 + w.phase));
+        }
+
+        for (const sys of skyFrostRefs) {
+          for (let i = 0; i < sys.count; i++) {
+            sys.positions[i * 3 + 1] -= sys.speeds[i];
+            sys.positions[i * 3] += Math.sin(elapsed * 0.9 + sys.drift[i]) * 0.0035;
+            if (sys.positions[i * 3 + 1] < sys.floor) {
+              sys.positions[i * 3 + 1] = sys.ceiling;
+              sys.positions[i * 3] = (Math.random() - 0.5) * 38;
             }
           }
-          snowGeoRef.attributes.position.needsUpdate = true;
+          sys.geo.attributes.position.needsUpdate = true;
+          sys.mat.opacity = sys.baseOpacity * (0.78 + 0.22 * Math.sin(elapsed * sys.freq + sys.phase));
+        }
+
+        if (frostPositionsRef && frostSpeedsRef && frostGeoRef) {
+          for (let i = 0; i < frostPositionsRef.length / 3; i++) {
+            frostPositionsRef[i * 3 + 1] += frostSpeedsRef[i];
+            frostPositionsRef[i * 3] += Math.sin(elapsed * 0.9 + i * 0.8) * 0.003;
+            if (frostPositionsRef[i * 3 + 1] > 8) {
+              frostPositionsRef[i * 3 + 1] = -8;
+            }
+          }
+          frostGeoRef.attributes.position.needsUpdate = true;
         }
       }
 
-      // Dragon's Dogma Grigori dragon head swaying & molten throat pulse
+      // Dragon's Dogma: the Arisen's heart beating (lub-dub) amid Ouroboros dragon and rising embers
       if (currentTheme === "dragons_dogma") {
-        if (grigoriHeadRef) {
-          grigoriHeadRef.rotation.y = Math.sin(elapsed * 0.7) * 0.12 + mouseX * 0.1;
-          grigoriHeadRef.rotation.x = Math.sin(elapsed * 0.9) * 0.08 + mouseY * 0.08;
-          grigoriHeadRef.position.y = 0.2 + Math.sin(elapsed * 1.4) * 0.08;
+        const t = elapsed % 1.3;
+        const lub = Math.exp(-Math.pow(t / 0.1, 2));
+        const dub = Math.exp(-Math.pow((t - 0.24) / 0.12, 2));
+        const beat = lub + dub * 0.8;
+
+        if (ddDragonRingRef) {
+          ddDragonRingRef.rotation.z = Math.sin(elapsed * 0.25) * 0.04;
+          ddDragonRingRef.rotation.y = Math.sin(elapsed * 0.4) * 0.06;
+          ddDragonRingRef.scale.set(1.0 + beat * 0.03, 1.0 + beat * 0.03, 1.0);
         }
 
-        if (grigoriHeartRef) {
-          const pulse = 1.0 + Math.sin(elapsed * 3.5) * 0.25;
-          grigoriHeartRef.scale.set(pulse, pulse, pulse);
+        if (ddHeartGroupRef) {
+          const s = 1.32 * (1 + beat * 0.13);
+          ddHeartGroupRef.scale.set(s, s, s);
+          ddHeartGroupRef.rotation.y = Math.sin(elapsed * 0.5) * 0.12;
+          ddHeartGroupRef.rotation.z = Math.sin(elapsed * 0.7) * 0.05;
+          ddHeartGroupRef.position.y = 0.05 + Math.sin(elapsed * 0.8) * 0.06;
         }
 
-        if (riftRing1Ref) riftRing1Ref.rotation.z = elapsed * 0.3;
-        if (riftRing2Ref) riftRing2Ref.rotation.z = -elapsed * 0.2;
+        if (ddHeartCoreRef) {
+          const cs = 1.0 + beat * 0.7;
+          ddHeartCoreRef.scale.set(cs, cs, 1);
+          (ddHeartCoreRef.material as THREE.SpriteMaterial).opacity = 0.35 + beat * 0.55;
+        }
 
-        if (emberPositionsRef && emberGeoRef) {
-          for (let i = 0; i < emberPositionsRef.length / 3; i++) {
-            emberPositionsRef[i * 3 + 1] += 0.035;
-            if (emberPositionsRef[i * 3 + 1] > 4.5) {
-              emberPositionsRef[i * 3 + 1] = -4.5;
+        if (ddHeartGlowRef) {
+          const gs = 3.4 + beat * 1.0;
+          ddHeartGlowRef.scale.set(gs, gs, 1);
+          (ddHeartGlowRef.material as THREE.SpriteMaterial).opacity = 0.2 + beat * 0.3;
+        }
+
+        if (ddSealRef) {
+          ddSealRef.rotation.z = elapsed * 0.25;
+          (ddSealRef.material as THREE.MeshBasicMaterial).opacity = 0.26 + beat * 0.15;
+        }
+
+        for (const sys of ddEmberSystemsRef) {
+          for (let i = 0; i < sys.count; i++) {
+            sys.positions[i * 3 + 1] += sys.speeds[i];
+            sys.positions[i * 3] += Math.sin(elapsed * 1.2 + i * 0.53) * 0.002;
+            if (sys.positions[i * 3 + 1] > sys.ceiling) {
+              sys.positions[i * 3 + 1] = sys.floor;
+              sys.positions[i * 3] = (Math.random() - 0.5) * sys.spread;
             }
           }
-          emberGeoRef.attributes.position.needsUpdate = true;
+          sys.geo.attributes.position.needsUpdate = true;
+          sys.mat.opacity =
+            sys.baseOpacity * (0.76 + 0.24 * Math.sin(elapsed * sys.flickerFreq + sys.flickerPhase));
+        }
+
+        for (const w of ddSmokeRefs) {
+          w.sprite.position.y += w.speed;
+          if (w.sprite.position.y > 6.5) w.sprite.position.y = -4.5;
+          w.sprite.position.x = w.baseX + Math.sin(elapsed * 0.3 + w.phase) * 0.9;
+          (w.sprite.material as THREE.SpriteMaterial).opacity =
+            w.opacity * (0.7 + 0.3 * Math.sin(elapsed * 1.1 + w.phase));
+        }
+
+        if (ddFloorGlowRef) {
+          (ddFloorGlowRef.material as THREE.SpriteMaterial).opacity =
+            0.26 + Math.sin(elapsed * 6.0) * 0.05 + beat * 0.16;
         }
       }
 
@@ -760,16 +1278,18 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         group.rotation.y = Math.sin(elapsed * 0.2) * 0.12 + mouseX * 0.08;
         group.rotation.x = Math.cos(elapsed * 0.2) * 0.08 + mouseY * 0.06;
       } else if (currentTheme === "dragons_dogma") {
-        group.rotation.y = elapsed * 0.06 + mouseX * 0.06;
-        group.position.y = Math.sin(elapsed * 0.5) * 0.15 - mouseY * 0.15;
+        group.rotation.y = Math.sin(elapsed * 0.3) * 0.03 + mouseX * 0.05;
+        group.position.y = Math.sin(elapsed * 0.4) * 0.1 - mouseY * 0.15;
       } else if (currentTheme === "skyrim") {
-        group.rotation.y = Math.sin(elapsed * 0.1) * 0.05 + mouseX * 0.05;
-        group.position.x = mouseX * 0.2;
+        group.rotation.y = Math.sin(elapsed * 0.25) * 0.03 + mouseX * 0.04;
+        group.position.y = Math.sin(elapsed * 0.45) * 0.08 - mouseY * 0.12;
       } else {
         group.rotation.y = elapsed * 0.04 + mouseX * 0.08;
       }
-      group.position.x = mouseX * 0.3;
-      group.position.y = -mouseY * 0.2;
+      if (currentTheme !== "dragons_dogma" && currentTheme !== "skyrim") {
+        group.position.x = mouseX * 0.3;
+        group.position.y = -mouseY * 0.2;
+      }
 
       renderer.render(scene, camera);
     };
@@ -785,13 +1305,24 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
 
       // Deep Three.js cleanup
       scene.traverse((obj) => {
-        if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments) {
+        if (
+          obj instanceof THREE.Mesh ||
+          obj instanceof THREE.Points ||
+          obj instanceof THREE.LineSegments ||
+          obj instanceof THREE.Sprite
+        ) {
           obj.geometry?.dispose();
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((m) => m.dispose());
-          } else {
-            obj.material?.dispose();
-          }
+          const disposeMaterial = (m: THREE.Material | THREE.Material[] | undefined) => {
+            if (!m) return;
+            if (Array.isArray(m)) {
+              m.forEach((x) => x.dispose());
+            } else {
+              const mat = m as THREE.MeshBasicMaterial & THREE.SpriteMaterial;
+              mat.map?.dispose();
+              m.dispose();
+            }
+          };
+          disposeMaterial(obj.material as THREE.Material | THREE.Material[] | undefined);
         }
       });
       renderer.dispose();

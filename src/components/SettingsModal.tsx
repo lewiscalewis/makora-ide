@@ -9,6 +9,7 @@ import { THEME_LIST } from "../themes";
 import { PROVIDERS, presetById } from "../providers";
 import { detectOllama, keyringGet, keyringSet, listModels } from "../api";
 import { useI18n, LANGUAGE_LIST } from "../i18n";
+import { addVaultEntry, getVaultKey, loadVault, removeVaultEntry, touchVaultEntry } from "../vault";
 import {
   Key,
   Cpu,
@@ -32,6 +33,7 @@ import {
   AlertTriangle,
   Globe,
   Loader2,
+  Vault,
 } from "lucide-react";
 
 import type {
@@ -42,6 +44,7 @@ import type {
   SkillConfig,
   ThemeId,
   ThinkingLevel,
+  VaultKeyEntry,
 } from "../types";
 
 type Tab = "providers" | "models" | "context" | "skills" | "mcps" | "appearance";
@@ -85,6 +88,55 @@ export default function SettingsModal({
   const [showApiKey, setShowApiKey] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
   const [modelFilterProvider, setModelFilterProvider] = useState<string>(settings.providerId || "deepseek");
+
+  // --- Key Vault state ---
+  const [vault, setVault] = useState<VaultKeyEntry[]>(() => loadVault());
+  const [vaultName, setVaultName] = useState("");
+  const [vaultProvider, setVaultProvider] = useState<string>(settings.providerId || "deepseek");
+  const [vaultKey, setVaultKey] = useState("");
+  const [vaultNotice, setVaultNotice] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const flashVaultNotice = (text: string, ok: boolean) => {
+    setVaultNotice({ text, ok });
+    window.setTimeout(() => setVaultNotice(null), 3500);
+  };
+
+  const handleVaultAdd = async () => {
+    if (!vaultKey.trim()) {
+      flashVaultNotice(t.settings.vaultKeyRequired, false);
+      return;
+    }
+    await addVaultEntry(vaultName, vaultProvider, vaultKey);
+    setVault(loadVault());
+    setVaultName("");
+    setVaultKey("");
+    flashVaultNotice(t.settings.vaultKeySaved, true);
+  };
+
+  const handleVaultUse = async (entry: VaultKeyEntry) => {
+    const key = await getVaultKey(entry.id);
+    if (!key) {
+      flashVaultNotice(t.settings.vaultKeyMissing, false);
+      return;
+    }
+    touchVaultEntry(entry.id);
+    setVault(loadVault());
+    const preset = presetById(entry.providerId);
+    await keyringSet(entry.providerId, key).catch(() => undefined);
+    onSaveSettings({
+      ...settings,
+      providerId: entry.providerId,
+      baseUrl: preset.baseUrl,
+      apiKey: key,
+      model: settings.providerId === entry.providerId ? settings.model : "",
+    });
+    flashVaultNotice(`${t.settings.vaultKeyApplied} ${entry.name}`, true);
+  };
+
+  const handleVaultDelete = (id: string) => {
+    removeVaultEntry(id);
+    setVault(loadVault());
+  };
 
   const currentPreset = presetById(settings.providerId);
 
@@ -447,6 +499,116 @@ export default function SettingsModal({
                       <strong className="connection-error-title">{t.settings.connectionFailed}</strong>
                       <span className="small font-mono connection-error-msg">{modelsError}</span>
                     </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Key Vault: secure storage for previously used API keys */}
+              <div className="cfg-card">
+                <div className="cfg-head">
+                  <div className="cfg-head-title">
+                    <Vault size={14} className="text-gold" />
+                    <strong>{t.settings.vaultTitle}</strong>
+                  </div>
+                  <span className="keyring-badge" title="Los secretos viven en el almacén cifrado del sistema operativo">
+                    <ShieldCheck size={10} />
+                    <span>{t.settings.osKeyringSecure}</span>
+                  </span>
+                </div>
+                <p className="small muted" style={{ marginBottom: 10 }}>
+                  {t.settings.vaultDesc}
+                </p>
+
+                {vault.length === 0 ? (
+                  <div className="vault-empty">{t.settings.vaultEmpty}</div>
+                ) : (
+                  <div className="vault-list">
+                    {vault.map((entry) => (
+                      <div key={entry.id} className="vault-item">
+                        <div className="vault-item-info">
+                          <span className="vault-item-name font-mono">{entry.name}</span>
+                          <span className="vault-item-meta small muted">
+                            {presetById(entry.providerId)?.label ?? entry.providerId}
+                            {entry.lastUsedAt > 0 && (
+                              <> · {t.settings.vaultLastUsed}: {new Date(entry.lastUsedAt).toLocaleDateString()}</>
+                            )}
+                          </span>
+                        </div>
+                        <div className="vault-item-actions">
+                          <button
+                            type="button"
+                            className="btn btn-subtle btn-sm"
+                            onClick={() => handleVaultUse(entry)}
+                            title={t.settings.vaultUse}
+                          >
+                            <Zap size={11} />
+                            <span>{t.settings.vaultUse}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => handleVaultDelete(entry.id)}
+                            title={t.settings.vaultDelete}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="vault-add-row">
+                  <input
+                    type="text"
+                    className="vault-input-name"
+                    value={vaultName}
+                    placeholder={t.settings.vaultNamePlaceholder}
+                    onChange={(e) => setVaultName(e.target.value)}
+                  />
+                  <select
+                    className="vault-input-provider"
+                    value={vaultProvider}
+                    onChange={(e) => setVaultProvider(e.target.value)}
+                  >
+                    {PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="password"
+                    className="vault-input-key"
+                    value={vaultKey}
+                    placeholder={t.settings.vaultKeyPlaceholder}
+                    onChange={(e) => setVaultKey(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleVaultAdd();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleVaultAdd}
+                    disabled={!vaultKey.trim()}
+                  >
+                    <Plus size={11} />
+                    <span>{t.settings.vaultAdd}</span>
+                  </button>
+                </div>
+
+                {vaultNotice && (
+                  <div className={`connection-status-banner ${vaultNotice.ok ? "success" : "error"}`}>
+                    {vaultNotice.ok ? (
+                      <CheckCircle2 size={14} className="text-green" />
+                    ) : (
+                      <AlertTriangle size={14} className="text-red" />
+                    )}
+                    <span>{vaultNotice.text}</span>
                   </div>
                 )}
               </div>

@@ -525,35 +525,63 @@ fn workspace_summary(folders: Vec<String>) -> Result<String, String> {
 
 #[tauri::command]
 #[specta::specta]
-
 fn keyring_get(provider_id: String) -> Result<Option<String>, String> {
-    let key = format!("api_key:{}", provider_id.trim().to_lowercase());
-    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
-    match entry.get_password() {
-        Ok(p) => Ok(Some(p)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
+    let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
+    let key = format!("api_key_{}", clean_id);
+
+    // 1. Try OS Keyring
+    if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+        if let Ok(p) = entry.get_password() {
+            if !p.trim().is_empty() {
+                let _ = history::vault_set(&key, &p);
+                return Ok(Some(p));
+            }
+        }
     }
+
+    // 2. Fallback to Local Encrypted SQLite Vault
+    if let Ok(Some(vault_val)) = history::vault_get(&key) {
+        if !vault_val.trim().is_empty() {
+            if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+                let _ = entry.set_password(&vault_val);
+            }
+            return Ok(Some(vault_val));
+        }
+    }
+
+    Ok(None)
 }
 
 #[tauri::command]
 #[specta::specta]
 fn keyring_set(provider_id: String, secret: String) -> Result<(), String> {
-    let key = format!("api_key:{}", provider_id.trim().to_lowercase());
-    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
-    entry.set_password(&secret).map_err(|e| e.to_string())?;
+    let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
+    let key = format!("api_key_{}", clean_id);
+
+    // 1. Always save to Local Encrypted SQLite Vault
+    let _ = history::vault_set(&key, &secret);
+
+    // 2. Also save to OS Keyring
+    if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+        let _ = entry.set_password(&secret);
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
 fn keyring_delete(provider_id: String) -> Result<(), String> {
-    let key = format!("api_key:{}", provider_id.trim().to_lowercase());
-    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
-    match entry.delete_credential() {
-        Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
+    let key = format!("api_key_{}", clean_id);
+
+    let _ = history::vault_delete(&key);
+
+    if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+        let _ = entry.delete_credential();
     }
+
+    Ok(())
 }
 
 #[tauri::command]

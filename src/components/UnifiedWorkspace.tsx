@@ -284,7 +284,8 @@ export default function UnifiedWorkspace({
         </div>
       </div>
 
-      {/* Dynamic Main Canvas */}
+      {/* Dynamic Main Canvas. Both panes stay MOUNTED so an in-flight agent
+          stream never gets killed by switching tabs; visibility is CSS-only. */}
       <div className={`workspace-canvas ${isSplit ? "layout-split" : "layout-single"}`}>
         {isSplit ? (
           <div className="split-canvas">
@@ -300,14 +301,20 @@ export default function UnifiedWorkspace({
               {renderActiveViewer()}
             </div>
           </div>
-        ) : isChatTabActive ? (
-          <div className="canvas-pane chat-pane full-canvas">
-            {chatElement}
-          </div>
         ) : (
-          <div className="canvas-pane editor-pane full-canvas">
-            {renderActiveViewer()}
-          </div>
+          <>
+            <div
+              className={`canvas-pane chat-pane full-canvas ${isChatTabActive ? "" : "pane-hidden"}`}
+              aria-hidden={!isChatTabActive}
+            >
+              {chatElement}
+            </div>
+            {!isChatTabActive && (
+              <div className="canvas-pane editor-pane full-canvas">
+                {renderActiveViewer()}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

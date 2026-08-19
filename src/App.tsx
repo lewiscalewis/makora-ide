@@ -151,8 +151,20 @@ function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [config, setConfig] = useState<AppConfig>(loadConfig);
   const [theme, setTheme] = useState<ThemeId>(loadSavedTheme);
-  const [agentMode, setAgentMode] = useState<AgentMode>("act");
-  const [isSplit, setIsSplit] = useState(false);
+  const [agentMode, setAgentMode] = useState<AgentMode>(() => {
+    try {
+      return localStorage.getItem("makora.agentMode") === "plan" ? "plan" : "act";
+    } catch {
+      return "act";
+    }
+  });
+  const [isSplit, setIsSplit] = useState(() => {
+    try {
+      return localStorage.getItem("makora.isSplit") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [zenMode, setZenMode] = useState(false);
 
   const [explorerOpen, setExplorerOpen] = useState(true);
@@ -459,6 +471,12 @@ function App() {
     const safeSettings = { ...settings, apiKey: "" };
     localStorage.setItem("makora.settings", JSON.stringify(safeSettings));
   }, [settings]);
+  useEffect(() => {
+    localStorage.setItem("makora.agentMode", agentMode);
+  }, [agentMode]);
+  useEffect(() => {
+    localStorage.setItem("makora.isSplit", String(isSplit));
+  }, [isSplit]);
   useEffect(() => {
     localStorage.setItem("makora.folders", JSON.stringify(folders));
   }, [folders]);
@@ -927,6 +945,10 @@ function App() {
   }, [settings.model]);
 
   const handleNewSession = useCallback(() => {
+    if (agentBusy) {
+      showToast(t.chat.agentBusyBlock, "warning");
+      return;
+    }
     const fresh = makeSession(settings.model || "");
     sessionCostRef.current = 0;
     sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
@@ -935,10 +957,18 @@ function App() {
       sessions: [fresh, ...prev.sessions],
       activeId: fresh.id,
     }));
-  }, [settings.model]);
+  }, [settings.model, agentBusy, showToast, t]);
 
   const handleOpenSession = useCallback(
     (id: string) => {
+      if (id === activeSessionId) {
+        setShowHistory(false);
+        return;
+      }
+      if (agentBusy) {
+        showToast(t.chat.agentBusyBlock, "warning");
+        return;
+      }
       const target = sessions.find((s) => s.id === id);
       if (!target) return;
       sessionCostRef.current = target.totalCostUsd ?? 0;
@@ -951,11 +981,15 @@ function App() {
       setSessionState((prev) => ({ ...prev, activeId: id }));
       setShowHistory(false);
     },
-    [sessions],
+    [sessions, activeSessionId, agentBusy, showToast, t],
   );
 
   const handleDeleteSession = useCallback(
     (id: string) => {
+      if (agentBusy) {
+        showToast(t.chat.agentBusyBlock, "warning");
+        return;
+      }
       const remaining = sessions.filter((s) => s.id !== id);
       if (activeSessionId !== id) {
         setSessionState((prev) => ({ ...prev, sessions: remaining }));
@@ -979,7 +1013,7 @@ function App() {
         setSessionState({ sessions: [fresh], activeId: fresh.id });
       }
     },
-    [sessions, activeSessionId, settings.model],
+    [sessions, activeSessionId, settings.model, agentBusy, showToast, t],
   );
 
   const handleRenameSession = useCallback((id: string, title: string) => {
@@ -992,12 +1026,16 @@ function App() {
   }, []);
 
   const handleClearSessions = useCallback(() => {
+    if (agentBusy) {
+      showToast(t.chat.agentBusyBlock, "warning");
+      return;
+    }
     const fresh = makeSession(settings.model || "");
     sessionCostRef.current = 0;
     sessionTokensRef.current = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
     setUsage(sessionTokensRef.current);
     setSessionState({ sessions: [fresh], activeId: fresh.id });
-  }, [settings.model]);
+  }, [settings.model, agentBusy, showToast, t]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {

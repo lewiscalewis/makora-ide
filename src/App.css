@@ -715,6 +715,11 @@ svg {
   overflow: hidden;
 }
 
+/* Keep pane mounted (stream-safe) but hidden when its tab is inactive */
+.canvas-pane.pane-hidden {
+  display: none;
+}
+
 .split-canvas {
   flex: 1;
   min-height: 0;
@@ -5372,6 +5377,12 @@ select:focus {
   opacity: 0.75;
 }
 
+/* Signature backdrops (Arisen's Heart / Imperial Dragon) stay fully visible */
+[data-theme="skyrim"] .ambient-bg-canvas,
+[data-theme="dragons_dogma"] .ambient-bg-canvas {
+  opacity: 0.92;
+}
+
 /* Ensure foreground elements sit on top of 3D canvas */
 .header {
   position: relative;
@@ -5914,7 +5925,9 @@ select:focus {
    7. THEME: SKYRIM ELDER FROST (Tamriel Aurora Borealis)
    ========================================================================== */
 [data-theme="skyrim"] {
-  --cyan: #38bdf8;
+  --bg: #020408;
+  --bg-card: rgba(5, 8, 16, 0.75);
+  --cyan: #7dd3fc;
   --gold: #facc15;
   --accent-blue: #38bdf8;
   --accent-green: #34d399;
@@ -6071,3 +6084,104 @@ select:focus {
 }
 
 
+
+/* ===== Key Vault (secure API key storage) ===== */
+.vault-empty {
+  padding: 14px 12px;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius, 8px);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.vault-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.vault-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius, 8px);
+}
+
+.vault-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vault-item-name {
+  font-size: 12px;
+  color: var(--text-main, #f0f2f5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.vault-add-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.vault-add-row input,
+.vault-add-row select {
+  border-radius: 5px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-select);
+  color: var(--text-main, #f0f2f5);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  height: 28px;
+}
+
+.vault-add-row input:focus,
+.vault-add-row select:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+.vault-input-name { flex: 1 1 130px; min-width: 110px; }
+.vault-input-provider { flex: 1 1 150px; min-width: 130px; }
+.vault-input-key { flex: 2 1 180px; min-width: 140px; }
+
+/* ===== Plan mode: proceed-to-implement action ===== */
+.plan-proceed-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.plan-proceed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

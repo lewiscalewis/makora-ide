@@ -34,6 +34,7 @@ import {
   Plus,
   Coins,
   Clock,
+  Rocket,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { computeCostUsd } from "../defaults";
@@ -97,6 +98,24 @@ import type {
   UiMessage,
 } from "../types";
 
+// Survives component remounts so a stream already running in a detached
+// instance still blocks accidental double-sends from a fresh instance.
+let globalStreamActive = false;
+
+function stripTrailingEmptyAssistants(transcript: ChatMessage[]): ChatMessage[] {
+  const out = [...transcript];
+  while (out.length > 0) {
+    const last = out[out.length - 1];
+    const isDanglingEmptyAssistant =
+      last.role === "assistant" &&
+      (!last.content || !last.content.trim()) &&
+      (!last.toolCalls || last.toolCalls.length === 0);
+    if (!isDanglingEmptyAssistant) break;
+    out.pop();
+  }
+  return out;
+}
+
 function transcriptToUi(transcript: ChatMessage[], existingUi?: UiMessage[]): UiMessage[] {
   const out: UiMessage[] = [];
   let id = 0;
@@ -126,10 +145,11 @@ function transcriptToUi(transcript: ChatMessage[], existingUi?: UiMessage[]): Ui
           role: "assistant",
           text: m.content || "",
           activities: [],
-          metrics: existingMetrics,
+          metrics: m.metrics ?? existingMetrics,
         };
       } else if (m.content) {
         currentAssistant.text = m.content;
+        if (m.metrics) currentAssistant.metrics = m.metrics;
       }
 
       if (m.toolCalls && m.toolCalls.length > 0) {
@@ -434,10 +454,11 @@ export default function Chat({
   onClearInjectedPrompt,
 }: ChatProps) {
   const { t } = useI18n();
+  const cleanInitialTranscript = stripTrailingEmptyAssistants(initialTranscript);
   const [messages, setMessages] = useState<UiMessage[]>(() =>
-    transcriptToUi(initialTranscript),
+    transcriptToUi(cleanInitialTranscript),
   );
-  const [transcript, setTranscript] = useState<ChatMessage[]>(initialTranscript);
+  const [transcript, setTranscript] = useState<ChatMessage[]>(cleanInitialTranscript);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [turnActivities, setTurnActivities] = useState<Record<number, ToolActivity[]>>({});
@@ -485,7 +506,7 @@ export default function Chat({
   const lastAttachmentId = useRef<number>(0);
   const currentAssistantId = useRef<number>(0);
   const isAutoScrollEnabled = useRef<boolean>(true);
-  const idCounter = useRef<number>(initialTranscript.length);
+  const idCounter = useRef<number>(cleanInitialTranscript.length);
   const didHydrate = useRef<boolean>(false);
 
   const nextId = () => {
@@ -528,6 +549,16 @@ export default function Chat({
   useEffect(() => {
     onStatusChange?.(busy, runningTool ? runningTool.name : null);
   }, [busy, runningTool, onStatusChange]);
+
+  // Safety net: if this instance unmounts while busy (e.g. app teardown),
+  // clear the global busy status so the header never gets stuck "Ejecutando".
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+  useEffect(() => {
+    return () => {
+      onStatusChangeRef.current?.(false, null);
+    };
+  }, []);
 
   // Detect project rules in workspace
   useEffect(() => {
@@ -843,9 +874,10 @@ export default function Chat({
     }, 50);
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if ((!text && attachments.length === 0) || busy || !ready) return;
+    if (globalStreamActive) return;
     if (blocked) {
       setMessages((m) => [
         ...m,
@@ -887,6 +919,7 @@ export default function Chat({
     setBusy(true);
     setThinking(null);
     isAutoScrollEnabled.current = true;
+    globalStreamActive = true;
 
     const userMsg: ChatMessage = { role: "user", content, images };
     const initialAssistantMsg: ChatMessage = { role: "assistant", content: "" };
@@ -906,6 +939,7 @@ export default function Chat({
     let lastSync = 0;
     let rafPending = false;
     let isDisposed = false;
+    let done = false;
 
     const flushUi = () => {
       if (isDisposed) return;
@@ -925,6 +959,7 @@ export default function Chat({
       if (now - lastSync > 300) {
         lastSync = now;
         setTranscript((t) => {
+          if (done) return t;
           if (t.length === 0) return t;
           const copy = [...t];
           const lastIdx = copy.length - 1;
@@ -968,6 +1003,7 @@ export default function Chat({
         };
       }
 
+      done = true;
       setTranscript(messagesWithMetrics);
       const uiMsgs = transcriptToUi(messagesWithMetrics, messages);
       const finalText =
@@ -993,9 +1029,11 @@ export default function Chat({
       );
     } finally {
       isDisposed = true;
+      done = true;
       isAbortedRef.current = false;
       unlistenDelta();
       setBusy(false);
+      globalStreamActive = false;
     }
   };
 
@@ -1284,7 +1322,9 @@ export default function Chat({
                       </div>
                     </div>
                   ) : (
-                    <div className="msg-text muted font-mono">(sin contenido)</div>
+                    <div className="msg-text muted font-mono">
+                      (turno sin texto final guardado)
+                    </div>
                   )}
 
                   {/* 4. Subtle Turn Metrics Footer (Tokens, Duration, Cost in USD) */}
@@ -1320,6 +1360,28 @@ export default function Chat({
                       </div>
                     </div>
                   )}
+
+                  {/* 5. Plan mode: proceed-to-implement action on the last answer */}
+                  {agentMode === "plan" &&
+                    !isBusyCurrent &&
+                    m.text &&
+                    m.id === messages[messages.length - 1]?.id && (
+                      <div className="plan-proceed-wrap">
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm plan-proceed-btn"
+                          onClick={() => {
+                            onToggleMode?.("act");
+                            send(t.chat.planProceedPrompt);
+                          }}
+                          title={t.chat.planProceedHint}
+                        >
+                          <Rocket size={12} />
+                          <span>{t.chat.planProceed}</span>
+                        </button>
+                        <span className="small muted">{t.chat.planProceedHint}</span>
+                      </div>
+                    )}
                 </>
               ) : (
                 <div className="msg-text">{m.text}</div>
