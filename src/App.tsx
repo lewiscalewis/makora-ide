@@ -1088,8 +1088,16 @@ function App() {
   const handleNewSession = useCallback(() => {
     setSessionState((prev) => {
       const current = prev.sessions.find((s) => s.id === prev.activeId);
-      if (current && current.messages.length === 0) {
-        return prev;
+      if (current) {
+        const rt = getSessionRuntime(current.id);
+        const hasMessages =
+          current.messages.length > 0 ||
+          rt.messages.length > 0 ||
+          rt.transcript.length > 0;
+        // If current session is completely idle and has 0 messages, reuse it
+        if (!hasMessages && !rt.busy) {
+          return prev;
+        }
       }
       const inheritFolders = [...activeWorkspaceRef.current.folders];
       const fresh = makeSession(settings.model || "", {
@@ -1129,11 +1137,18 @@ function App() {
         if (prev.activeId !== id) {
           return { ...prev, sessions: remaining };
         }
-        if (remaining.length > 0) {
-          return { sessions: remaining, activeId: remaining[0].id };
+        const nextActive = remaining[0]?.id || "";
+        if (!nextActive) {
+          const fresh = makeSession(settings.model || "");
+          return {
+            sessions: [fresh],
+            activeId: fresh.id,
+          };
         }
-        const fresh = makeSession(settings.model || "");
-        return { sessions: [fresh], activeId: fresh.id };
+        return {
+          sessions: remaining,
+          activeId: nextActive,
+        };
       });
     },
     [settings.model],
@@ -1158,15 +1173,14 @@ function App() {
   }, [sessions, settings.model]);
 
   // Terminal: el cwd se fija al abrir el terminal en el workspace activo de ese momento.
-  const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
   const toggleTerminal = useCallback(() => {
-    if (terminalOpen) {
-      setTerminalOpen(false);
-      return;
-    }
+    setTerminalOpen((prev) => !prev);
+  }, []);
+
+  const terminalCwd = useMemo(() => {
     const ws = activeWorkspaceRef.current;
-    setTerminalCwd(ws.folders[0] || homePath || null);
-    setTerminalOpen(true);
+    if (ws.folders.length > 0) return ws.folders[0];
+    return homePath || undefined;
   }, [terminalOpen, homePath]);
 
   // Global Keyboard Shortcuts
@@ -1177,6 +1191,9 @@ function App() {
       if (isCmdOrCtrl && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "k")) {
         e.preventDefault();
         setShowPalette((prev) => !prev);
+      } else if (isCmdOrCtrl && (e.key.toLowerCase() === "l" || e.key.toLowerCase() === "t")) {
+        e.preventDefault();
+        handleNewSession();
       } else if (isCmdOrCtrl && e.key.toLowerCase() === "b") {
         e.preventDefault();
         setExplorerOpen((prev) => !prev);
@@ -1202,7 +1219,7 @@ function App() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [activePath, closeFile, toggleTerminal]);
+  }, [activePath, closeFile, toggleTerminal, handleNewSession]);
 
   // Chat Element instance to pass into Workspace (memoized; survives re-renders).
   const chatNode = useMemo(() => {
