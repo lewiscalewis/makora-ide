@@ -14,11 +14,13 @@
       {
         "title": "MakoraIDE",
         "width": 1280,
-        "height": 800
+        "height": 800,
+        "dragDropEnabled": true,
+        "devtools": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' asset: https://asset.localhost; img-src 'self' data: https: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https://api.deepseek.com https://api.openai.com https://api.anthropic.com https://openrouter.ai http://127.0.0.1:* http://localhost:*;"
     }
   },
   "bundle": {
@@ -30,6 +32,44 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "ts",
+          "tsx",
+          "js",
+          "jsx",
+          "mjs",
+          "cjs",
+          "rs",
+          "py",
+          "json",
+          "md",
+          "mdx",
+          "txt",
+          "csv",
+          "tsv",
+          "svg",
+          "png",
+          "jpg",
+          "jpeg",
+          "webp",
+          "gif",
+          "pdf",
+          "toml",
+          "yaml",
+          "yml",
+          "html",
+          "css",
+          "scss",
+          "sql",
+          "sh"
+        ],
+        "name": "MakoraIDE Document",
+        "description": "Code and document files openable with MakoraIDE",
+        "role": "Editor"
+      }
     ]
   }
 }

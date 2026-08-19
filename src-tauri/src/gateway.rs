@@ -31,6 +31,9 @@ where
     let mut stream = response.bytes_stream();
     let mut buf = String::new();
     while let Some(chunk) = stream.next().await {
+        if crate::agent::is_cancelled() {
+            break;
+        }
         if let Ok(c) = chunk {
             buf.push_str(&String::from_utf8_lossy(&c).replace("\r\n", "\n"));
         }
@@ -65,37 +68,8 @@ where
     }
 }
 
-fn prune_tool_output(content: &str, is_recent: bool) -> String {
-    if is_recent || content.len() <= 350 {
-        return content.to_string();
-    }
-    let lines: Vec<&str> = content.lines().collect();
-    if lines.len() <= 8 {
-        return content.to_string();
-    }
-    let head = &lines[..3];
-    let tail = &lines[lines.len() - 2..];
-    let omitted = lines.len() - 5;
-    format!(
-        "{}\n... [{} líneas / {} bytes de salida previa omitidos para ahorro de tokens] ...\n{}",
-        head.join("\n"),
-        omitted,
-        content.len(),
-        tail.join("\n")
-    )
-}
-
-fn is_recent_message(idx: usize, total_messages: usize) -> bool {
-    idx + 6 >= total_messages
-}
-
-fn to_wire(m: &ChatMessage, cfg: &ChatConfig, is_recent: bool) -> Value {
-    let content_to_send = if m.role == "tool" {
-        prune_tool_output(&m.content, is_recent)
-    } else {
-        m.content.clone()
-    };
-    let mut obj = json!({"role": m.role, "content": content_to_send});
+fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
+    let mut obj = json!({"role": m.role, "content": m.content});
     if !m.images.is_empty() && m.role == "user" {
         if cfg.vision_enabled {
             let mut parts = vec![json!({"type": "text", "text": m.content})];
@@ -118,23 +92,37 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig, is_recent: bool) -> Value {
     if let Some(tcs) = &m.tool_calls {
         let arr: Vec<Value> = tcs
             .iter()
-            .map(|tc| {
-                json!({
-                    "id": tc.id,
+            .enumerate()
+            .map(|(i, tc)| {
+                let clean_name = tc.name.replace(':', "_");
+                let id = if tc.id.trim().is_empty() {
+                    format!("call_{i}")
+                } else {
+                    tc.id.clone()
+                };
+                let mut tc_obj = json!({
+                    "id": id,
                     "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.arguments}
-                })
+                    "function": {"name": clean_name, "arguments": tc.arguments}
+                });
+                if let Some(ec) = &tc.extra_content {
+                    tc_obj["extra_content"] = ec.clone();
+                }
+                tc_obj
             })
             .collect();
         obj["tool_calls"] = json!(arr);
         if m.content.trim().is_empty() {
-            if let Some(o) = obj.as_object_mut() {
-                o.remove("content");
-            }
+            obj["content"] = Value::Null;
         }
     }
     if let Some(tid) = &m.tool_call_id {
-        obj["tool_call_id"] = json!(tid);
+        let id = if tid.trim().is_empty() {
+            "call_0".to_string()
+        } else {
+            tid.clone()
+        };
+        obj["tool_call_id"] = json!(id);
     }
     obj
 }
@@ -153,21 +141,30 @@ pub async fn openai_turn(
     if !system.trim().is_empty() {
         msgs.push(json!({"role": "system", "content": system}));
     }
-    let total_len = messages.len();
-    for (idx, m) in messages.iter().enumerate() {
-        let is_recent = is_recent_message(idx, total_len);
-        msgs.push(to_wire(m, cfg, is_recent));
+    for m in messages.iter() {
+        msgs.push(to_wire(m, cfg));
     }
 
+    let mut model_name = cfg.model.trim_start_matches("models/");
+    let is_gemini = cfg.base_url.contains("googleapis.com") || model_name.starts_with("gemini");
+    if is_gemini {
+        model_name = match model_name {
+            "gemini-2.5-flash" | "gemini-2.0-flash" | "gemini-1.5-flash" => "gemini-3.7-flash",
+            "gemini-2.5-pro" | "gemini-2.0-pro" | "gemini-1.5-pro" => "gemini-3.1-pro-preview",
+            other => other,
+        };
+    }
     let mut body = json!({
-        "model": cfg.model,
+        "model": model_name,
         "messages": msgs,
         "stream": true,
-        "stream_options": { "include_usage": true }
     });
-    if let Some(e) = &cfg.reasoning_effort {
-        if e != "none" {
-            body["reasoning_effort"] = json!(e);
+    if !is_gemini {
+        body["stream_options"] = json!({ "include_usage": true });
+        if let Some(e) = &cfg.reasoning_effort {
+            if e != "none" {
+                body["reasoning_effort"] = json!(e);
+            }
         }
     }
     if let Some(t) = cfg.max_output_tokens {
@@ -180,10 +177,11 @@ pub async fn openai_turn(
         let arr: Vec<Value> = tools
             .iter()
             .map(|t| {
+                let clean_name = t.name.replace(':', "_");
                 json!({
                     "type": "function",
                     "function": {
-                        "name": t.name,
+                        "name": clean_name,
                         "description": t.description,
                         "parameters": t.parameters
                     }
@@ -195,13 +193,12 @@ pub async fn openai_turn(
     }
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .bearer_auth(&cfg.api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let api_key = cfg.api_key.trim();
+    let mut req = client.post(&url).bearer_auth(api_key).json(&body);
+    if is_gemini {
+        req = req.header("x-goog-api-key", api_key);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
@@ -211,7 +208,7 @@ pub async fn openai_turn(
     let mut usage = ChatUsage::default();
     let mut text = String::new();
     let mut output_chars = 0usize;
-    let mut tcs: BTreeMap<u32, (String, String, String)> = BTreeMap::new();
+    let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
 
     for_each_sse_event(resp, |_event, data| {
         if data == "[DONE]" {
@@ -248,7 +245,7 @@ pub async fn openai_turn(
                         let idx = call.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
                         let entry = tcs
                             .entry(idx)
-                            .or_insert_with(|| (String::new(), String::new(), String::new()));
+                            .or_insert_with(|| (String::new(), String::new(), String::new(), None));
                         if let Some(id) = call.get("id").and_then(|i| i.as_str()) {
                             entry.0 = id.to_string();
                         }
@@ -259,6 +256,9 @@ pub async fn openai_turn(
                             if let Some(a) = f.get("arguments").and_then(|x| x.as_str()) {
                                 entry.2.push_str(a);
                             }
+                        }
+                        if let Some(ec) = call.get("extra_content") {
+                            entry.3 = Some(ec.clone());
                         }
                     }
                 }
@@ -283,12 +283,23 @@ pub async fn openai_turn(
     if usage.output_tokens == 0 && output_chars > 0 {
         usage.output_tokens = (output_chars / 4).max(1) as u32;
     }
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
     let tool_calls: Vec<ToolCall> = tcs
         .into_values()
-        .map(|(id, name, arguments)| ToolCall {
-            id,
-            name,
-            arguments,
+        .enumerate()
+        .map(|(i, (mut id, name, arguments, extra_content))| {
+            if id.trim().is_empty() {
+                id = format!("call_{i}_{now_ts}");
+            }
+            ToolCall {
+                id,
+                name,
+                arguments,
+                extra_content,
+            }
         })
         .collect();
 
@@ -358,9 +369,7 @@ pub async fn anthropic_turn(
     let url = format!("{base}/messages");
 
     let mut msgs: Vec<Value> = Vec::new();
-    let total_len = messages.len();
-    for (idx, m) in messages.iter().enumerate() {
-        let is_recent = is_recent_message(idx, total_len);
+    for m in messages.iter() {
         match m.role.as_str() {
             "user" => {
                 if !m.images.is_empty() {
@@ -414,13 +423,12 @@ pub async fn anthropic_turn(
                 msgs.push(json!({"role": "assistant", "content": blocks}));
             }
             "tool" => {
-                let pruned = prune_tool_output(&m.content, is_recent);
                 msgs.push(json!({
                     "role": "user",
                     "content": [{
                         "type": "tool_result",
                         "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
-                        "content": pruned
+                        "content": m.content
                     }]
                 }));
             }
@@ -579,6 +587,7 @@ pub async fn anthropic_turn(
             id,
             name,
             arguments,
+            extra_content: None,
         })
         .collect();
     Ok(TurnOutcome {
@@ -590,12 +599,13 @@ pub async fn anthropic_turn(
 
 pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
     let client = reqwest::Client::new();
+    let api_key = cfg.api_key.trim();
     match cfg.kind.as_str() {
         "anthropic" => {
             let url = format!("{}/models", cfg.base_url.trim_end_matches('/'));
             let resp = client
                 .get(&url)
-                .header("x-api-key", &cfg.api_key)
+                .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01")
                 .send()
                 .await
@@ -628,18 +638,34 @@ pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
         }
         _ => {
             let url = format!("{}/models", cfg.base_url.trim_end_matches('/'));
-            let resp = client
-                .get(&url)
-                .bearer_auth(&cfg.api_key)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            let status = resp.status();
-            let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-            if !status.is_success() {
-                return Err(format!("HTTP {status}: {body}"));
+            let is_gemini = cfg.base_url.contains("googleapis.com");
+            let mut req = client.get(&url).bearer_auth(api_key);
+            if is_gemini {
+                req = req.header("x-goog-api-key", api_key);
             }
-            Ok(extract_ids(&body))
+            let resp = req.send().await.map_err(|e| format!("No se pudo conectar con el endpoint ({url}): {e}"))?;
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                return Err(format!("HTTP {status}: {text}"));
+            }
+            let body: Value = serde_json::from_str(&text)
+                .map_err(|_| format!("Respuesta no es JSON válido: {text}"))?;
+            let mut ids = extract_ids(&body);
+            if ids.is_empty() {
+                if let Some(arr) = body.get("models").and_then(|m| m.as_array()) {
+                    ids = arr
+                        .iter()
+                        .filter_map(|m| {
+                            m.get("name")
+                                .or_else(|| m.get("id"))
+                                .and_then(|x| x.as_str())
+                                .map(|s| s.trim_start_matches("models/").to_string())
+                        })
+                        .collect();
+                }
+            }
+            Ok(ids)
         }
     }
 }
@@ -649,8 +675,71 @@ fn extract_ids(body: &Value) -> Vec<String> {
         .and_then(|d| d.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|m| m.get("id").and_then(|x| x.as_str()).map(String::from))
+                .filter_map(|m| {
+                    m.get("id")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.trim_start_matches("models/").to_string())
+                })
                 .collect()
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_wire_preserves_extra_content_for_gemini() {
+        let cfg = ChatConfig {
+            kind: "openai".into(),
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai".into(),
+            model: "gemini-3.7-flash".into(),
+            api_key: "dummy".into(),
+            reasoning_effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            vision_enabled: false,
+        };
+        let msg = ChatMessage {
+            role: "assistant".into(),
+            content: "".into(),
+            images: vec![],
+            tool_calls: Some(vec![ToolCall {
+                id: "call_123".into(),
+                name: "read_file".into(),
+                arguments: "{\"path\":\"foo.rs\"}".into(),
+                extra_content: Some(json!({
+                    "google": {
+                        "thought_signature": "signature_abc_123"
+                    }
+                })),
+            }]),
+            tool_call_id: None,
+        };
+
+        let wire = to_wire(&msg, &cfg);
+        assert_eq!(wire["role"], "assistant");
+        let tcs = wire["tool_calls"].as_array().expect("tool_calls array");
+        assert_eq!(tcs.len(), 1);
+        assert_eq!(
+            tcs[0]["extra_content"]["google"]["thought_signature"],
+            "signature_abc_123"
+        );
+        assert_eq!(tcs[0]["function"]["name"], "read_file");
+    }
+
+    #[test]
+    fn test_extract_ids_strips_models_prefix() {
+        let body = json!({
+            "data": [
+                { "id": "models/gemini-3.7-flash" },
+                { "id": "models/gemini-3.6-flash" },
+                { "id": "deepseek-chat" }
+            ]
+        });
+        let ids = extract_ids(&body);
+        assert_eq!(ids, vec!["gemini-3.7-flash", "gemini-3.6-flash", "deepseek-chat"]);
+    }
+}
+

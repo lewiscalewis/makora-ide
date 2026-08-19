@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Check,
   Globe,
+  Eye,
 } from "lucide-react";
 import type { ThemeId } from "../types";
 
@@ -31,6 +32,8 @@ interface HeaderProps {
   onTogglePanel?: () => void;
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
+  glassMode?: "normal" | "vivid" | "solid";
+  onToggleGlassMode?: () => void;
 }
 
 export default function Header({
@@ -48,6 +51,8 @@ export default function Header({
   onTogglePanel,
   currentTheme,
   onSelectTheme,
+  glassMode = "normal",
+  onToggleGlassMode,
 }: HeaderProps) {
   const { language, setLanguage, t } = useI18n();
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
@@ -82,6 +87,7 @@ export default function Header({
             className={`icon-btn toggle-sidebar-btn ${explorerOpen ? "active" : ""}`}
             onClick={onToggleExplorer}
             title={t.header.toggleExplorer}
+            aria-label={t.header.toggleExplorer}
           >
             <PanelLeft size={14} />
           </button>
@@ -188,38 +194,129 @@ export default function Header({
             title={t.header.selectTheme}
           >
             <Palette size={13} className="theme-icon-indicator" />
-            <span className="theme-current-name">{activeThemeObj?.name || "Tema"}</span>
+            <span className="theme-current-name">
+              {currentTheme === "void"
+                ? t.themes.voidName
+                : currentTheme === "nordic"
+                  ? t.themes.nordicName
+                  : currentTheme === "tokyo"
+                    ? t.themes.tokyoName
+                    : currentTheme === "monokai"
+                      ? t.themes.monokaiName
+                      : currentTheme === "solar"
+                        ? t.themes.solarName
+                        : currentTheme === "cyberpunk"
+                          ? t.themes.cyberpunkName
+                          : currentTheme === "matrix"
+                            ? t.themes.matrixName
+                            : currentTheme === "outrun"
+                              ? t.themes.outrunName
+                              : currentTheme === "makora"
+                                ? t.themes.makoraName
+                                : currentTheme === "skyrim"
+                                  ? t.themes.skyrimName
+                                  : currentTheme === "dragons_dogma"
+                                    ? t.themes.dragonsDogmaName
+                                    : activeThemeObj?.name || "Theme"}
+            </span>
             <ChevronDown size={11} className={`theme-chevron ${themeDropdownOpen ? "open" : ""}`} />
           </button>
           {themeDropdownOpen && (
             <div className="theme-dropdown-menu">
               <div className="theme-dropdown-header">{t.header.selectTheme}</div>
-              {THEME_LIST.map((th) => (
-                <button
-                  key={th.id}
-                  type="button"
-                  className={`theme-dropdown-item ${th.id === currentTheme ? "selected" : ""}`}
-                  onClick={() => {
-                    onSelectTheme(th.id);
-                    setThemeDropdownOpen(false);
-                  }}
-                >
-                  <div className="theme-item-text">
-                    <span className="theme-item-name">{th.name}</span>
-                    <span className="theme-item-desc">{th.description}</span>
-                  </div>
-                  {th.id === currentTheme && <Check size={12} className="text-cyan" />}
-                </button>
-              ))}
+              {THEME_LIST.map((th) => {
+                let thName = th.name;
+                let thDesc = th.description;
+                if (th.id === "void") {
+                  thName = t.themes.voidName;
+                  thDesc = t.themes.voidDesc;
+                } else if (th.id === "nordic") {
+                  thName = t.themes.nordicName;
+                  thDesc = t.themes.nordicDesc;
+                } else if (th.id === "tokyo") {
+                  thName = t.themes.tokyoName;
+                  thDesc = t.themes.tokyoDesc;
+                } else if (th.id === "monokai") {
+                  thName = t.themes.monokaiName;
+                  thDesc = t.themes.monokaiDesc;
+                } else if (th.id === "solar") {
+                  thName = t.themes.solarName;
+                  thDesc = t.themes.solarDesc;
+                } else if (th.id === "cyberpunk") {
+                  thName = t.themes.cyberpunkName;
+                  thDesc = t.themes.cyberpunkDesc;
+                } else if (th.id === "matrix") {
+                  thName = t.themes.matrixName;
+                  thDesc = t.themes.matrixDesc;
+                } else if (th.id === "outrun") {
+                  thName = t.themes.outrunName;
+                  thDesc = t.themes.outrunDesc;
+                } else if (th.id === "makora") {
+                  thName = t.themes.makoraName;
+                  thDesc = t.themes.makoraDesc;
+                } else if (th.id === "skyrim") {
+                  thName = t.themes.skyrimName;
+                  thDesc = t.themes.skyrimDesc;
+                } else if (th.id === "dragons_dogma") {
+                  thName = t.themes.dragonsDogmaName;
+                  thDesc = t.themes.dragonsDogmaDesc;
+                }
+
+                return (
+                  <button
+                    key={th.id}
+                    type="button"
+                    className={`theme-dropdown-item ${th.id === currentTheme ? "selected" : ""}`}
+                    onClick={() => {
+                      onSelectTheme(th.id);
+                      setThemeDropdownOpen(false);
+                    }}
+                  >
+                    <div className="theme-item-text">
+                      <span className="theme-item-name">{thName}</span>
+                      <span className="theme-item-desc">{thDesc}</span>
+                    </div>
+                    {th.id === currentTheme && <Check size={12} className="text-cyan" />}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
+
+        {/* 3D Backdrop Glass Clarity Toggle (Only for compatible animated 3D themes) */}
+        {(currentTheme === "cyberpunk" ||
+          currentTheme === "matrix" ||
+          currentTheme === "outrun" ||
+          currentTheme === "makora" ||
+          currentTheme === "skyrim" ||
+          currentTheme === "dragons_dogma") &&
+          onToggleGlassMode && (
+            <button
+              type="button"
+              className={`theme-picker-trigger glass-mode-toggle ${glassMode === "vivid" ? "active" : ""}`}
+              onClick={onToggleGlassMode}
+              title={
+                glassMode === "vivid"
+                  ? "Transparencia 3D: Vívida (Fondo ultra-visible) - Clic para cambiar"
+                  : glassMode === "solid"
+                    ? "Transparencia 3D: Sólida (Opaca) - Clic para cambiar"
+                    : "Transparencia 3D: Cristal Equilibrado - Clic para cambiar"
+              }
+            >
+              <Eye size={13} className="theme-icon-indicator" />
+              <span className="theme-current-name">
+                {glassMode === "vivid" ? "3D Vívido" : glassMode === "solid" ? "3D Sólido" : "3D Cristal"}
+              </span>
+            </button>
+          )}
 
         {onTogglePanel && (
           <button
             className={`icon-btn toggle-panel-btn ${panelOpen ? "active" : ""}`}
             onClick={onTogglePanel}
             title={t.header.togglePanel}
+            aria-label={t.header.togglePanel}
           >
             <PanelRight size={14} />
           </button>
@@ -228,6 +325,7 @@ export default function Header({
         <button
           className="icon-btn"
           title={t.header.chatHistory}
+          aria-label={t.header.chatHistory}
           onClick={onOpenHistory}
         >
           <History size={14} />
@@ -236,6 +334,7 @@ export default function Header({
         <button
           className="icon-btn"
           title={t.header.settings}
+          aria-label={t.header.settings}
           onClick={onOpenSettings}
         >
           <Settings size={14} />

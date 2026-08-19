@@ -3,16 +3,14 @@ import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const isProd = process.env.NODE_ENV === "production";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
     strictPort: true,
@@ -25,8 +23,33 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+  build: {
+    target: "esnext",
+    sourcemap: false,
+    minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom"],
+          "vendor-codemirror": [
+            "codemirror",
+            "@codemirror/state",
+            "@codemirror/view",
+            "@codemirror/lang-javascript",
+            "@codemirror/lang-rust",
+          ],
+          "vendor-xterm": ["@xterm/xterm", "@xterm/addon-fit"],
+          "vendor-markdown": ["react-markdown", "remark-gfm"],
+          "vendor-three": ["three"],
+        },
+      },
+    },
+  },
+  esbuild: {
+    drop: isProd ? ["console", "debugger"] : [],
+    legalComments: "none",
   },
 }));

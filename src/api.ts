@@ -12,7 +12,10 @@ export const homeDir = () => invoke<string>("home_dir");
 export const listDir = (path: string) => invoke<DirEntry[]>("list_dir", { path });
 export const readTextFile = (path: string) =>
   invoke<string>("read_text_file", { path });
+export const readBinaryFile = (path: string) =>
+  invoke<number[]>("read_file_binary", { path });
 export const pickFolder = () => invoke<string | null>("pick_folder");
+export const pickFiles = () => invoke<string[]>("pick_files");
 export const countTokens = (text: string) =>
   invoke<number>("count_tokens", { text });
 export const listModels = (config: ChatConfig) =>
@@ -101,6 +104,10 @@ export const gitFetch = (folder: string) =>
   invoke<string>("git_fetch", { folder });
 export const gitInit = (folder: string) =>
   invoke<string>("git_init", { folder });
+export const getInitialFile = () =>
+  invoke<string | null>("get_initial_file");
+export const checkBetaValidity = () =>
+  invoke<void>("check_beta_validity");
 
 
 

@@ -16,25 +16,30 @@ pub fn cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+pub fn is_cancelled() -> bool {
+    CANCEL.load(Ordering::SeqCst)
+}
+
 const MAKORA_BASE_SKILL: &str = "\
 ## Makora Core Skill (universal — aplica en todos los proveedores y modelos)
 
-Directrices Operativas de Calidad, Precisión y Eficiencia Extrema de Tokens:
-1. Cero prosa innecesaria: NUNCA generes introducciones, saludos ('Hola', 'Entendido'), confirmaciones verbales vacías ni despedidas redundantes. Responde directamente ejecutando las herramientas necesarias o con el resultado técnico concreto.
-2. Edición quirúrgica obligatoria: NUNCA uses write_file en archivos existentes ni reescribas archivos completos. Usa EXCLUSIVAMENTE apply_patch con bloques:
+Directrices Operativas de Calidad, Precisión y Eficiencia:
+1. Respuestas pertinentes y naturales: Si el usuario realiza un saludo ('Hola', 'Buenas', etc.), agradecimiento o pregunta general/conceptual, responde directamente de manera cordial, clara y concisa SIN ejecutar herramientas de fondo innecesarias.
+2. Acción técnica directa: Si el usuario te pide expresamente inspeccionar, modificar, depurar, crear o ejecutar código/archivos en el workspace, procede directamente utilizando las herramientas correspondientes con la máxima precisión y sin rodeos.
+3. Edición quirúrgica obligatoria: NUNCA uses write_file en archivos existentes ni reescribas archivos completos. Usa EXCLUSIVAMENTE apply_patch con bloques:
    <<<<<<< SEARCH
    [líneas exactas a reemplazar]
    =======
    [nuevas líneas]
    >>>>>>> REPLACE
    con 3-5 líneas de anclaje de contexto. Usa write_file ÚNICAMENTE para archivos 100% nuevos.
-3. Lectura progresiva y focalizada: NUNCA leas archivos enteros con read_file si solo requieres una función o sección. Usa read_file_range con rango [start_line, end_line]. Usa list_dir para ubicar archivos antes de leerlos.
-4. Tool Batching: Agrupa todas las lecturas de herramientas independientes en el primer turno para minimizar iteraciones de red y latencia.
-5. Exploración aislada: Cuando necesites buscar en múltiples archivos, logs extensos o diagnosticar dependencias complejas, utiliza explore_subagent para no polucionar el historial principal.
-6. Terminal silenciosa: Ejecuta comandos bash con parámetros de silencio (-q, --quiet, salidas acotadas). Evita volcados masivos.
-7. Conclusión estructurada y compacta: Al finalizar la tarea, emite un resumen conciso de máximo 1 línea por archivo modificado:
+4. Lectura progresiva y focalizada: NUNCA leas archivos enteros con read_file si solo requieres una función o sección. Usa read_file_range con rango [start_line, end_line]. Usa list_dir para ubicar archivos antes de leerlos.
+5. Tool Batching: Agrupa todas las lecturas de herramientas independientes en el primer turno para minimizar iteraciones de red y latencia.
+6. Exploración aislada: Cuando necesites buscar en múltiples archivos, logs extensos o diagnosticar dependencias complejas, utiliza explore_subagent para no polucionar el historial principal.
+7. Terminal no interactiva y silenciosa: Ejecuta comandos bash con parámetros silenciosos (-q, --quiet, salidas acotadas). NUNCA ejecutes comandos interactivos o bloqueantes.
+8. Conclusión estructurada y compacta: Al finalizar la tarea técnica, emite un resumen conciso de máximo 1 línea por archivo modificado:
    - `ruta/al/archivo:línea - acción realizada`
-8. Continúa autónomamente hasta COMPLETAR la tarea técnica en su totalidad; no te detengas a mitad de camino pidiendo confirmaciones triviales.
+9. Continúa autónomamente hasta COMPLETAR la tarea técnica en su totalidad; no te detengas a mitad de camino pidiendo confirmaciones triviales.
 ";
 
 fn now_id() -> String {
@@ -154,11 +159,11 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "bash".into(),
-            description: "Ejecuta un comando de shell en el workspace. Devuelve stdout/stderr y el código de salida. Los comandos tienen un timeout de 60s.".into(),
+            description: "Ejecuta un comando de terminal/shell en el workspace de forma no interactiva (timeout 60s). Devuelve stdout/stderr y el código de salida. Úsalo ÚNICAMENTE cuando el usuario solicite explícitamente ejecutar un comando o cuando sea estrictamente necesario para compilar, testear o inspeccionar el entorno.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "Comando de shell a ejecutar" }
+                    "command": { "type": "string", "description": "Comando a ejecutar" }
                 },
                 "required": ["command"]
             }),
@@ -366,129 +371,136 @@ fn grep_dir(dir: &str, pattern: &str, out: &mut String, count: &mut u32, max: u3
     }
 }
 
+fn is_dangerous_command(cmd: &str) -> bool {
+    let lower = cmd.trim().to_lowercase();
+    let dangerous_patterns = [
+        "format ",
+        "rmdir /s /q c:",
+        "rmdir /s /q c:\\",
+        "rmdir /s /q %systemdrive%",
+        "rm -rf /",
+        "rm -rf /*",
+        ":(){ :|:& };:",
+        "mkfs.",
+        "dd if=/dev/zero",
+        "diskpart",
+        "del /f /s /q c:\\",
+        "del /f /s /q c:/",
+        "drop database",
+        "reg delete hklm",
+        "shutdown /s",
+        "init 0",
+        "systemctl poweroff",
+    ];
+    dangerous_patterns.iter().any(|&p| lower.contains(p))
+}
+
+fn is_read_only_tool(name: &str) -> bool {
+    matches!(name, "read_file" | "read_file_range" | "grep" | "list_dir")
+}
+
 async fn run_bash(app: &AppHandle, command: &str, folders: &[String]) -> Result<String, String> {
+    if is_dangerous_command(command) {
+        return Err("Comando bloqueado por seguridad: contiene patrones destructivos no permitidos.".into());
+    }
+
     let id = now_id();
-    let pty_system = portable_pty::native_pty_system();
-    let pair = pty_system
-        .openpty(portable_pty::PtySize {
-            rows: 24,
-            cols: 200,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| e.to_string())?;
-    #[cfg(target_os = "windows")]
-    let shell_exec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
-    #[cfg(not(target_os = "windows"))]
-    let shell_exec = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-
-    let mut builder = portable_pty::CommandBuilder::new(shell_exec);
-
     let cwd = folders
         .first()
         .cloned()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| ".".to_string())
+            std::env::temp_dir().to_string_lossy().to_string()
         });
-    builder.cwd(&cwd);
-    let _child = pair.slave.spawn_command(builder).map_err(|e| e.to_string())?;
-    drop(pair.slave);
-    let master = pair.master;
-    let mut writer = master.take_writer().map_err(|e| e.to_string())?;
-    let reader = master.try_clone_reader().map_err(|e| e.to_string())?;
 
-    let marker = format!("__MAKORA_DONE_{}__", id.trim_start_matches('t'));
     #[cfg(target_os = "windows")]
-    let payload = format!("@echo off\r\n{command}\r\necho {marker}%errorlevel% {marker}\r\n");
+    let mut cmd = tokio::process::Command::new("cmd.exe");
+    #[cfg(target_os = "windows")]
+    cmd.args(["/C", command]);
+
     #[cfg(not(target_os = "windows"))]
-    let payload = format!("stty -echo 2>/dev/null; {command}\r\necho {marker}$? {marker}\r\n");
-    let _ = writer.write_all(payload.as_bytes());
-    let _ = writer.flush();
+    let mut cmd = tokio::process::Command::new("sh");
+    #[cfg(not(target_os = "windows"))]
+    cmd.args(["-c", command]);
 
-    let combined: Arc<StdMutex<String>> = Arc::new(StdMutex::new(String::new()));
-    let done: Arc<StdMutex<Option<i32>>> = Arc::new(StdMutex::new(None));
+    cmd.current_dir(&cwd);
+    cmd.env("PAGER", "cat");
+    cmd.env("GIT_PAGER", "cat");
+    cmd.env("CI", "1");
+    cmd.env("TERM", "dumb");
+    cmd.env("NO_COLOR", "1");
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
 
-    let app2 = app.clone();
-    let c2 = combined.clone();
-    let d2 = done.clone();
-    let id2 = id.clone();
-    let m2 = marker.clone();
-    std::thread::spawn(move || {
-        let mut r = reader;
-        let mut buf = [0u8; 8192];
-        let mut tail = String::new();
-        let mut exit_seen = false;
-        loop {
-            match r.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    tail.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    while let Some(pos) = tail.find('\n') {
-                        let line = tail[..pos].to_string();
-                        tail.drain(..pos + 1);
-                        if line.contains(&m2) {
-                            let code = line
-                                .find(&m2)
-                                .and_then(|i| {
-                                    let rest = &line[i + m2.len()..];
-                                    let digits: String = rest
-                                        .chars()
-                                        .take_while(|c| c.is_ascii_digit())
-                                        .collect();
-                                    digits.parse::<i32>().ok()
-                                })
-                                .unwrap_or(-1);
-                            *d2.lock().unwrap() = Some(code);
-                            exit_seen = true;
-                        } else {
-                            let clean = line.trim_end_matches('\r').to_string();
-                            if !clean.is_empty() {
-                                c2.lock().unwrap().push_str(&clean);
-                                c2.lock().unwrap().push('\n');
-                                let _ = app2.emit(
-                                    "tool-output",
-                                    ToolOutput {
-                                        id: id2.clone(),
-                                        stream: "stdout".into(),
-                                        data: format!("{clean}\n"),
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !exit_seen {
-            let mut g = d2.lock().unwrap();
-            if g.is_none() {
-                *g = Some(-1);
+    let mut child = cmd.spawn().map_err(|e| format!("error iniciando comando: {e}"))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let combined = Arc::new(StdMutex::new(String::new()));
+    let app_out = app.clone();
+    let id_out = id.clone();
+    let combined_out = combined.clone();
+
+    let stdout_handle = tokio::spawn(async move {
+        if let Some(stdout) = stdout {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                combined_out.lock().unwrap().push_str(&line);
+                combined_out.lock().unwrap().push('\n');
+                let _ = app_out.emit(
+                    "tool-output",
+                    ToolOutput {
+                        id: id_out.clone(),
+                        stream: "stdout".into(),
+                        data: format!("{line}\n"),
+                    },
+                );
             }
         }
     });
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-    let exit_code: i32;
-    loop {
-        if CANCEL.load(Ordering::SeqCst) {
-            drop(writer);
-            drop(master);
-            return Err("cancelado por el usuario".into());
+    let app_err = app.clone();
+    let id_err = id.clone();
+    let combined_err = combined.clone();
+    let stderr_handle = tokio::spawn(async move {
+        if let Some(stderr) = stderr {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                combined_err.lock().unwrap().push_str(&line);
+                combined_err.lock().unwrap().push('\n');
+                let _ = app_err.emit(
+                    "tool-output",
+                    ToolOutput {
+                        id: id_err.clone(),
+                        stream: "stderr".into(),
+                        data: format!("{line}\n"),
+                    },
+                );
+            }
         }
-        if let Some(c) = *done.lock().unwrap() {
-            exit_code = c;
-            break;
+    });
+
+    let timeout_duration = std::time::Duration::from_secs(60);
+    let wait_result = tokio::time::timeout(timeout_duration, async {
+        let status = child.wait().await;
+        let _ = stdout_handle.await;
+        let _ = stderr_handle.await;
+        status
+    })
+    .await;
+
+    let exit_code = match wait_result {
+        Ok(Ok(status)) => status.code().unwrap_or(-1),
+        Ok(Err(e)) => return Err(format!("error esperando al proceso: {e}")),
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err("timeout (60s) ejecutando el comando bash".into());
         }
-        if std::time::Instant::now() > deadline {
-            drop(writer);
-            drop(master);
-            return Err("timeout (600s) ejecutando el comando".into());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    };
+
     let out = combined.lock().unwrap().clone();
     let mut summarized = truncate_head_tail(&out, 40, 40);
     if summarized.chars().count() > 12000 {
@@ -732,16 +744,21 @@ fn check_file_syntax(path: &str, content: &str) -> Option<String> {
 }
 
 fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
+    // Si la sesión no es excesivamente larga (<200k chars), preservar 100% de inmutabilidad para Prefix Caching
+    let total_chars: usize = msgs.iter().map(|m| m.content.len()).sum();
+    if total_chars < 200_000 {
+        return msgs.to_vec();
+    }
     let tool_positions: Vec<usize> = msgs
         .iter()
         .enumerate()
         .filter(|(_, m)| m.role == "tool")
         .map(|(i, _)| i)
         .collect();
-    if tool_positions.len() <= 6 {
+    if tool_positions.len() <= 10 {
         return msgs.to_vec();
     }
-    let keep = 6usize;
+    let keep = 8usize;
     let threshold = tool_positions.len() - keep;
     msgs.iter()
         .enumerate()
@@ -1109,6 +1126,7 @@ pub async fn run(
         format!("{h:016x}")
     };
     history::upsert_session(&session_id, &workspace, &cfg.model);
+    CANCEL.store(false, Ordering::SeqCst);
     // M4: resume por checkpoint cuando el frontend entrega un transcript vacío.
     if msgs.is_empty() {
         if let Some((_, restored)) = history::latest_checkpoint(&session_id) {
@@ -1190,7 +1208,6 @@ pub async fn run(
         }
 
         // Detección de bucle degenerado: las mismas llamadas repetidas sin progreso.
-        // No es un límite de tarea: evita quemar saldo si el modelo se queda atascado.
         let mut sig: Vec<String> = outcome
             .tool_calls
             .iter()
@@ -1199,7 +1216,7 @@ pub async fn run(
         sig.sort();
         if sig == prev_sig {
             repeats += 1;
-            if repeats >= 4 {
+            if repeats >= 2 {
                 let forced = if cfg.kind == "anthropic" {
                     gateway::anthropic_turn(app, cfg, &full_system, &msgs, &[]).await?
                 } else {
@@ -1253,32 +1270,90 @@ pub async fn run(
             tool_call_id: None,
         });
 
-        for tc in &outcome.tool_calls {
-            let _ = app.emit(
-                "tool-start",
-                ToolStart {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                },
-            );
-            let result = execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry).await;
-            let (ok, summary) = match &result {
-                Ok(s) => (true, truncate(s, 400)),
-                Err(e) => (false, e.clone()),
-            };
-            let _ = app.emit("tool-end", ToolEnd { id: tc.id.clone(), ok, summary });
-            let content = match result {
-                Ok(s) => s,
-                Err(e) => format!("ERROR: {e}"),
-            };
-            msgs.push(ChatMessage {
-                role: "tool".into(),
-                content,
-                images: vec![],
-                tool_calls: None,
-                tool_call_id: Some(tc.id.clone()),
-            });
+        // Ejecución optimizada: si todas las herramientas del turno son de solo lectura,
+        // ejecutarlas concurrentemente en paralelo para triplicar la velocidad de respuesta.
+        let all_read_only = outcome.tool_calls.iter().all(|tc| is_read_only_tool(&tc.name));
+
+        if all_read_only && outcome.tool_calls.len() > 1 {
+            for tc in &outcome.tool_calls {
+                let _ = app.emit(
+                    "tool-start",
+                    ToolStart {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    },
+                );
+            }
+            let tasks: Vec<_> = outcome.tool_calls.iter().map(|tc| {
+                let app = app.clone();
+                let cfg = cfg.clone();
+                let name = tc.name.clone();
+                let arguments = tc.arguments.clone();
+                let folders = folders.to_vec();
+                let id = tc.id.clone();
+                async move {
+                    let result = execute_tool(&app, &cfg, &name, &arguments, &folders, registry).await;
+                    let (ok, summary) = match &result {
+                        Ok(s) => (true, truncate(s, 400)),
+                        Err(e) => (false, e.clone()),
+                    };
+                    let _ = app.emit("tool-end", ToolEnd { id: id.clone(), ok, summary });
+                    let content = match result {
+                        Ok(s) => s,
+                        Err(e) => format!("ERROR: {e}"),
+                    };
+                    (id, content)
+                }
+            }).collect();
+
+            let results = futures_util::future::join_all(tasks).await;
+            if CANCEL.load(Ordering::SeqCst) {
+                return Err("Cancelado por el usuario".into());
+            }
+            for (id, content) in results {
+                msgs.push(ChatMessage {
+                    role: "tool".into(),
+                    content,
+                    images: vec![],
+                    tool_calls: None,
+                    tool_call_id: Some(id),
+                });
+            }
+        } else {
+            for tc in &outcome.tool_calls {
+                if CANCEL.load(Ordering::SeqCst) {
+                    return Err("Cancelado por el usuario".into());
+                }
+                let _ = app.emit(
+                    "tool-start",
+                    ToolStart {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    },
+                );
+                let result = execute_tool(app, cfg, &tc.name, &tc.arguments, folders, registry).await;
+                if CANCEL.load(Ordering::SeqCst) {
+                    return Err("Cancelado por el usuario".into());
+                }
+                let (ok, summary) = match &result {
+                    Ok(s) => (true, truncate(s, 400)),
+                    Err(e) => (false, e.clone()),
+                };
+                let _ = app.emit("tool-end", ToolEnd { id: tc.id.clone(), ok, summary });
+                let content = match result {
+                    Ok(s) => s,
+                    Err(e) => format!("ERROR: {e}"),
+                };
+                msgs.push(ChatMessage {
+                    role: "tool".into(),
+                    content,
+                    images: vec![],
+                    tool_calls: None,
+                    tool_call_id: Some(tc.id.clone()),
+                });
+            }
         }
     }
 }

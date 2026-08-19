@@ -8,6 +8,7 @@ export const commands = {
 	homeDir: () => typedError<string, string>(__TAURI_INVOKE("home_dir")),
 	listDir: (path: string) => typedError<DirEntry[], string>(__TAURI_INVOKE("list_dir", { path })),
 	readTextFile: (path: string) => typedError<string, string>(__TAURI_INVOKE("read_text_file", { path })),
+	readFileBinary: (path: string) => typedError<number[], string>(__TAURI_INVOKE("read_file_binary", { path })),
 	writeFile: (folders: string[], path: string, content: string) => typedError<string | null, string>(__TAURI_INVOKE("write_file", { folders, path, content })),
 	renamePath: (folders: string[], oldPath: string, newPath: string) => typedError<null, string>(__TAURI_INVOKE("rename_path", { folders, oldPath, newPath })),
 	createFile: (folders: string[], path: string) => typedError<null, string>(__TAURI_INVOKE("create_file", { folders, path })),
@@ -15,10 +16,11 @@ export const commands = {
 	deletePath: (folders: string[], path: string) => typedError<null, string>(__TAURI_INVOKE("delete_path", { folders, path })),
 	revealInExplorer: (path: string) => typedError<null, string>(__TAURI_INVOKE("reveal_in_explorer", { path })),
 	pickFolder: () => typedError<string | null, string>(__TAURI_INVOKE("pick_folder")),
+	pickFiles: () => typedError<string[], string>(__TAURI_INVOKE("pick_files")),
 	countTokens: (text: string) => typedError<number, string>(__TAURI_INVOKE("count_tokens", { text })),
 	spawnStream: (message: string, chunkMs: number) => typedError<null, string>(__TAURI_INVOKE("spawn_stream", { message, chunkMs })),
 	listModels: (config: ChatConfig) => typedError<string[], string>(__TAURI_INVOKE("list_models", { config })),
-	chat: (config: ChatConfig, system: string, messages: ChatMessage[], folders: string[]) => typedError<ChatResult, string>(__TAURI_INVOKE("chat", { config, system, messages, folders })),
+	chat: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[]) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("chat", { config, system, messages, folders })),
 	chatCancel: () => __TAURI_INVOKE<void>("chat_cancel"),
 	mcpConfigure: (specs: McpSpec[]) => typedError<string[], string>(__TAURI_INVOKE("mcp_configure", { specs })),
 	fetchBalance: (provider: string, baseUrl: string, apiKey: string) => typedError<{
@@ -60,6 +62,8 @@ export const commands = {
 	gitRemoteSet: (folder: string, name: string, url: string) => typedError<string, string>(__TAURI_INVOKE("git_remote_set", { folder, name, url })),
 	gitFetch: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_fetch", { folder })),
 	gitInit: (folder: string) => typedError<string, string>(__TAURI_INVOKE("git_init", { folder })),
+	getInitialFile: () => typedError<string | null, string>(__TAURI_INVOKE("get_initial_file")),
+	checkBetaValidity: () => typedError<null, string>(__TAURI_INVOKE("check_beta_validity")),
 };
 
 /** Events */
@@ -90,19 +94,38 @@ export type ChatDeltaEvent = {
 	text: string,
 };
 
-export type ChatMessage = {
+export type ChatMessage = ChatMessage_Serialize | ChatMessage_Deserialize;
+
+export type ChatMessage_Deserialize = {
 	role: string,
 	content: string,
 	images?: string[],
-	toolCalls?: ToolCall[] | null,
+	toolCalls?: ToolCall_Deserialize[] | null,
 	toolCallId?: string | null,
 };
 
-export type ChatResult = {
+export type ChatMessage_Serialize = {
+	role: string,
+	content: string,
+	images: string[],
+	toolCalls: ToolCall_Serialize[] | null,
+	toolCallId: string | null,
+};
+
+export type ChatResult = ChatResult_Serialize | ChatResult_Deserialize;
+
+export type ChatResult_Deserialize = {
 	inputTokens: number,
 	outputTokens: number,
 	cachedTokens: number,
-	messages: ChatMessage[],
+	messages: ChatMessage_Deserialize[],
+};
+
+export type ChatResult_Serialize = {
+	inputTokens: number,
+	outputTokens: number,
+	cachedTokens: number,
+	messages: ChatMessage_Serialize[],
 };
 
 export type DirEntry = {
@@ -152,10 +175,20 @@ export type StreamChunk = {
 
 export type StreamEvent = StreamChunk;
 
-export type ToolCall = {
+export type ToolCall = ToolCall_Serialize | ToolCall_Deserialize;
+
+export type ToolCall_Deserialize = {
 	id: string,
 	name: string,
 	arguments: string,
+	extraContent?: { [key in string]: string } | null,
+};
+
+export type ToolCall_Serialize = {
+	id: string,
+	name: string,
+	arguments: string,
+	extraContent?: { [key in string]: string } | null,
 };
 
 /* Tauri Specta runtime */

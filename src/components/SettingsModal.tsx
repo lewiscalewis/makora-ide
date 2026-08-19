@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
-import { THINKING_LEVELS } from "../defaults";
+import { useState, useEffect } from "react";
+import {
+  THINKING_LEVELS,
+  isModelReasoningSupported,
+  isModelVisionSupported,
+  inferModelConfig,
+} from "../defaults";
 import { THEME_LIST } from "../themes";
 import { PROVIDERS, presetById } from "../providers";
-import { detectOllama, keyringGet, keyringSet } from "../api";
+import { detectOllama, keyringGet, keyringSet, listModels } from "../api";
 import { useI18n, LANGUAGE_LIST } from "../i18n";
 import {
   Key,
@@ -23,6 +28,10 @@ import {
   Server,
   HardDrive,
   ExternalLink,
+  CheckCircle2,
+  AlertTriangle,
+  Globe,
+  Loader2,
 } from "lucide-react";
 
 import type {
@@ -45,6 +54,7 @@ interface Props {
   models: string[];
   connecting: boolean;
   modelsError: string | null;
+  connectionSuccess?: string | null;
   onConnect: () => void;
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
@@ -64,6 +74,7 @@ export default function SettingsModal({
   models,
   connecting,
   modelsError,
+  connectionSuccess,
   onConnect,
   currentTheme,
   onSelectTheme,
@@ -73,6 +84,7 @@ export default function SettingsModal({
   const [tab, setTab] = useState<Tab>("providers");
   const [showApiKey, setShowApiKey] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
+  const [modelFilterProvider, setModelFilterProvider] = useState<string>(settings.providerId || "deepseek");
 
   const currentPreset = presetById(settings.providerId);
 
@@ -82,23 +94,13 @@ export default function SettingsModal({
 
   const handleProviderChange = async (providerId: string) => {
     const preset = presetById(providerId);
+    setModelFilterProvider(providerId);
     let savedKey = "";
     try {
       const stored = await keyringGet(providerId);
       if (stored) savedKey = stored;
     } catch {
       /* ignore */
-    }
-    if (!savedKey) {
-      try {
-        const rawKeys = localStorage.getItem("makora.provider_keys");
-        if (rawKeys) {
-          const parsed = JSON.parse(rawKeys);
-          savedKey = parsed[providerId] || "";
-        }
-      } catch {
-        /* ignore */
-      }
     }
 
     onSaveSettings({
@@ -115,14 +117,6 @@ export default function SettingsModal({
     if (settings.providerId) {
       if (apiKey.trim()) {
         keyringSet(settings.providerId, apiKey.trim()).catch(() => undefined);
-        try {
-          const rawKeys = localStorage.getItem("makora.provider_keys");
-          const parsed = rawKeys ? JSON.parse(rawKeys) : {};
-          parsed[settings.providerId] = apiKey.trim();
-          localStorage.setItem("makora.provider_keys", JSON.stringify(parsed));
-        } catch {
-          /* ignore */
-        }
       }
     }
   };
@@ -133,7 +127,55 @@ export default function SettingsModal({
       models: config.models.map((m, idx) => (idx === i ? { ...m, ...patch } : m)),
     });
 
-  const addModel = () =>
+  const [liveQueryLoading, setLiveQueryLoading] = useState(false);
+  const [liveQueryMessage, setLiveQueryMessage] = useState<string | null>(null);
+
+  const queryLiveApiModels = async (provId: string) => {
+    setLiveQueryLoading(true);
+    setLiveQueryMessage(null);
+    try {
+      const preset = presetById(provId);
+      const activeKey = provId === settings.providerId ? settings.apiKey : (await keyringGet(provId)) || "";
+      
+      const liveList = await listModels({
+        kind: preset.kind,
+        baseUrl: provId === settings.providerId ? (settings.baseUrl || preset.baseUrl) : preset.baseUrl,
+        apiKey: activeKey,
+        model: "",
+        reasoningEffort: null,
+        maxOutputTokens: null,
+        temperature: null,
+        visionEnabled: false,
+      });
+
+      if (!liveList || liveList.length === 0) {
+        throw new Error("La API no devolvió ningún modelo.");
+      }
+
+      const generatedModels: ModelConfig[] = liveList.map((mId) => inferModelConfig(mId, provId));
+
+      const otherModels = config.models.filter(
+        (m) => (m.providerId || "").toLowerCase() !== provId.toLowerCase()
+      );
+      const newModels = [...otherModels, ...generatedModels];
+      onConfig({ ...config, models: newModels });
+
+      if (generatedModels.length > 0 && (!settings.model || settings.providerId === provId)) {
+        onSaveSettings({ ...settings, model: generatedModels[0].id });
+      }
+
+      setLiveQueryMessage(`✅ ${liveList.length} modelos reales cargados desde la API oficial de ${preset.label.split(" ")[0]}.`);
+      setTimeout(() => setLiveQueryMessage(null), 5000);
+    } catch (err) {
+      setLiveQueryMessage(`⚠️ Error al consultar API (${presetById(provId).label.split(" ")[0]}): ${String(err)}`);
+      setTimeout(() => setLiveQueryMessage(null), 6000);
+    } finally {
+      setLiveQueryLoading(false);
+    }
+  };
+
+  const addModel = () => {
+    const targetProv = modelFilterProvider === "all" ? (settings.providerId || "deepseek") : modelFilterProvider;
     onConfig({
       ...config,
       models: [
@@ -141,8 +183,8 @@ export default function SettingsModal({
         {
           id: "",
           label: "",
-          providerId: settings.providerId || "deepseek",
-          thinkingLevel: "medium",
+          providerId: targetProv,
+          thinkingLevel: "none",
           contextWindow: 128000,
           maxOutputTokens: 8192,
           reasoningEnabled: false,
@@ -152,6 +194,7 @@ export default function SettingsModal({
         },
       ],
     });
+  };
 
   const removeModel = (i: number) =>
     onConfig({ ...config, models: config.models.filter((_, idx) => idx !== i) });
@@ -390,7 +433,22 @@ export default function SettingsModal({
                   </div>
                 </div>
 
-                {modelsError && <p className="error small mt-4">{modelsError}</p>}
+                {connectionSuccess && (
+                  <div className="connection-status-banner success">
+                    <CheckCircle2 size={14} className="text-green" />
+                    <span>{t.settings.connectionSuccess.replace("{n}", String(models.length))}</span>
+                  </div>
+                )}
+
+                {modelsError && (
+                  <div className="connection-status-banner error">
+                    <AlertTriangle size={14} className="text-red" />
+                    <div className="connection-error-col">
+                      <strong className="connection-error-title">{t.settings.connectionFailed}</strong>
+                      <span className="small font-mono connection-error-msg">{modelsError}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Quick Preset Guide */}
@@ -418,120 +476,217 @@ export default function SettingsModal({
           {/* TAB 2: MODELS & PRICING */}
           {tab === "models" && (
             <div className="cfg-section">
-              <div className="cfg-top-action">
-                <button className="btn btn-connect" onClick={addModel}>
+              {/* Provider Quick Filter Tabs */}
+              <div className="model-provider-filter-bar">
+                {PROVIDERS.map((p) => {
+                  const isSelected = modelFilterProvider === p.id;
+                  const count = config.models.filter((m) => (m.providerId || "deepseek").toLowerCase() === p.id.toLowerCase()).length;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`provider-filter-pill ${isSelected ? "active" : ""}`}
+                      onClick={() => setModelFilterProvider(p.id)}
+                    >
+                      <span>{p.label.split(" ")[0]}</span>
+                      {count > 0 && <span className="provider-pill-count">{count}</span>}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  className={`provider-filter-pill ${modelFilterProvider === "all" ? "active" : ""}`}
+                  onClick={() => setModelFilterProvider("all")}
+                >
+                  <span>Todos</span>
+                  <span className="provider-pill-count">{config.models.length}</span>
+                </button>
+              </div>
+
+              {/* Action Toolbar */}
+              <div className="cfg-top-action-bar">
+                {modelFilterProvider !== "all" && (
+                  <button
+                    type="button"
+                    className="btn btn-connect"
+                    disabled={liveQueryLoading}
+                    onClick={() => queryLiveApiModels(modelFilterProvider)}
+                    title="Hacer petición GET a la API en vivo del proveedor para consultar los modelos reales disponibles con tu API Key"
+                    style={{ background: "rgba(0, 200, 214, 0.12)", borderColor: "rgba(0, 200, 214, 0.4)" }}
+                  >
+                    {liveQueryLoading ? <Loader2 size={12} className="spin" /> : <Globe size={12} className="text-cyan" />}
+                    <span>{liveQueryLoading ? "Consultando API..." : `Consultar API en Vivo (${presetById(modelFilterProvider).label.split(" ")[0]})`}</span>
+                  </button>
+                )}
+                <button type="button" className="btn btn-connect" onClick={addModel}>
                   <Plus size={12} />
                   <span>{t.settings.addCustomModel}</span>
                 </button>
               </div>
 
+              {liveQueryMessage && (
+                <div
+                  className="model-live-feedback"
+                  style={{
+                    padding: "6px 12px",
+                    marginBottom: "12px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    background: liveQueryMessage.includes("✅") ? "rgba(0, 200, 100, 0.15)" : "rgba(255, 170, 0, 0.15)",
+                    border: liveQueryMessage.includes("✅") ? "1px solid rgba(0, 200, 100, 0.3)" : "1px solid rgba(255, 170, 0, 0.3)",
+                    color: liveQueryMessage.includes("✅") ? "#00ff88" : "#ffb700",
+                  }}
+                >
+                  {liveQueryMessage}
+                </div>
+              )}
+
+              {/* Filtered Models Stack */}
               <div className="cfg-cards-stack">
-                {config.models.map((m, i) => (
-                  <div className="cfg-card" key={i}>
-                    <div className="cfg-head">
-                      <div className="cfg-head-title">
-                        <Cpu size={14} className="text-cyan" />
-                        <strong>{m.label || m.id || "Model"}</strong>
-                        {m.reasoningEnabled && <span className="badge-pill">Thinking</span>}
-                        {m.visionEnabled && <span className="badge-pill">Vision</span>}
-                      </div>
-                      <button className="icon-btn-micro danger" title={t.common.delete} onClick={() => removeModel(i)}>
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
+                {config.models
+                  .map((m, originalIdx) => ({ m, originalIdx }))
+                  .filter(({ m }) => modelFilterProvider === "all" || (m.providerId || "deepseek").toLowerCase() === modelFilterProvider.toLowerCase())
+                  .map(({ m, originalIdx: i }) => {
+                    const canReason = isModelReasoningSupported(m.id, m);
+                    const canVision = isModelVisionSupported(m.id, m);
 
-                    <div className="grid-2">
-                      <div className="field">
-                        <label>{t.settings.providerModelId}</label>
-                        <input
-                          placeholder="ej. deepseek-chat"
-                          value={m.id}
-                          onChange={(e) => updModel(i, { id: e.target.value })}
-                        />
-                      </div>
-                      <div className="field">
-                        <label>{t.settings.visibleLabel}</label>
-                        <input
-                          placeholder="ej. DeepSeek V3 Flash"
-                          value={m.label}
-                          onChange={(e) => updModel(i, { label: e.target.value })}
-                        />
-                      </div>
-                    </div>
+                    return (
+                      <div className="cfg-card" key={i}>
+                        <div className="cfg-head">
+                          <div className="cfg-head-title">
+                            <Cpu size={14} className="text-cyan" />
+                            <strong>{m.label || m.id || "Model"}</strong>
+                            <span className="badge-provider-tag font-mono">
+                              {m.providerId || "deepseek"}
+                            </span>
+                            {m.reasoningEnabled && canReason && <span className="badge-pill">Thinking</span>}
+                            {m.visionEnabled && canVision && <span className="badge-pill">Vision</span>}
+                          </div>
+                          <button
+                            type="button"
+                            className="icon-btn-micro danger"
+                            title={t.common.delete}
+                            onClick={() => removeModel(i)}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
 
-                    <div className="grid-2">
-                      <div className="field">
-                        <label>{t.settings.defaultThinking}</label>
-                        <select
-                          value={m.thinkingLevel}
-                          onChange={(e) => updModel(i, { thinkingLevel: e.target.value as ThinkingLevel })}
-                        >
-                          {THINKING_LEVELS.map((th) => (
-                            <option key={th.value} value={th.value}>{th.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="field">
-                        <label>{t.settings.contextWindow}</label>
-                        <input
-                          type="number"
-                          value={m.contextWindow}
-                          onChange={(e) => updModel(i, { contextWindow: num(e.target.value, 0) })}
-                        />
-                      </div>
-                    </div>
+                        <div className="grid-2">
+                          <div className="field">
+                            <label>{t.settings.providerModelId}</label>
+                            <input
+                              placeholder="ej. deepseek-chat"
+                              value={m.id}
+                              onChange={(e) => {
+                                const newId = e.target.value;
+                                const inferred = inferModelConfig(newId, m.providerId);
+                                updModel(i, {
+                                  id: newId,
+                                  label: m.label === m.id || !m.label ? inferred.label : m.label,
+                                  contextWindow: m.contextWindow === 128000 ? inferred.contextWindow : m.contextWindow,
+                                  maxOutputTokens: m.maxOutputTokens === 8192 ? inferred.maxOutputTokens : m.maxOutputTokens,
+                                  reasoningEnabled: inferred.reasoningEnabled,
+                                  visionEnabled: inferred.visionEnabled,
+                                  inputPrice: m.inputPrice === 0 ? inferred.inputPrice : m.inputPrice,
+                                  outputPrice: m.outputPrice === 0 ? inferred.outputPrice : m.outputPrice,
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="field">
+                            <label>{t.settings.visibleLabel}</label>
+                            <input
+                              placeholder="ej. DeepSeek V3 Flash"
+                              value={m.label}
+                              onChange={(e) => updModel(i, { label: e.target.value })}
+                            />
+                          </div>
+                        </div>
 
-                    <div className="grid-2">
-                      <div className="field">
-                        <label>{t.settings.maxOutputTokens}</label>
-                        <input
-                          type="number"
-                          value={m.maxOutputTokens}
-                          onChange={(e) => updModel(i, { maxOutputTokens: num(e.target.value, 0) })}
-                        />
-                      </div>
-                      <div className="checks-row align-center">
-                        <label className="check">
-                          <input
-                            type="checkbox"
-                            checked={m.reasoningEnabled}
-                            onChange={(e) => updModel(i, { reasoningEnabled: e.target.checked })}
-                          />
-                          <span>{t.settings.apiReasoning}</span>
-                        </label>
-                        <label className="check">
-                          <input
-                            type="checkbox"
-                            checked={m.visionEnabled}
-                            onChange={(e) => updModel(i, { visionEnabled: e.target.checked })}
-                          />
-                          <span>{t.settings.visionOcr}</span>
-                        </label>
-                      </div>
-                    </div>
+                        <div className="grid-2">
+                          <div className="field" style={{ opacity: canReason ? 1 : 0.45 }}>
+                            <label>
+                              {t.settings.defaultThinking} {!canReason && "(No soportado)"}
+                            </label>
+                            <select
+                              disabled={!canReason}
+                              value={canReason ? m.thinkingLevel : "none"}
+                              onChange={(e) =>
+                                updModel(i, { thinkingLevel: e.target.value as ThinkingLevel })
+                              }
+                            >
+                              {THINKING_LEVELS.map((th) => (
+                                <option key={th.value} value={th.value}>
+                                  {th.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="field">
+                            <label>{t.settings.contextWindow}</label>
+                            <input
+                              type="number"
+                              value={m.contextWindow}
+                              onChange={(e) => updModel(i, { contextWindow: num(e.target.value, 0) })}
+                            />
+                          </div>
+                        </div>
 
-                    <div className="grid-2">
-                      <div className="field">
-                        <label>{t.settings.inputPrice}</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={m.inputPrice}
-                          onChange={(e) => updModel(i, { inputPrice: num(e.target.value, 0) })}
-                        />
+                        <div className="grid-2">
+                          <div className="field">
+                            <label>{t.settings.maxOutputTokens}</label>
+                            <input
+                              type="number"
+                              value={m.maxOutputTokens}
+                              onChange={(e) => updModel(i, { maxOutputTokens: num(e.target.value, 0) })}
+                            />
+                          </div>
+                          <div className="checks-row align-center">
+                            <label className={`check ${!canReason ? "disabled-check" : ""}`} title={!canReason ? "La arquitectura de este modelo no soporta tokens de razonamiento" : ""}>
+                              <input
+                                type="checkbox"
+                                disabled={!canReason}
+                                checked={canReason && m.reasoningEnabled}
+                                onChange={(e) => updModel(i, { reasoningEnabled: e.target.checked })}
+                              />
+                              <span>{t.settings.apiReasoning} {!canReason && " (Incompatible)"}</span>
+                            </label>
+                            <label className={`check ${!canVision ? "disabled-check" : ""}`} title={!canVision ? "Este modelo no procesa imágenes u OCR" : ""}>
+                              <input
+                                type="checkbox"
+                                disabled={!canVision}
+                                checked={canVision && m.visionEnabled}
+                                onChange={(e) => updModel(i, { visionEnabled: e.target.checked })}
+                              />
+                              <span>{t.settings.visionOcr} {!canVision && " (Incompatible)"}</span>
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="grid-2">
+                          <div className="field">
+                            <label>{t.settings.inputPrice}</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={m.inputPrice}
+                              onChange={(e) => updModel(i, { inputPrice: num(e.target.value, 0) })}
+                            />
+                          </div>
+                          <div className="field">
+                            <label>{t.settings.outputPrice}</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={m.outputPrice}
+                              onChange={(e) => updModel(i, { outputPrice: num(e.target.value, 0) })}
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div className="field">
-                        <label>{t.settings.outputPrice}</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={m.outputPrice}
-                          onChange={(e) => updModel(i, { outputPrice: num(e.target.value, 0) })}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })}
               </div>
             </div>
           )}

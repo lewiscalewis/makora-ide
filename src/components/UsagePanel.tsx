@@ -1,5 +1,6 @@
 import { PROVIDERS } from "../providers";
-import { THINKING_LEVELS } from "../defaults";
+import { THINKING_LEVELS, isModelReasoningSupported } from "../defaults";
+import { keyringGet } from "../api";
 import { useI18n } from "../i18n";
 import {
   SlidersHorizontal,
@@ -102,16 +103,13 @@ export default function UsagePanel({
         <label>{t.usagePanel.provider}</label>
         <select
           value={settings.providerId}
-          onChange={(e) => {
+          onChange={async (e) => {
             const newPid = e.target.value;
             const p = PROVIDERS.find((x) => x.id === newPid) ?? PROVIDERS[0];
             let key = "";
             try {
-              const rawKeys = localStorage.getItem("makora.provider_keys");
-              if (rawKeys) {
-                const parsed = JSON.parse(rawKeys);
-                key = parsed[newPid] || "";
-              }
+              const stored = await keyringGet(newPid);
+              if (stored) key = stored;
             } catch {
               /* ignore */
             }
@@ -189,36 +187,46 @@ export default function UsagePanel({
       </button>
       {modelsError && <p className="error small">{modelsError}</p>}
 
-      <h3 className="panel-title">{t.usagePanel.thinkingLevel}</h3>
-      <div className="field">
-        <label>{t.usagePanel.reasoningMode}</label>
-        <select
-          value={thinkingLevel}
-          onChange={(e) => onThinkingLevel(e.target.value as ThinkingLevel)}
-        >
-          {THINKING_LEVELS.map((th) => (
-            <option key={th.value} value={th.value}>
-              {th.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="profiles">
-        {PROFILES.map((p) => {
-          const Icon = p.icon;
-          return (
-            <button
-              key={p.id}
-              className="profile-btn"
-              title={p.label}
-              onClick={() => onProfile({ thinking: p.thinking, reasoning: p.reasoning })}
-            >
-              <Icon size={12} />
-              <span>{p.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {(() => {
+        const canReason = isModelReasoningSupported(settings.model);
+        return (
+          <div style={{ opacity: canReason ? 1 : 0.45, transition: "opacity 0.2s ease" }}>
+            <h3 className="panel-title">
+              {t.usagePanel.thinkingLevel} {!canReason && "(Incompatible con este modelo)"}
+            </h3>
+            <div className="field">
+              <label>{t.usagePanel.reasoningMode}</label>
+              <select
+                disabled={!canReason}
+                value={canReason ? thinkingLevel : "none"}
+                onChange={(e) => onThinkingLevel(e.target.value as ThinkingLevel)}
+              >
+                {THINKING_LEVELS.map((th) => (
+                  <option key={th.value} value={th.value}>
+                    {th.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="profiles" style={{ pointerEvents: canReason ? "auto" : "none" }}>
+              {PROFILES.map((p) => {
+                const Icon = p.icon;
+                return (
+                  <button
+                    key={p.id}
+                    className="profile-btn"
+                    title={p.label}
+                    onClick={() => onProfile({ thinking: p.thinking, reasoning: p.reasoning })}
+                  >
+                    <Icon size={12} />
+                    <span>{p.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <h3 className="panel-title">{t.usagePanel.contextUsage}</h3>
       <div className="gauge">

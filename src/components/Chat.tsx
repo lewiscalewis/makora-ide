@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   chat,
   chatCancel,
   detectProjectRules,
   searchPaths,
-  workspaceSummary,
+  pickFiles,
+  readTextFile,
 } from "../api";
 import Markdown from "./Markdown";
+import { isModelReasoningSupported } from "../defaults";
 import {
   Zap,
   ScrollText,
@@ -20,14 +22,64 @@ import {
   Check,
   Image as ImageIcon,
   FileText,
+  FileCode,
+  Code2,
+  Table,
+  UploadCloud,
+  Folder,
+  Paperclip,
   X,
   ChevronDown,
   Search,
   Plus,
+  Coins,
+  Clock,
 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { computeCostUsd } from "../defaults";
 
+function formatPathDisplay(fullPath: string) {
+  const normalized = fullPath.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  const fileName = parts.pop() || normalized;
+  const dir = parts.slice(-3).join("/");
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  return { fileName, dir, ext, fullPath: normalized };
+}
 
+function getMentionIcon(ext: string) {
+  switch (ext) {
+    case "ts":
+    case "tsx":
+    case "js":
+    case "jsx":
+      return <FileCode size={13} className="text-cyan" />;
+    case "rs":
+      return <Code2 size={13} className="text-purple" />;
+    case "py":
+      return <Code2 size={13} className="text-blue" />;
+    case "json":
+    case "toml":
+    case "yaml":
+    case "yml":
+      return <Code2 size={13} className="text-gold" />;
+    case "md":
+    case "txt":
+      return <FileText size={13} className="text-blue" />;
+    case "pdf":
+      return <FileText size={13} className="text-purple" />;
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "webp":
+    case "svg":
+      return <ImageIcon size={13} className="text-green" />;
+    case "csv":
+      return <Table size={13} className="text-cyan" />;
+    default:
+      return <FileText size={13} className="opacity-70" />;
+  }
+}
 
 import type {
   AgentMode,
@@ -35,18 +87,21 @@ import type {
   ChatConfig,
   ChatMessage,
   ChatUsage,
+  ModelConfig,
   ThinkingLevel,
   ToolActivity,
   ToolEnd,
   ToolOutputEvent,
   ToolStart,
+  TurnMetrics,
   UiMessage,
 } from "../types";
 
-function transcriptToUi(transcript: ChatMessage[]): UiMessage[] {
+function transcriptToUi(transcript: ChatMessage[], existingUi?: UiMessage[]): UiMessage[] {
   const out: UiMessage[] = [];
   let id = 0;
   let currentAssistant: UiMessage | null = null;
+  let assistantCount = 0;
 
   for (let i = 0; i < transcript.length; i++) {
     const m = transcript[i];
@@ -62,11 +117,16 @@ function transcriptToUi(transcript: ChatMessage[]): UiMessage[] {
       });
     } else if (m.role === "assistant") {
       if (!currentAssistant) {
+        const existingMetrics = existingUi
+          ? existingUi.filter((x) => x.role === "assistant")[assistantCount]?.metrics
+          : undefined;
+        assistantCount++;
         currentAssistant = {
           id: ++id,
           role: "assistant",
           text: m.content || "",
           activities: [],
+          metrics: existingMetrics,
         };
       } else if (m.content) {
         currentAssistant.text = m.content;
@@ -182,14 +242,10 @@ function AntigravityToolItem({
   copied: boolean;
   onCopyLog: (log: string) => void;
 }) {
-  const [open, setOpen] = useState(activity.ok === null);
+  const [open, setOpen] = useState(false);
   const isRunning = activity.ok === null;
   const isErr = activity.ok === false;
   const title = getAntigravityToolTitle(activity);
-
-  useEffect(() => {
-    if (isRunning) setOpen(true);
-  }, [isRunning]);
 
   const outputLog = activity.log || (isRunning ? "Ejecutando..." : "Completado sin salida.");
 
@@ -256,13 +312,7 @@ function GroupedToolsDropdown({
   const runningTool = activities.find((a) => a.ok === null);
   const isRunning = Boolean(runningTool);
   const hasFailed = activities.some((a) => a.ok === false);
-  const [open, setOpen] = useState(isRunning);
-
-  useEffect(() => {
-    if (isRunning) {
-      setOpen(true);
-    }
-  }, [isRunning]);
+  const [open, setOpen] = useState(false);
 
   const count = activities.length;
   const summary = isRunning
@@ -344,12 +394,16 @@ interface ChatProps {
   models?: string[];
   activeModel?: string;
   onSelectModel?: (model: string) => void;
+  modelConfig?: ModelConfig;
+  providerId?: string;
   onUsage: (usage: ChatUsage) => void;
   onApplyArtifact: (path: string, content: string) => void;
   onStatusChange?: (busy: boolean, runningToolName: string | null) => void;
   onClearSessionTrigger?: () => void;
   initialTranscript?: ChatMessage[];
   onTranscriptChange?: (messages: ChatMessage[]) => void;
+  injectedPrompt?: string | null;
+  onClearInjectedPrompt?: () => void;
 }
 
 export default function Chat({
@@ -368,12 +422,16 @@ export default function Chat({
   models = [],
   activeModel,
   onSelectModel,
+  modelConfig,
+  providerId,
   onUsage,
   onApplyArtifact,
   onStatusChange,
   onClearSessionTrigger,
   initialTranscript = [],
   onTranscriptChange,
+  injectedPrompt,
+  onClearInjectedPrompt,
 }: ChatProps) {
   const { t } = useI18n();
   const [messages, setMessages] = useState<UiMessage[]>(() =>
@@ -385,6 +443,21 @@ export default function Chat({
   const [turnActivities, setTurnActivities] = useState<Record<number, ToolActivity[]>>({});
   const [thinking, setThinking] = useState<{ id: number; text: string } | null>(null);
 
+  // Handle injected prompt from viewers (e.g. PDF viewer "Analizar con Makora")
+  useEffect(() => {
+    if (injectedPrompt) {
+      setInput(injectedPrompt);
+      onClearInjectedPrompt?.();
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+        }
+      }, 50);
+    }
+  }, [injectedPrompt, onClearInjectedPrompt]);
+
+  const isAbortedRef = useRef(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mention, setMention] = useState<{
     query: string;
@@ -399,11 +472,15 @@ export default function Chat({
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
 
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
+  const mentionListRef = useRef<HTMLDivElement>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const mentionTimer = useRef<number | null>(null);
   const lastAttachmentId = useRef<number>(0);
   const currentAssistantId = useRef<number>(0);
@@ -416,18 +493,29 @@ export default function Chat({
     return idCounter.current;
   };
 
-  // Close model menu on outside click
+  // Auto-scroll selected mention item into view
+  useEffect(() => {
+    if (mention && mentionListRef.current) {
+      const activeEl = mentionListRef.current.children[mentionIndex] as HTMLElement | undefined;
+      activeEl?.scrollIntoView({ block: "nearest" });
+    }
+  }, [mention, mentionIndex]);
+
+  // Close menus on outside click
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
         setModelMenuOpen(false);
       }
+      if (attachMenuRef.current && !attachMenuRef.current.contains(e.target as Node)) {
+        setAttachMenuOpen(false);
+      }
     };
-    if (modelMenuOpen) {
+    if (modelMenuOpen || attachMenuOpen) {
       document.addEventListener("mousedown", handleOutsideClick);
     }
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [modelMenuOpen]);
+  }, [modelMenuOpen, attachMenuOpen]);
 
   const filteredModels = models.filter((m) =>
     m.toLowerCase().includes(modelSearch.toLowerCase())
@@ -452,27 +540,31 @@ export default function Chat({
     }
   }, [folders]);
 
-  const scrollToBottom = (smooth = true) => {
-    if (!messagesContainerRef.current) return;
-    const el = messagesContainerRef.current;
-    if (smooth) {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    } else {
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const scrollToBottom = useCallback((smooth = false) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "end" });
+    } else if (messagesContainerRef.current) {
+      const el = messagesContainerRef.current;
       el.scrollTop = el.scrollHeight;
     }
-  };
+  }, []);
 
   const handleScroll = () => {
     if (!messagesContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-    isAutoScrollEnabled.current = scrollHeight - (scrollTop + clientHeight) < 60;
+    // Allow generous tolerance for user scroll detection
+    const isNearBottom = scrollHeight - (scrollTop + clientHeight) < 140;
+    isAutoScrollEnabled.current = isNearBottom;
+    setShowScrollBottom(!isNearBottom);
   };
 
   useEffect(() => {
     if (isAutoScrollEnabled.current) {
       scrollToBottom(false);
     }
-  }, [messages, turnActivities, thinking]);
+  }, [messages, turnActivities, thinking, scrollToBottom]);
 
   // Persist transcript changes upward once hydration has settled.
   useEffect(() => {
@@ -538,7 +630,8 @@ export default function Chat({
     let sys =
       "Eres Makora, un asistente de desarrollo agéntico integrado en MakoraIDE. " +
       "Trabajas sobre los archivos del workspace que se te muestran. " +
-      "Cuando necesites varias herramientas, llámalas todas en el mismo turno. " +
+      "Si el usuario simplemente te saluda, agradece o hace preguntas conceptuales o generales, responde directamente de manera concisa y cordial sin invocar herramientas innecesarias. " +
+      "Cuando el usuario te solicite una tarea técnica sobre el workspace, ejecuta directamente las herramientas adecuadas en el mismo turno. " +
       "Si una ruta no existe, inspecciona la raíz del workspace con list_dir. " +
       "Al terminar la tarea responde SIEMPRE con un texto final, aunque hayas usado herramientas. " +
       "Cuando generes archivos de código completos, usa bloques con el formato ```lenguaje:ruta/del/archivo " +
@@ -563,14 +656,8 @@ export default function Chat({
     }
 
     if (includeWorkspace && folders.length > 0) {
-      sys += "\n\n## Workspace activo (rutas raíz)\n" + folders.join("\n");
-      try {
-        const summary = await workspaceSummary(folders);
-        sys +=
-          "\n\n## Estructura del workspace (directorios y archivos)\n" + summary;
-      } catch {
-        /* ignore */
-      }
+      sys += "\n\n## Workspace activo (rutas raíz)\n" + folders.map((f) => `- ${f}`).join("\n");
+      sys += "\n(Utiliza las herramientas nativas 'list_dir', 'read_file_range' y 'grep' para navegar e inspeccionar el código del workspace según lo requieras).";
     }
     return sys;
   };
@@ -611,6 +698,31 @@ export default function Chat({
       reader.onerror = () => resolve("");
       reader.readAsDataURL(file);
     });
+  };
+
+  const addLocalFilePath = async (filePath: string) => {
+    const ext = filePath.split(".").pop()?.toLowerCase() || "";
+    const name = filePath.split(/[\\/]/).pop() || filePath;
+    const id = ++lastAttachmentId.current + Date.now();
+    if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
+      setAttachments((a) => [
+        ...a,
+        { id, name, kind: "image", dataUrl: `https://asset.localhost/${encodeURIComponent(filePath)}` },
+      ]);
+    } else {
+      try {
+        const content = await readTextFile(filePath);
+        setAttachments((a) => [
+          ...a,
+          { id, name, kind: "text", text: content.slice(0, 200000) },
+        ]);
+      } catch {
+        setAttachments((a) => [
+          ...a,
+          { id, name, kind: "text", text: `[Archivo: ${filePath}]` },
+        ]);
+      }
+    }
   };
 
   const addFiles = (files: File[]) => {
@@ -661,13 +773,21 @@ export default function Chat({
     }
   };
 
-  const pickMention = (path: string) => {
+  const pickMention = (fullPath: string) => {
     if (!mention) return;
-    const clean = path.replace(/\\/g, "/");
+    const clean = fullPath.replace(/\\/g, "/");
+    let relPath = clean;
+    for (const f of folders) {
+      const cleanF = f.replace(/\\/g, "/");
+      if (clean.startsWith(cleanF)) {
+        relPath = clean.slice(cleanF.length).replace(/^\//, "");
+        break;
+      }
+    }
     const next =
       input.slice(0, mention.start) +
       "@" +
-      clean +
+      relPath +
       " " +
       input.slice(mention.start + mention.query.length + 1);
     setInput(next);
@@ -769,7 +889,8 @@ export default function Chat({
     isAutoScrollEnabled.current = true;
 
     const userMsg: ChatMessage = { role: "user", content, images };
-    const newTranscript = [...transcript, userMsg];
+    const initialAssistantMsg: ChatMessage = { role: "assistant", content: "" };
+    const newTranscript = [...transcript, userMsg, initialAssistantMsg];
     setTranscript(newTranscript);
 
     const userDisplayId = nextId();
@@ -782,36 +903,97 @@ export default function Chat({
     ]);
 
     let acc = "";
-    const unlistenDelta = await listen<{ text: string }>("chat-delta-event", (e) => {
-      acc += e.payload.text;
+    let lastSync = 0;
+    let rafPending = false;
+    let isDisposed = false;
+
+    const flushUi = () => {
+      if (isDisposed) return;
+      rafPending = false;
       setMessages((m) =>
         m.map((x) => (x.id === assistantId ? { ...x, text: acc } : x)),
       );
+    };
+
+    const unlistenDelta = await listen<{ text: string }>("chat-delta-event", (e) => {
+      acc += e.payload.text;
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(flushUi);
+      }
+      const now = Date.now();
+      if (now - lastSync > 300) {
+        lastSync = now;
+        setTranscript((t) => {
+          if (t.length === 0) return t;
+          const copy = [...t];
+          const lastIdx = copy.length - 1;
+          if (copy[lastIdx]?.role === "assistant") {
+            copy[lastIdx] = { ...copy[lastIdx], content: acc };
+          }
+          return copy;
+        });
+      }
     });
 
+    const startTime = Date.now();
     try {
       const system = await buildSystem();
-      const result = await chat(config, system, newTranscript, folders);
+      const result = await chat(config, system, newTranscript.slice(0, -1), folders);
+      const durationMs = Math.max(50, Date.now() - startTime);
       onUsage(result);
-      setTranscript(result.messages);
-      const uiMsgs = transcriptToUi(result.messages);
+
+      const turnCostUsd = computeCostUsd(
+        { inputTokens: result.inputTokens, outputTokens: result.outputTokens, cachedTokens: result.cachedTokens },
+        modelConfig,
+        config.model,
+        providerId
+      );
+
+      const metrics: TurnMetrics = {
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        cachedTokens: result.cachedTokens,
+        totalTokens: result.inputTokens + result.outputTokens,
+        durationMs,
+        costUsd: turnCostUsd,
+      };
+
+      const messagesWithMetrics = [...result.messages];
+      const lastAssistIdx = messagesWithMetrics.map((m) => m.role).lastIndexOf("assistant");
+      if (lastAssistIdx >= 0) {
+        messagesWithMetrics[lastAssistIdx] = {
+          ...messagesWithMetrics[lastAssistIdx],
+          metrics,
+        };
+      }
+
+      setTranscript(messagesWithMetrics);
+      const uiMsgs = transcriptToUi(messagesWithMetrics, messages);
       const finalText =
         result.messages
           .filter((m) => m.role === "assistant")
           .map((m) => m.content)
           .pop() ?? "";
+
       if (uiMsgs.length > 0 && uiMsgs[uiMsgs.length - 1].role === "assistant") {
         uiMsgs[uiMsgs.length - 1].text = acc || finalText || uiMsgs[uiMsgs.length - 1].text || "(sin respuesta)";
+        uiMsgs[uiMsgs.length - 1].metrics = metrics;
       }
       setMessages(uiMsgs);
     } catch (err) {
-      const errText = `Error: ${err}`;
-      const finalErr = acc ? `${acc}\n\n⚠️ ${errText}` : errText;
-      setTranscript((t) => [...t, { role: "assistant", content: finalErr }]);
+      const errStr = String(err);
+      const isCancelled = isAbortedRef.current || errStr.toLowerCase().includes("cancel") || errStr.toLowerCase().includes("abort");
+      const finalMsg = isCancelled
+        ? (acc ? `${acc}\n\n*(⏹️ Generación detenida por el usuario)*` : `*(⏹️ Generación detenida por el usuario)*`)
+        : (acc ? `${acc}\n\n⚠️ Error: ${errStr}` : `⚠️ Error: ${errStr}`);
+      setTranscript((t) => [...t, { role: "assistant", content: finalMsg }]);
       setMessages((m) =>
-        m.map((x) => (x.id === assistantId ? { ...x, text: finalErr } : x)),
+        m.map((x) => (x.id === assistantId ? { ...x, text: finalMsg } : x)),
       );
     } finally {
+      isDisposed = true;
+      isAbortedRef.current = false;
       unlistenDelta();
       setBusy(false);
     }
@@ -977,6 +1159,29 @@ export default function Chat({
           </div>
         )}
         {messages.map((m) => {
+          if (m.role === "user") {
+            return (
+              <div key={m.id} className="msg msg-user">
+                <div className="msg-user-inner">
+                  <div className="msg-text">{m.text}</div>
+                  {m.text && (
+                    <button
+                      className="msg-copy-btn user-copy-btn"
+                      onClick={() => copyMessage(m.id, m.text)}
+                      title={t.chat.copyMessage}
+                    >
+                      {copiedMsgId === m.id ? (
+                        <Check size={11} className="text-green" />
+                      ) : (
+                        <Copy size={11} />
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
           const isCurrentAssistant = m.role === "assistant" && m.id === currentAssistantId.current;
           const isBusyCurrent = isCurrentAssistant && busy;
           const thinkingText = (isCurrentAssistant && thinking?.text) || m.thinking || "";
@@ -986,11 +1191,11 @@ export default function Chat({
           const runningToolInMsg = isBusyCurrent ? allActivities.find((a) => a.ok === null) : undefined;
 
           return (
-            <div key={m.id} className={"msg msg-" + m.role}>
+            <div key={m.id} className="msg msg-assistant">
               <div className="msg-header">
                 <div className="msg-header-left">
-                  <span className={`msg-role-badge ${m.role === "user" ? "user-badge" : "makora-badge"}`}>
-                    {m.role === "user" ? `👤 ${t.chat.you}` : `⚔️ ${t.chat.assistant}`}
+                  <span className="msg-role-badge makora-badge">
+                    ⚔️ {t.chat.assistant}
                   </span>
                   {isBusyCurrent && (
                     <span className="msg-streaming-indicator">
@@ -1081,6 +1286,40 @@ export default function Chat({
                   ) : (
                     <div className="msg-text muted font-mono">(sin contenido)</div>
                   )}
+
+                  {/* 4. Subtle Turn Metrics Footer (Tokens, Duration, Cost in USD) */}
+                  {m.metrics && !isBusyCurrent && (
+                    <div className="msg-footer">
+                      <div
+                        className="msg-metrics-badge"
+                        title={`Entrada: ${m.metrics.inputTokens.toLocaleString()} tok (${m.metrics.cachedTokens.toLocaleString()} en caché) | Salida: ${m.metrics.outputTokens.toLocaleString()} tok | Tiempo: ${(m.metrics.durationMs / 1000).toFixed(1)}s | Coste: $${m.metrics.costUsd.toFixed(5)}`}
+                      >
+                        <span className="metric-item metric-tokens">
+                          <Zap size={10} className="text-cyan" />
+                          <span>
+                            {m.metrics.totalTokens >= 1000
+                              ? `${(m.metrics.totalTokens / 1000).toFixed(1)}k`
+                              : m.metrics.totalTokens}{" "}
+                            tok
+                          </span>
+                        </span>
+                        <span className="metric-dot">•</span>
+                        <span className="metric-item metric-time">
+                          <Clock size={10} />
+                          <span>{(m.metrics.durationMs / 1000).toFixed(1)}s</span>
+                        </span>
+                        <span className="metric-dot">•</span>
+                        <span className="metric-item metric-cost">
+                          <Coins size={10} className="text-gold" />
+                          <span>
+                            ${m.metrics.costUsd < 0.0001
+                              ? m.metrics.costUsd.toFixed(5)
+                              : m.metrics.costUsd.toFixed(4)}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="msg-text">{m.text}</div>
@@ -1088,28 +1327,8 @@ export default function Chat({
             </div>
           );
         })}
+        <div ref={messagesEndRef} className="chat-scroll-anchor" style={{ height: 1, minHeight: 1, flexShrink: 0 }} />
       </div>
-
-
-
-      {mention && (
-        <div className="mention-pop">
-          {mention.results.length === 0 && (
-            <div className="muted small">Sin coincidencias</div>
-          )}
-          {mention.results.map((p, idx) => (
-            <div
-              key={p}
-              className={`mention-item ${idx === mentionIndex ? "selected" : ""}`}
-              onClick={() => pickMention(p)}
-              onMouseEnter={() => setMentionIndex(idx)}
-            >
-              <FileText size={11} className="mention-icon" />
-              <span className="mention-text">{p}</span>
-            </div>
-          ))}
-        </div>
-      )}
 
       {attachments.length > 0 && (
         <div className="attachment-bar">
@@ -1130,6 +1349,23 @@ export default function Chat({
         </div>
       )}
 
+      {showScrollBottom && (
+        <button
+          type="button"
+          className="chat-scroll-bottom-pill"
+          onClick={() => {
+            isAutoScrollEnabled.current = true;
+            scrollToBottom(true);
+            setShowScrollBottom(false);
+          }}
+          title="Ir al último mensaje"
+        >
+          <ChevronDown size={13} />
+          <span>Último mensaje</span>
+          {busy && <span className="scroll-btn-pulse-dot" />}
+        </button>
+      )}
+
       <form
         className="chat-input"
         onSubmit={(e) => {
@@ -1141,6 +1377,32 @@ export default function Chat({
           addFiles(Array.from(e.dataTransfer.files));
         }}
       >
+        {mention && (
+          <div className="mention-pop" ref={mentionListRef}>
+            {mention.results.length === 0 ? (
+              <div className="mention-empty font-mono">Sin coincidencias para "@{mention.query}"</div>
+            ) : (
+              mention.results.map((p, idx) => {
+                const { fileName, dir, ext } = formatPathDisplay(p);
+                return (
+                  <div
+                    key={p}
+                    className={`mention-item ${idx === mentionIndex ? "selected" : ""}`}
+                    onClick={() => pickMention(p)}
+                    onMouseEnter={() => setMentionIndex(idx)}
+                  >
+                    <div className="mention-icon-wrap">{getMentionIcon(ext)}</div>
+                    <div className="mention-info">
+                      <span className="mention-filename font-mono">{fileName}</span>
+                      {dir && <span className="mention-dir font-mono">{dir}</span>}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
         <textarea
           ref={textareaRef}
           value={input}
@@ -1183,7 +1445,7 @@ export default function Chat({
               >
                 <Zap size={11} className="model-picker-icon text-cyan" />
                 <span className="model-picker-name font-mono">
-                  {activeModel || config.model || t.chat.selectModel}
+                  {(activeModel || config.model || "").replace(/^models\//, "") || t.chat.selectModel}
                 </span>
                 <ChevronDown size={11} className={`model-chevron ${modelMenuOpen ? "rotated" : ""}`} />
               </button>
@@ -1225,7 +1487,7 @@ export default function Chat({
                           >
                             <div className="model-option-left">
                               <Zap size={11} className={isSelected ? "text-cyan" : "opacity-50"} />
-                              <span className="model-option-label font-mono">{m}</span>
+                              <span className="model-option-label font-mono">{m.replace(/^models\//, "")}</span>
                             </div>
                             {isSelected && <Check size={12} className="text-cyan" />}
                           </button>
@@ -1236,7 +1498,6 @@ export default function Chat({
                 </div>
               )}
             </div>
-
 
             {/* Mode Switcher Pill */}
             {onToggleMode && (
@@ -1251,22 +1512,83 @@ export default function Chat({
               </button>
             )}
 
-            {/* Thinking Level Switcher Pill */}
-            {onSelectThinkingLevel && (
+            {/* Thinking Level Switcher Pill (Only for models supporting reasoning) */}
+            {onSelectThinkingLevel && isModelReasoningSupported(config.model) && (
               <button
                 type="button"
                 className="chat-pill-btn thinking-pill"
                 onClick={() => {
-                  const levels: ThinkingLevel[] = ["none", "low", "medium", "high"];
+                  const levels: ThinkingLevel[] = ["low", "medium", "high"];
                   const nextIdx = (levels.indexOf(thinkingLevel) + 1) % levels.length;
                   onSelectThinkingLevel(levels[nextIdx]);
                 }}
-                title={`Nivel de pensamiento API: ${thinkingLevel} (Clic para cambiar)`}
+                title={`Nivel de razonamiento API: ${thinkingLevel} (Clic para cambiar)`}
               >
                 <FlaskConical size={10} className="text-purple" />
                 <span style={{ textTransform: "capitalize" }}>{thinkingLevel}</span>
               </button>
             )}
+
+            {/* Attach File Button & Dropdown */}
+            <div className="chat-attach-btn-wrap" ref={attachMenuRef}>
+              <button
+                type="button"
+                className={`chat-pill-btn ${attachMenuOpen ? "active" : ""}`}
+                onClick={() => setAttachMenuOpen((v) => !v)}
+                title="Adjuntar archivo del workspace o examinar del sistema"
+              >
+                <Paperclip size={10} className="text-cyan" />
+                <span>Adjuntar</span>
+              </button>
+
+              {attachMenuOpen && (
+                <div className="chat-attach-popover">
+                  <button
+                    type="button"
+                    className="chat-attach-item"
+                    onClick={() => {
+                      setAttachMenuOpen(false);
+                      setInput((prev) => prev + (prev.endsWith(" ") || !prev ? "@" : " @"));
+                      handleInputChange(
+                        input + (input.endsWith(" ") || !input ? "@" : " @"),
+                        (input + (input.endsWith(" ") || !input ? "@" : " @")).length,
+                      );
+                      setTimeout(() => textareaRef.current?.focus(), 50);
+                    }}
+                  >
+                    <Folder size={14} className="text-cyan" />
+                    <div className="chat-attach-text">
+                      <span className="attach-item-title">Archivos del Workspace (@)</span>
+                      <span className="attach-item-sub">Buscar y referenciar código del proyecto</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="chat-attach-item"
+                    onClick={async () => {
+                      setAttachMenuOpen(false);
+                      try {
+                        const picked = await pickFiles();
+                        if (picked && picked.length > 0) {
+                          for (const p of picked) {
+                            await addLocalFilePath(p);
+                          }
+                        }
+                      } catch (e) {
+                        console.warn("pick files:", e);
+                      }
+                    }}
+                  >
+                    <UploadCloud size={14} className="text-purple" />
+                    <div className="chat-attach-text">
+                      <span className="attach-item-title">Examinar del Sistema...</span>
+                      <span className="attach-item-sub">Adjuntar PDFs, datos, código o imágenes</span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="chat-toolbar-right">
@@ -1286,7 +1608,16 @@ export default function Chat({
               <button
                 type="button"
                 className="btn btn-danger btn-sm"
-                onClick={() => chatCancel()}
+                onClick={async () => {
+                  isAbortedRef.current = true;
+                  try {
+                    await chatCancel();
+                  } catch (e) {
+                    console.warn("cancel error:", e);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
                 title={t.chat.stop}
               >
                 <Square size={11} />

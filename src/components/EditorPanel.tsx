@@ -5,13 +5,23 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { keymap } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
+import { python } from "@codemirror/lang-python";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { html } from "@codemirror/lang-html";
+import { css } from "@codemirror/lang-css";
 import { Edit3, Lock, Save, RotateCcw, FileCode } from "lucide-react";
 
 import type { DiffInfo, OpenFile } from "../types";
 
 function getLanguageExtension(path: string) {
-  if (/\.(jsx?|tsx?|mjs|cjs)$/.test(path)) return [javascript({ jsx: true, typescript: true })];
-  if (/\.rs$/.test(path)) return [rust()];
+  if (/\.(jsx?|tsx?|mjs|cjs)$/i.test(path)) return [javascript({ jsx: true, typescript: true })];
+  if (/\.rs$/i.test(path)) return [rust()];
+  if (/\.(py|pyw)$/i.test(path)) return [python()];
+  if (/\.json$/i.test(path)) return [json()];
+  if (/\.(md|markdown|mdown)$/i.test(path)) return [markdown()];
+  if (/\.(html?|svelte|vue)$/i.test(path)) return [html()];
+  if (/\.(css|scss|sass|less)$/i.test(path)) return [css()];
   return [];
 }
 

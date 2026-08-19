@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
   Zap,
+  Sparkles,
 } from "lucide-react";
 import type { ChatSession } from "../types";
 
@@ -63,78 +64,89 @@ function HistoryRow({
 
   return (
     <div
-      className={`history-row ${active ? "active" : ""}`}
+      className={`history-card ${active ? "active" : ""}`}
       onClick={() => !editing && onOpen(session.id)}
     >
-      <div className="history-row-left">
-        <MessageSquare size={13} className={active ? "text-cyan" : "text-muted"} />
-        <div className="history-row-main">
-          {editing ? (
-            <input
-              autoFocus
-              className="history-rename-input font-mono"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commit();
-                if (e.key === "Escape") {
-                  setDraft(session.title);
-                  setEditing(false);
-                }
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <div className="history-row-title" title={session.title}>
-              {session.title || "Conversación sin título"}
-            </div>
-          )}
+      <div className="history-card-left">
+        <div className={`history-card-icon ${active ? "active" : ""}`}>
+          <MessageSquare size={14} className={active ? "text-cyan" : "text-muted"} />
+        </div>
+        <div className="history-card-body">
+          <div className="history-card-header">
+            {editing ? (
+              <input
+                autoFocus
+                className="history-rename-input font-mono"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commit();
+                  if (e.key === "Escape") {
+                    setDraft(session.title);
+                    setEditing(false);
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="history-card-title" title={session.title}>
+                {session.title || "Conversación sin título"}
+              </span>
+            )}
+            {active && (
+              <span className="history-active-tag">
+                <span className="pulse-dot-cyan" />
+                {t.chat.activeSession}
+              </span>
+            )}
+          </div>
 
-          <div className="history-row-meta">
-            <span className="meta-pill font-mono">
-              <Clock size={10} />
-              {timeStr}
+          <div className="history-card-meta">
+            <span className="history-meta-pill">
+              <Clock size={11} className="text-muted" />
+              <span>{timeStr}</span>
             </span>
             {session.model && (
-              <span className="meta-pill font-mono model-pill">
-                <Zap size={10} className="text-cyan" />
-                {session.model}
+              <span className="history-meta-pill model-pill">
+                <Zap size={11} className="text-cyan" />
+                <span className="font-mono">{session.model}</span>
               </span>
             )}
             {totalTokens > 0 && (
-              <span className="meta-pill font-mono">
-                <Cpu size={10} />
-                {totalTokens.toLocaleString()} tok
+              <span className="history-meta-pill">
+                <Cpu size={11} className="text-purple" />
+                <span className="font-mono">{totalTokens.toLocaleString()} tok</span>
               </span>
             )}
             {(session.totalCostUsd ?? 0) > 0 && (
-              <span className="meta-pill font-mono cost-pill accent-green">
-                <DollarSign size={10} />
-                {(session.totalCostUsd ?? 0).toFixed(4)}
+              <span className="history-meta-pill cost-pill">
+                <DollarSign size={11} className="text-green" />
+                <span className="font-mono">${(session.totalCostUsd ?? 0).toFixed(4)}</span>
               </span>
             )}
-            <span className="meta-pill messages-pill">
-              {session.messages.length} msgs
+            <span className="history-meta-pill count-pill">
+              <Sparkles size={11} className="text-gold" />
+              <span>{session.messages.length} msgs</span>
             </span>
           </div>
         </div>
       </div>
 
-      <div className="history-row-actions" onClick={(e) => e.stopPropagation()}>
+      <div className="history-card-actions" onClick={(e) => e.stopPropagation()}>
         <button
-          className="icon-btn-micro"
+          className="history-action-btn"
           onClick={() => setEditing((v) => !v)}
           title={t.common.rename}
         >
-          <Pencil size={11} />
+          <Pencil size={12} />
         </button>
         <button
-          className="icon-btn-micro danger"
+          className="history-action-btn danger"
           onClick={() => onDelete(session.id)}
           title={t.common.delete}
         >
-          <Trash2 size={11} />
+          <Trash2 size={12} />
         </button>
       </div>
     </div>
@@ -178,7 +190,7 @@ export default function HistoryModal({
       >
         <div className="modal-header">
           <div className="settings-header-left">
-            <MessageSquare size={14} className="text-cyan" />
+            <MessageSquare size={16} className="text-cyan" />
             <h3>{t.history.title}</h3>
             <span className="badge-pill">{sessions.length}</span>
           </div>
@@ -190,27 +202,28 @@ export default function HistoryModal({
                 onClose();
               }}
             >
-              <Plus size={12} />
-              {t.history.newChat}
+              <Plus size={13} />
+              <span>{t.history.newChat}</span>
             </button>
             <button className="icon-btn" onClick={onClose} title={t.common.close}>
-              <X size={13} />
+              <X size={14} />
             </button>
           </div>
         </div>
 
         <div className="history-toolbar">
-          <div className="model-search-wrap history-search">
-            <Search size={12} className="model-search-icon" />
+          <div className="history-search-wrap">
+            <Search size={13} className="history-search-icon" />
             <input
-              className="model-search-input"
+              className="history-search-input"
               placeholder={t.history.searchPlaceholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              autoFocus
             />
             {query && (
               <button className="clear-filter-btn" onClick={() => setQuery("")} title={t.common.clean}>
-                <X size={11} />
+                <X size={12} />
               </button>
             )}
           </div>
@@ -219,7 +232,7 @@ export default function HistoryModal({
         <div className="modal-body history-list">
           {filtered.length === 0 ? (
             <div className="history-empty">
-              <MessageSquare size={24} className="text-cyan" />
+              <MessageSquare size={28} className="text-muted opacity-50" />
               <p>{query ? t.history.emptyQuery : t.history.emptyNoChats}</p>
             </div>
           ) : (
@@ -238,17 +251,19 @@ export default function HistoryModal({
 
         <div className="history-footer">
           <span className="muted small">{t.history.savedLocally}</span>
-          <button
-            className="btn btn-danger btn-subtle"
-            onClick={() => {
-              if (window.confirm(t.history.clearConfirm)) {
-                onClearAll();
-              }
-            }}
-          >
-            <Trash2 size={11} />
-            {t.history.clearAll}
-          </button>
+          {sessions.length > 0 && (
+            <button
+              className="btn btn-danger btn-subtle"
+              onClick={() => {
+                if (window.confirm(t.history.clearConfirm)) {
+                  onClearAll();
+                }
+              }}
+            >
+              <Trash2 size={12} />
+              <span>{t.history.clearAll}</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

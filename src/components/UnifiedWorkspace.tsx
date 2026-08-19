@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import MarkdownViewer from "./viewers/MarkdownViewer";
 import DataGridViewer from "./viewers/DataGridViewer";
 import ImageViewer from "./viewers/ImageViewer";
 import SvgViewer from "./viewers/SvgViewer";
+import PdfViewer from "./viewers/PdfViewer";
 import EditorPanel from "./EditorPanel";
 import {
   Sparkles,
@@ -40,6 +41,7 @@ interface UnifiedWorkspaceProps {
 
   chatElement: ReactNode;
   onNewChat?: () => void;
+  onAskAgent?: (prompt: string) => void;
 }
 
 function getFileIcon(filename: string) {
@@ -61,6 +63,8 @@ function getFileIcon(filename: string) {
     case "md":
     case "mdx":
       return <FileText size={13} className="text-blue" />;
+    case "pdf":
+      return <FileText size={13} className="text-purple" />;
     case "png":
     case "jpg":
     case "jpeg":
@@ -93,9 +97,42 @@ export default function UnifiedWorkspace({
   onToggleZenMode,
   chatElement,
   onNewChat,
+  onAskAgent,
 }: UnifiedWorkspaceProps) {
   const { t } = useI18n();
   const isChatTabActive = activePath === null;
+
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    const saved = localStorage.getItem("makora.splitRatio");
+    return saved ? Math.max(20, Math.min(80, Number(saved))) : 50;
+  });
+
+  const handleSplitResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const container = (e.currentTarget as HTMLElement).parentElement;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const initialRatio = splitRatio;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaPercent = (deltaX / rect.width) * 100;
+      const newRatio = Math.max(20, Math.min(80, initialRatio + deltaPercent));
+      setSplitRatio(newRatio);
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      localStorage.setItem("makora.splitRatio", String(splitRatio));
+    };
+
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, [splitRatio]);
 
   // Determine active file for editor (fallback to last open file if in split mode with chat selected)
   const targetFile = activePath
@@ -115,6 +152,10 @@ export default function UnifiedWorkspace({
 
     const path = targetFile.path;
     const lower = path.toLowerCase();
+
+    if (lower.endsWith(".pdf")) {
+      return <PdfViewer path={path} onAskAgent={onAskAgent} />;
+    }
 
     if (lower.endsWith(".md") || lower.endsWith(".mdx")) {
       return (
@@ -247,10 +288,15 @@ export default function UnifiedWorkspace({
       <div className={`workspace-canvas ${isSplit ? "layout-split" : "layout-single"}`}>
         {isSplit ? (
           <div className="split-canvas">
-            <div className="split-side left-side">
+            <div className="split-side left-side" style={{ flex: `0 0 ${splitRatio}%`, maxWidth: `${splitRatio}%` }}>
               {chatElement}
             </div>
-            <div className="split-side right-side">
+            <div
+              className="resizer-col resizer-split"
+              onMouseDown={handleSplitResize}
+              title="Arrastrar para redimensionar (Split View)"
+            />
+            <div className="split-side right-side" style={{ flex: `0 0 ${100 - splitRatio}%`, maxWidth: `${100 - splitRatio}%` }}>
               {renderActiveViewer()}
             </div>
           </div>

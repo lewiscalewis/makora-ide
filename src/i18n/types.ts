@@ -200,6 +200,8 @@ export interface TranslationSchema {
     localEngineDesc: string;
     activeModelLabel: string;
     connectAndList: string;
+    connectionSuccess: string;
+    connectionFailed: string;
     deepseekTitle: string;
     deepseekDesc: string;
     getKeyDeepseek: string;
@@ -238,6 +240,36 @@ export interface TranslationSchema {
     mcpArgs: string;
     colorPaletteTitle: string;
     languageTitle: string;
+  };
+  themes: {
+    voidName: string;
+    voidDesc: string;
+    nordicName: string;
+    nordicDesc: string;
+    tokyoName: string;
+    tokyoDesc: string;
+    monokaiName: string;
+    monokaiDesc: string;
+    solarName: string;
+    solarDesc: string;
+    cyberpunkName: string;
+    cyberpunkDesc: string;
+    matrixName: string;
+    matrixDesc: string;
+    outrunName: string;
+    outrunDesc: string;
+    makoraName: string;
+    makoraDesc: string;
+    skyrimName: string;
+    skyrimDesc: string;
+    dragonsDogmaName: string;
+    dragonsDogmaDesc: string;
+  };
+  dragDrop: {
+    dropHere: string;
+    dropSubtitle: string;
+    unsafeFileWarning: string;
+    openedFile: string;
   };
   analytics: {
     title: string;

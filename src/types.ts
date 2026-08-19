@@ -36,6 +36,7 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: string;
+  extraContent?: Record<string, unknown> | null;
 }
 
 export interface ChatMessage {
@@ -44,6 +45,8 @@ export interface ChatMessage {
   images?: string[];
   toolCalls?: ToolCall[] | null;
   toolCallId?: string | null;
+  thinking?: string;
+  metrics?: TurnMetrics;
 }
 
 export interface ChatUsage {
@@ -56,12 +59,22 @@ export interface ChatResult extends ChatUsage {
   messages: ChatMessage[];
 }
 
+export interface TurnMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  durationMs: number;
+  costUsd: number;
+}
+
 export interface UiMessage {
   id: number;
   role: "user" | "assistant";
   text: string;
   activities?: ToolActivity[];
   thinking?: string;
+  metrics?: TurnMetrics;
 }
 
 export type Usage = ChatUsage;
@@ -169,7 +182,18 @@ export interface LayoutState {
   editorCollapsed: boolean;
 }
 
-export type ThemeId = "void" | "nordic" | "tokyo" | "monokai" | "solar";
+export type ThemeId =
+  | "void"
+  | "nordic"
+  | "tokyo"
+  | "monokai"
+  | "solar"
+  | "cyberpunk"
+  | "matrix"
+  | "outrun"
+  | "makora"
+  | "skyrim"
+  | "dragons_dogma";
 
 export interface ThemeConfig {
   id: ThemeId;

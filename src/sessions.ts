@@ -24,9 +24,24 @@ function safeString(value: unknown, fallback = ""): string {
 
 export function sanitizeMessage(raw: ChatMessage): ChatMessage {
   const role = safeString((raw as { role?: unknown })?.role, "unknown");
+  const rawMetrics = (raw as { metrics?: Record<string, unknown> })?.metrics;
+  const metrics =
+    rawMetrics && typeof rawMetrics === "object"
+      ? {
+          inputTokens: Number(rawMetrics.inputTokens) || 0,
+          outputTokens: Number(rawMetrics.outputTokens) || 0,
+          cachedTokens: Number(rawMetrics.cachedTokens) || 0,
+          totalTokens: Number(rawMetrics.totalTokens) || 0,
+          durationMs: Number(rawMetrics.durationMs) || 0,
+          costUsd: Number(rawMetrics.costUsd) || 0,
+        }
+      : undefined;
+
   return {
     role,
     content: safeString(raw.content).slice(0, MAX_CONTENT_CHARS),
+    thinking: typeof raw.thinking === "string" ? raw.thinking.slice(0, 100_000) : undefined,
+    metrics,
     images: Array.isArray(raw.images)
       ? raw.images
           .slice(0, MAX_IMAGES_PER_MESSAGE)
@@ -37,6 +52,7 @@ export function sanitizeMessage(raw: ChatMessage): ChatMessage {
           id: safeString((tc as { id?: unknown })?.id),
           name: safeString((tc as { name?: unknown })?.name),
           arguments: safeString((tc as { arguments?: unknown })?.arguments).slice(0, 100_000),
+          extraContent: (tc as { extraContent?: Record<string, unknown> | null })?.extraContent ?? undefined,
         }))
       : undefined,
     toolCallId: typeof raw.toolCallId === "string" ? raw.toolCallId : null,
@@ -112,6 +128,7 @@ function shrinkSessions(sessions: ChatSession[]): string {
             id: safeString(tc.id),
             name: safeString(tc.name),
             arguments: safeString(tc.arguments).slice(0, 10_000),
+            extraContent: tc.extraContent,
           }))
         : undefined,
     })),
@@ -130,10 +147,32 @@ export function saveSessions(sessions: ChatSession[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, json);
   } catch {
+    // Tier 2: Truncate messages within sessions
     try {
       localStorage.setItem(STORAGE_KEY, shrinkSessions(ordered));
     } catch {
-      /* sin espacio: se mantiene el estado anterior en disco */
+      // Tier 3: Keep only the 10 most recent sessions with last 10 messages each
+      try {
+        const minimal = ordered.slice(0, 10).map((s) => ({
+          ...s,
+          messages: s.messages.slice(-10).map((m) => ({
+            ...m,
+            content: m.content.slice(0, 4000),
+          })),
+        }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
+      } catch {
+        // Tier 4: Emergency session metadata headers only
+        try {
+          const headersOnly = ordered.slice(0, 10).map((s) => ({
+            ...s,
+            messages: [] as ChatMessage[],
+          }));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(headersOnly));
+        } catch {
+          /* En caso de saturación extrema, el estado en memoria de React sigue preservado */
+        }
+      }
     }
   }
 }

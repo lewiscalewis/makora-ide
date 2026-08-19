@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { detectOllama, fetchBalance, listModels, pickFolder } from "../api";
+import { detectOllama, fetchBalance, keyringGet, listModels, pickFolder } from "../api";
 import { PROVIDERS } from "../providers";
 import { THEME_LIST } from "../themes";
 import type { BalanceInfo, ChatConfig, Settings, ThemeId } from "../types";
@@ -41,7 +41,7 @@ export default function OnboardingModal({
 
   const activePreset = PROVIDERS.find((p) => p.id === providerId) || PROVIDERS[0];
 
-  const handleSelectProvider = (id: string) => {
+  const handleSelectProvider = async (id: string) => {
     setProviderId(id);
     const p = PROVIDERS.find((x) => x.id === id);
     if (p && id !== "custom") {
@@ -49,11 +49,8 @@ export default function OnboardingModal({
     }
     let savedKey = "";
     try {
-      const rawKeys = localStorage.getItem("makora.provider_keys");
-      if (rawKeys) {
-        const parsed = JSON.parse(rawKeys);
-        savedKey = parsed[id] || "";
-      }
+      const stored = await keyringGet(id);
+      if (stored) savedKey = stored;
     } catch {
       /* ignore */
     }

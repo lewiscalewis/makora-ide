@@ -15,6 +15,7 @@ import {
   Percent,
 } from "lucide-react";
 import type { BalanceInfo, ChatUsage, Settings, Usage } from "../types";
+import { inferModelConfig } from "../defaults";
 
 interface Props {
   settings: Settings;
@@ -45,11 +46,12 @@ export default function AnalyticsModal({
     ? Math.min(100, (usage.cachedTokens / usage.inputTokens) * 100)
     : 0;
 
-  // Estimated savings from prompt caching (usually ~50% to 90% cheaper for cached tokens)
-  const estimatedSavings = (usage.cachedTokens / 1_000_000) * 0.12;
-
   const currentModel = settings.model || "Modelo Activo";
   const provider = settings.providerId || "default";
+  const inferred = inferModelConfig(currentModel, provider);
+  const cacheDiscountRatio = provider.includes("gemini") ? 0.75 : 0.90;
+  // Estimated savings from prompt caching
+  const estimatedSavings = (usage.cachedTokens / 1_000_000) * (inferred.inputPrice || 0.27) * cacheDiscountRatio;
 
   const exportReport = () => {
     const report = {

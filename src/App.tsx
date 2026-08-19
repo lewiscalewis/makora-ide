@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   fetchBalance,
   gitStatus,
@@ -10,23 +11,32 @@ import {
   pickFolder,
   readTextFile,
   writeFile,
+  getInitialFile,
+  checkBetaValidity,
+  detectOllama,
 } from "./api";
 import { presetById } from "./providers";
-import { DEFAULT_CONFIG } from "./defaults";
+import { DEFAULT_CONFIG, inferModelConfig, computeCostUsd } from "./defaults";
 import { applyTheme, loadSavedTheme, THEME_LIST } from "./themes";
+import { useI18n } from "./i18n";
+import { UploadCloud, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import Header from "./components/Header";
 import Explorer from "./components/Explorer";
 import Chat from "./components/Chat";
 import UsagePanel from "./components/UsagePanel";
-import SettingsModal from "./components/SettingsModal";
-import TerminalPanel from "./components/TerminalPanel";
 import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
-import OnboardingModal from "./components/OnboardingModal";
 import UnifiedWorkspace from "./components/UnifiedWorkspace";
-import GitModal from "./components/GitModal";
-import AnalyticsModal from "./components/AnalyticsModal";
-import HistoryModal from "./components/HistoryModal";
+import AmbientCanvas3D from "./components/AmbientCanvas3D";
+
+// Lazy-loaded heavy components for instant initial startup & smaller initial JS chunk
+const SettingsModal = lazy(() => import("./components/SettingsModal"));
+const TerminalPanel = lazy(() => import("./components/TerminalPanel"));
+const OnboardingModal = lazy(() => import("./components/OnboardingModal"));
+const GitModal = lazy(() => import("./components/GitModal"));
+const AnalyticsModal = lazy(() => import("./components/AnalyticsModal"));
+const HistoryModal = lazy(() => import("./components/HistoryModal"));
+const BetaAgreementModal = lazy(() => import("./components/BetaAgreementModal"));
 import {
   initSessions,
   saveSessions,
@@ -35,7 +45,6 @@ import {
   sanitizeMessages,
   deriveTitle,
 } from "./sessions";
-
 
 import type {
   AgentMode,
@@ -70,19 +79,12 @@ function loadSettings(): Settings {
     const raw = localStorage.getItem("makora.settings");
     if (raw) {
       const parsed = JSON.parse(raw);
-      let key = parsed.apiKey || "";
-      if (!key && parsed.providerId) {
-        try {
-          const rawKeys = localStorage.getItem("makora.provider_keys");
-          if (rawKeys) {
-            const keyMap = JSON.parse(rawKeys);
-            key = keyMap[parsed.providerId] || "";
-          }
-        } catch {
-          /* ignore */
-        }
+      if (parsed.model === "gemini-2.5-flash" || parsed.model === "gemini-2.0-flash" || parsed.model === "gemini-1.5-flash") {
+        parsed.model = "gemini-3.7-flash";
+      } else if (parsed.model === "gemini-2.5-pro" || parsed.model === "gemini-2.0-pro" || parsed.model === "gemini-1.5-pro") {
+        parsed.model = "gemini-3.1-pro-preview";
       }
-      return { ...DEFAULT_SETTINGS, ...parsed, apiKey: key };
+      return { ...DEFAULT_SETTINGS, ...parsed, apiKey: "" };
     }
   } catch {
     /* ignore */
@@ -105,13 +107,28 @@ function loadConfig(): AppConfig {
     const raw = localStorage.getItem("makora.config");
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<AppConfig>;
-      const models = (parsed.models ?? DEFAULT_CONFIG.models).map((m) => ({
-        ...(DEFAULT_CONFIG.models.find((d) => d.id === m.id) ?? {}),
-        ...m,
-        inputPrice: m.inputPrice ?? 0,
-        outputPrice: m.outputPrice ?? 0,
-        visionEnabled: m.visionEnabled ?? false,
-      }));
+      let models = (parsed.models ?? DEFAULT_CONFIG.models).map((m) => {
+        let id = m.id;
+        if (id === "gemini-2.5-flash" || id === "gemini-2.0-flash" || id === "gemini-1.5-flash") {
+          id = "gemini-3.7-flash";
+        } else if (id === "gemini-2.5-pro" || id === "gemini-2.0-pro" || id === "gemini-1.5-pro") {
+          id = "gemini-3.1-pro-preview";
+        }
+        const defaultMatch = DEFAULT_CONFIG.models.find((d) => d.id === id);
+        const inferred = inferModelConfig(id);
+        const inputPrice = (typeof m.inputPrice === "number" && m.inputPrice > 0) ? m.inputPrice : (defaultMatch?.inputPrice ?? inferred.inputPrice);
+        const outputPrice = (typeof m.outputPrice === "number" && m.outputPrice > 0) ? m.outputPrice : (defaultMatch?.outputPrice ?? inferred.outputPrice);
+        return {
+          ...(defaultMatch ?? {}),
+          ...m,
+          id,
+          inputPrice,
+          outputPrice,
+          visionEnabled: m.visionEnabled ?? defaultMatch?.visionEnabled ?? inferred.visionEnabled,
+        };
+      });
+      // Deduplicate models by id
+      models = models.filter((m, idx, arr) => arr.findIndex((x) => x.id === m.id) === idx);
       return {
         ...DEFAULT_CONFIG,
         ...parsed,
@@ -126,6 +143,7 @@ function loadConfig(): AppConfig {
 }
 
 function App() {
+  const { t } = useI18n();
   const [folders, setFolders] = useState<string[]>(loadFolders);
   const [workspaceName, setWorkspaceName] = useState(
     () => localStorage.getItem("makora.wsname") ?? "Workspace",
@@ -136,7 +154,6 @@ function App() {
   const [agentMode, setAgentMode] = useState<AgentMode>("act");
   const [isSplit, setIsSplit] = useState(false);
   const [zenMode, setZenMode] = useState(false);
-
 
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -170,6 +187,124 @@ function App() {
   const [runningToolName, setRunningToolName] = useState<string | null>(null);
   const [gitInfo, setGitInfo] = useState<GitStatusInfo | null>(null);
 
+  // Panel Resizing & Background Glassmorphism State
+  const [explorerWidth, setExplorerWidth] = useState<number>(() => {
+    const saved = localStorage.getItem("makora.explorerWidth");
+    return saved ? Math.max(160, Math.min(500, Number(saved))) : 250;
+  });
+  const [usagePanelWidth, setUsagePanelWidth] = useState<number>(() => {
+    const saved = localStorage.getItem("makora.usagePanelWidth");
+    return saved ? Math.max(200, Math.min(550, Number(saved))) : 280;
+  });
+  const [terminalHeight, setTerminalHeight] = useState<number>(() => {
+    const saved = localStorage.getItem("makora.terminalHeight");
+    return saved ? Math.max(100, Math.min(600, Number(saved))) : 190;
+  });
+  const [glassMode, setGlassMode] = useState<"normal" | "vivid" | "solid">(() => {
+    const saved = localStorage.getItem("makora.glassMode");
+    return (saved === "vivid" || saved === "solid" || saved === "normal") ? saved : "normal";
+  });
+
+  const toggleGlassMode = useCallback(() => {
+    setGlassMode((prev) => {
+      const next = prev === "normal" ? "vivid" : prev === "vivid" ? "solid" : "normal";
+      localStorage.setItem("makora.glassMode", next);
+      return next;
+    });
+  }, []);
+
+  const handleExplorerResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const initialWidth = explorerWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(160, Math.min(500, initialWidth + (moveEvent.clientX - startX)));
+      setExplorerWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      localStorage.setItem("makora.explorerWidth", String(explorerWidth));
+    };
+
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, [explorerWidth]);
+
+  const handleUsagePanelResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const initialWidth = usagePanelWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(200, Math.min(550, initialWidth - (moveEvent.clientX - startX)));
+      setUsagePanelWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      localStorage.setItem("makora.usagePanelWidth", String(usagePanelWidth));
+    };
+
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, [usagePanelWidth]);
+
+  const handleTerminalResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const initialHeight = terminalHeight;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newHeight = Math.max(100, Math.min(600, initialHeight - (moveEvent.clientY - startY)));
+      setTerminalHeight(newHeight);
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      localStorage.setItem("makora.terminalHeight", String(terminalHeight));
+    };
+
+    document.body.style.cursor = "row-resize";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, [terminalHeight]);
+
+  // Drag and Drop & Toasts State
+  const [isDragging, setIsDragging] = useState(false);
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: "warning" | "info" }[]>([]);
+
+  // EULA & Beta Hardening Protection State
+  const [showEula, setShowEula] = useState<boolean>(
+    () => localStorage.getItem("makora_eula_accepted") !== "true",
+  );
+  const [isBetaExpired, setIsBetaExpired] = useState(false);
+  const [betaExpirationError, setBetaExpirationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    checkBetaValidity().catch((err) => {
+      setIsBetaExpired(true);
+      setBetaExpirationError(String(err));
+    });
+  }, []);
+
+  const showToast = useCallback((message: string, type: "warning" | "info" = "info") => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id));
+    }, 4500);
+  }, []);
+
   // Chat history state (persisted in localStorage)
   const sessionCostRef = useRef(0);
   const sessionTokensRef = useRef<{ inputTokens: number; outputTokens: number; cachedTokens: number }>({
@@ -201,54 +336,60 @@ function App() {
     localStorage.setItem("makora.theme", theme);
   }, [theme]);
 
-  // Load API key securely from OS Keyring or fallback per-provider map when provider changes
+  // One-time security migration: migrate plaintext keys to OS Keyring and remove unencrypted storage
+  useEffect(() => {
+    try {
+      const rawKeys = localStorage.getItem("makora.provider_keys");
+      if (rawKeys) {
+        const parsed = JSON.parse(rawKeys);
+        for (const [pid, k] of Object.entries(parsed)) {
+          if (typeof k === "string" && k.trim()) {
+            keyringSet(pid, k.trim()).catch(() => undefined);
+          }
+        }
+        localStorage.removeItem("makora.provider_keys");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Load API key securely from OS Keyring on mount and when provider changes
   useEffect(() => {
     let cancelled = false;
     async function loadKeyForProvider(providerId: string) {
-      let key: string | null = null;
+      if (!providerId) return;
       try {
-        key = await keyringGet(providerId);
-      } catch {
-        /* ignore */
-      }
-      if (!key) {
-        try {
-          const rawKeys = localStorage.getItem("makora.provider_keys");
-          if (rawKeys) {
-            const parsed = JSON.parse(rawKeys);
-            key = parsed[providerId] || null;
-          }
-        } catch {
-          /* ignore */
+        const key = await keyringGet(providerId);
+        if (!cancelled && key && key.trim()) {
+          setSettings((s) => {
+            if (s.providerId === providerId && (!s.apiKey || s.apiKey !== key.trim())) {
+              return { ...s, apiKey: key.trim() };
+            }
+            return s;
+          });
         }
-      }
-      if (!cancelled && key) {
-        setSettings((s) => {
-          if (s.providerId === providerId && (!s.apiKey || s.apiKey !== key)) {
-            return { ...s, apiKey: key };
-          }
-          return s;
-        });
+      } catch (err) {
+        console.warn("Keyring load error:", err);
       }
     }
+
     loadKeyForProvider(settings.providerId);
+    // Double check after 250ms in case system keyring service was initializing
+    const timer = setTimeout(() => {
+      if (!cancelled) loadKeyForProvider(settings.providerId);
+    }, 250);
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [settings.providerId]);
 
-  // Sync API key updates to OS Keyring and per-provider map
+  // Sync API key updates exclusively to OS Keyring (never in localStorage)
   useEffect(() => {
-    if (settings.providerId && settings.apiKey) {
-      keyringSet(settings.providerId, settings.apiKey).catch(() => undefined);
-      try {
-        const rawKeys = localStorage.getItem("makora.provider_keys");
-        const parsed = rawKeys ? JSON.parse(rawKeys) : {};
-        parsed[settings.providerId] = settings.apiKey;
-        localStorage.setItem("makora.provider_keys", JSON.stringify(parsed));
-      } catch {
-        /* ignore */
-      }
+    if (settings.providerId && settings.apiKey && settings.apiKey.trim()) {
+      keyringSet(settings.providerId, settings.apiKey.trim()).catch(() => undefined);
     }
   }, [settings.providerId, settings.apiKey]);
 
@@ -280,8 +421,14 @@ function App() {
   }, [effectiveFolders, refreshTick]);
 
   const preset = presetById(settings.providerId);
-  const modelConfig = config.models.find((m) => m.id === settings.model);
+  const modelConfig =
+    config.models.find((m) => m.id === settings.model) ||
+    (settings.model ? inferModelConfig(settings.model, settings.providerId) : undefined);
   const thinkingLevel: ThinkingLevel = modelConfig?.thinkingLevel ?? "medium";
+
+  const isVisionActive =
+    modelConfig?.visionEnabled ??
+    (settings.model ? inferModelConfig(settings.model, settings.providerId).visionEnabled : false);
 
   const requestConfig: ChatConfig = {
     kind: preset.kind,
@@ -291,18 +438,16 @@ function App() {
     reasoningEffort: modelConfig?.reasoningEnabled ? modelConfig.thinkingLevel : null,
     maxOutputTokens: modelConfig?.maxOutputTokens ?? null,
     temperature: null,
-    visionEnabled: modelConfig?.visionEnabled ?? false,
+    visionEnabled: isVisionActive,
   };
 
   const skillsContent = config.skills
     .map((s) => `### ${s.name}\n${s.content}`)
     .join("\n\n");
 
-  const costUsd = modelConfig
-    ? (usage.inputTokens * modelConfig.inputPrice +
-        usage.outputTokens * modelConfig.outputPrice) /
-      1_000_000
-    : 0;
+  const costUsd = sessionCostRef.current > 0
+    ? sessionCostRef.current
+    : computeCostUsd(usage, modelConfig, settings.model, settings.providerId);
 
   const balanceBlocked =
     balance !== null && balance.amount > 0 && costUsd >= balance.amount;
@@ -311,11 +456,76 @@ function App() {
     : "";
 
   useEffect(() => {
-    localStorage.setItem("makora.settings", JSON.stringify(settings));
+    const safeSettings = { ...settings, apiKey: "" };
+    localStorage.setItem("makora.settings", JSON.stringify(safeSettings));
   }, [settings]);
   useEffect(() => {
     localStorage.setItem("makora.folders", JSON.stringify(folders));
   }, [folders]);
+
+  const [connectionSuccess, setConnectionSuccess] = useState<string | null>(null);
+
+  const refreshBalance = async (force = false) => {
+    if (settings.providerId !== "deepseek" && settings.providerId !== "openrouter") {
+      setBalance(null);
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - lastBalanceAt.current < 60_000) return;
+    lastBalanceAt.current = now;
+    setBalanceLoading(true);
+    try {
+      const b = await fetchBalance(
+        settings.providerId,
+        settings.baseUrl || preset.baseUrl,
+        settings.apiKey,
+      );
+      setBalance(b);
+    } catch {
+      setBalance(null);
+    } finally {
+      setBalanceLoading(false);
+    }
+  };
+
+  const [injectedPrompt, setInjectedPrompt] = useState<string | null>(null);
+
+  const connect = async () => {
+    setConnecting(true);
+    setModelsError(null);
+    setConnectionSuccess(null);
+    try {
+      const m = await listModels(requestConfig);
+      if (!m || m.length === 0) {
+        throw new Error("No se devolvió ningún modelo en la respuesta del proveedor.");
+      }
+      setModels(m);
+      
+      const liveModelsForProv = m.map((id) => inferModelConfig(id, settings.providerId));
+      setConfig((c) => {
+        const otherProvModels = c.models.filter(
+          (x) => (x.providerId || "").toLowerCase() !== settings.providerId.toLowerCase()
+        );
+        return {
+          ...c,
+          models: [...otherProvModels, ...liveModelsForProv],
+        };
+      });
+
+      if (!settings.model || !m.includes(settings.model)) {
+        const chosen = m[0];
+        setSettings((s) => ({ ...s, model: chosen }));
+      }
+      setConnectionSuccess(`${m.length} modelos cargados correctamente`);
+      refreshBalance();
+    } catch (e) {
+      setModelsError(String(e));
+      setConnectionSuccess(null);
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem("makora.wsname", workspaceName);
   }, [workspaceName]);
@@ -368,9 +578,36 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.providerId]);
 
+  // Auto-detect local Ollama if no API key is configured
+  useEffect(() => {
+    const rawKeys = localStorage.getItem("makora.provider_keys");
+    let hasAnyKey = false;
+    try {
+      const parsed = rawKeys ? JSON.parse(rawKeys) : {};
+      hasAnyKey = Object.values(parsed).some((k) => Boolean(k));
+    } catch {
+      /* ignore */
+    }
+
+    if (!settings.apiKey && !hasAnyKey) {
+      detectOllama()
+        .then((running) => {
+          if (running) {
+            setSettings((s) => ({
+              ...s,
+              providerId: "ollama",
+              baseUrl: "http://localhost:11434/v1",
+              apiKey: "",
+            }));
+          }
+        })
+        .catch(() => undefined);
+    }
+  }, []);
+
   // Auto-connect and load available models on startup or when provider/key is configured
   useEffect(() => {
-    if (settings.apiKey || preset.kind === "ollama") {
+    if (settings.apiKey || preset.kind === "ollama" || !preset.needsKey) {
       listModels(requestConfig)
         .then((m) => {
           if (m && m.length > 0) {
@@ -403,43 +640,6 @@ function App() {
       .catch((e) => console.warn("mcp:", e));
   }, [config.mcps]);
 
-  const refreshBalance = async (force = false) => {
-    if (settings.providerId !== "deepseek" && settings.providerId !== "openrouter") {
-      setBalance(null);
-      return;
-    }
-    const now = Date.now();
-    if (!force && now - lastBalanceAt.current < 60_000) return;
-    lastBalanceAt.current = now;
-    setBalanceLoading(true);
-    try {
-      const b = await fetchBalance(
-        settings.providerId,
-        settings.baseUrl || preset.baseUrl,
-        settings.apiKey,
-      );
-      setBalance(b);
-    } catch {
-      setBalance(null);
-    } finally {
-      setBalanceLoading(false);
-    }
-  };
-
-  const connect = async () => {
-    setConnecting(true);
-    setModelsError(null);
-    try {
-      const m = await listModels(requestConfig);
-      setModels(m);
-      if (!settings.model && m.length) setSettings((s) => ({ ...s, model: m[0] }));
-      refreshBalance();
-    } catch (e) {
-      setModelsError(String(e));
-    } finally {
-      setConnecting(false);
-    }
-  };
 
   const addFolder = async (pathOverride?: string) => {
     if (pathOverride) {
@@ -464,15 +664,12 @@ function App() {
       outputTokens: sessionTokensRef.current.outputTokens + u.outputTokens,
       cachedTokens: sessionTokensRef.current.cachedTokens + u.cachedTokens,
     };
-    setUsage(sessionTokensRef.current);
+    setUsage({ ...sessionTokensRef.current });
     setLastUsage(u);
     refreshBalance();
-    if (modelConfig) {
-      const turnCost =
-        (u.inputTokens * modelConfig.inputPrice +
-          u.outputTokens * modelConfig.outputPrice) /
-        1_000_000;
-      if (Number.isFinite(turnCost)) sessionCostRef.current += turnCost;
+    const turnCost = computeCostUsd(u, modelConfig, settings.model, settings.providerId);
+    if (Number.isFinite(turnCost)) {
+      sessionCostRef.current += turnCost;
     }
     const id = activeSessionIdRef.current;
     if (id) {
@@ -498,7 +695,24 @@ function App() {
     }
   };
 
+  const isFileSafe = useCallback((path: string): boolean => {
+    const ext = path.split(".").pop()?.toLowerCase() || "";
+    const UNSAFE = ["exe", "dll", "bat", "cmd", "vbs", "ps1", "msi", "scr", "com", "bin", "iso", "sys"];
+    return !UNSAFE.includes(ext);
+  }, []);
+
   const openFile = useCallback(async (path: string) => {
+    const lower = path.toLowerCase();
+    // Image or PDF direct visualizers
+    if (/\.(png|jpg|jpeg|webp|gif|avif|pdf)$/i.test(lower)) {
+      setOpenFiles((fs) => {
+        if (fs.some((f) => f.path === path)) return fs;
+        return [...fs, { path, content: "", originalContent: "", isDirty: false }];
+      });
+      setActivePath(path);
+      return;
+    }
+
     try {
       const raw = await readTextFile(path);
       const content = raw.replace(/\r\n/g, "\n");
@@ -514,6 +728,67 @@ function App() {
       setActivePath(path);
     }
   }, []);
+
+  const handleDroppedPath = useCallback((droppedPath: string) => {
+    if (!droppedPath) return;
+    if (!isFileSafe(droppedPath)) {
+      const baseName = droppedPath.split(/[\\/]/).pop() || droppedPath;
+      showToast(`${t.dragDrop.unsafeFileWarning} (${baseName})`, "warning");
+      return;
+    }
+
+    const ext = droppedPath.split(".").pop()?.toLowerCase() || "";
+    if (ext && ext.length <= 8) {
+      openFile(droppedPath);
+      const baseName = droppedPath.split(/[\\/]/).pop() || droppedPath;
+      showToast(`${t.dragDrop.openedFile} ${baseName}`, "info");
+    } else {
+      // Treat as directory
+      if (!folders.includes(droppedPath)) {
+        setFolders((f) => [...f, droppedPath]);
+        showToast(`📁 Carpeta añadida al workspace: ${droppedPath.split(/[\\/]/).pop()}`, "info");
+      }
+    }
+  }, [folders, isFileSafe, openFile, showToast, t]);
+
+  // Initial CLI Argument file open ("Abrir con... MakoraIDE")
+  useEffect(() => {
+    getInitialFile().then((initPath) => {
+      if (initPath && isFileSafe(initPath)) {
+        openFile(initPath);
+        const baseName = initPath.split(/[\\/]/).pop() || initPath;
+        showToast(`${t.dragDrop.openedFile} ${baseName}`, "info");
+      }
+    }).catch(() => undefined);
+  }, [isFileSafe, openFile, showToast, t]);
+
+  // Tauri Native Drag-Drop Window Event Listener
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    try {
+      getCurrentWebviewWindow().onDragDropEvent((event) => {
+        if (event.payload.type === "over" || event.payload.type === "enter") {
+          setIsDragging(true);
+        } else if (event.payload.type === "leave") {
+          setIsDragging(false);
+        } else if (event.payload.type === "drop") {
+          setIsDragging(false);
+          const paths = event.payload.paths;
+          if (Array.isArray(paths)) {
+            paths.forEach((p) => handleDroppedPath(p));
+          }
+        }
+      }).then((fn) => {
+        unlisten = fn;
+      }).catch(() => undefined);
+    } catch {
+      /* ignore */
+    }
+
+    return () => {
+      unlisten?.();
+    };
+  }, [handleDroppedPath]);
 
   const closeFile = useCallback((path: string) => {
     setOpenFiles((fs) => {
@@ -778,6 +1053,8 @@ function App() {
       blockReason={blockReason}
       agentMode={agentMode}
       onToggleMode={setAgentMode}
+      modelConfig={modelConfig}
+      providerId={settings.providerId}
       onUsage={addUsage}
       onApplyArtifact={applyArtifact}
       onStatusChange={(busy, tool) => {
@@ -787,6 +1064,8 @@ function App() {
       onClearSessionTrigger={handleNewSession}
       initialTranscript={activeSession?.messages ?? []}
       onTranscriptChange={persistTranscript}
+      injectedPrompt={injectedPrompt}
+      onClearInjectedPrompt={() => setInjectedPrompt(null)}
     />
   );
 
@@ -795,7 +1074,66 @@ function App() {
   const showRightPanel = panelOpen && !zenMode;
 
   return (
-    <div className={`app ${zenMode ? "zen-mode-active" : ""}`}>
+    <div
+      className={`app ${zenMode ? "zen-mode-active" : ""}`}
+      data-glass={glassMode}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsDragging(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          for (let i = 0; i < e.dataTransfer.files.length; i++) {
+            const file = e.dataTransfer.files[i];
+            const filePath = (file as unknown as { path?: string }).path || file.name;
+            handleDroppedPath(filePath);
+          }
+        }
+      }}
+    >
+      <AmbientCanvas3D currentTheme={theme} />
+
+      {/* Drag & Drop Visual Overlay */}
+      {isDragging && (
+        <div className="app-drag-overlay">
+          <div className="app-drag-box">
+            <UploadCloud className="app-drag-icon" />
+            <h2 className="app-drag-title">{t.dragDrop.dropHere}</h2>
+            <p className="app-drag-subtitle">{t.dragDrop.dropSubtitle}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Toasts Container */}
+      {toasts.length > 0 && (
+        <div className="toast-container">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast-msg ${toast.type}`}>
+              {toast.type === "warning" ? (
+                <AlertTriangle size={15} className="text-gold" />
+              ) : (
+                <CheckCircle2 size={15} className="text-cyan" />
+              )}
+              <span>{toast.message}</span>
+              <button
+                className="icon-btn-micro"
+                onClick={() => setToasts((prev) => prev.filter((item) => item.id !== toast.id))}
+                style={{ marginLeft: 6, opacity: 0.7 }}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <Header
         workspaceName={workspaceName}
         onWorkspaceName={setWorkspaceName}
@@ -811,22 +1149,31 @@ function App() {
         onTogglePanel={() => setPanelOpen((prev) => !prev)}
         currentTheme={theme}
         onSelectTheme={setTheme}
+        glassMode={glassMode}
+        onToggleGlassMode={toggleGlassMode}
       />
 
       <div className="layout-root">
         {/* Left Explorer Sidebar */}
         {showLeftSidebar && (
-          <aside className="sidebar-explorer">
-            <Explorer
-              folders={folders}
-              activePath={activePath}
-              onRemoveFolder={removeFolder}
-              onCollapse={() => setExplorerOpen(false)}
-              onOpenFile={openFile}
-              onChanged={() => setRefreshTick((t) => t + 1)}
-              refreshTick={refreshTick}
+          <>
+            <aside className="sidebar-explorer" style={{ width: `${explorerWidth}px` }}>
+              <Explorer
+                folders={folders}
+                activePath={activePath}
+                onRemoveFolder={removeFolder}
+                onCollapse={() => setExplorerOpen(false)}
+                onOpenFile={openFile}
+                onChanged={() => setRefreshTick((t) => t + 1)}
+                refreshTick={refreshTick}
+              />
+            </aside>
+            <div
+              className="resizer-col resizer-explorer"
+              onMouseDown={handleExplorerResize}
+              title="Arrastrar para redimensionar explorador"
             />
-          </aside>
+          </>
         )}
 
         {/* Central Master Workspace & Terminal */}
@@ -848,49 +1195,66 @@ function App() {
             onToggleZenMode={() => setZenMode((z) => !z)}
             chatElement={chatNode}
             onNewChat={handleNewSession}
+            onAskAgent={(prompt) => {
+              setActivePath(null);
+              setInjectedPrompt(prompt);
+            }}
           />
 
-
           {terminalOpen && (
-            <div className="bottom-terminal-drawer">
-              <TerminalPanel
-                cwd={effectiveFolders[0] || homePath || null}
-                currentTheme={theme}
-                onCollapse={() => setTerminalOpen(false)}
+            <>
+              <div
+                className="resizer-row resizer-terminal"
+                onMouseDown={handleTerminalResize}
+                title="Arrastrar para redimensionar terminal"
               />
-            </div>
+              <div className="bottom-terminal-drawer" style={{ height: `${terminalHeight}px` }}>
+                <TerminalPanel
+                  cwd={effectiveFolders[0] || homePath || null}
+                  currentTheme={theme}
+                  onCollapse={() => setTerminalOpen(false)}
+                />
+              </div>
+            </>
           )}
         </main>
 
         {/* Right Parameters and Usage Panel */}
         {showRightPanel && (
-          <aside className="sidebar-usage-panel">
-            <UsagePanel
-              settings={settings}
-              onSettings={setSettings}
-              models={models}
-              modelsError={modelsError}
-              connecting={connecting}
-              onConnect={connect}
-              usage={usage}
-              thinkingLevel={thinkingLevel}
-              onThinkingLevel={(t) => updateModelConfig({ thinkingLevel: t })}
-              balance={balance}
-              balanceLoading={balanceLoading}
-              costUsd={costUsd}
-              onRefreshBalance={() => refreshBalance(true)}
-              onCollapse={() => setPanelOpen(false)}
-              contextWindow={modelConfig?.contextWindow ?? 128000}
-              lastUsage={lastUsage}
-              mcpTools={mcpTools}
-              onProfile={(p) =>
-                updateModelConfig({
-                  thinkingLevel: p.thinking,
-                  reasoningEnabled: p.reasoning,
-                })
-              }
+          <>
+            <div
+              className="resizer-col resizer-usage"
+              onMouseDown={handleUsagePanelResize}
+              title="Arrastrar para redimensionar panel de parámetros"
             />
-          </aside>
+            <aside className="sidebar-usage-panel" style={{ width: `${usagePanelWidth}px` }}>
+              <UsagePanel
+                settings={settings}
+                onSettings={setSettings}
+                models={models}
+                modelsError={modelsError}
+                connecting={connecting}
+                onConnect={connect}
+                usage={usage}
+                thinkingLevel={thinkingLevel}
+                onThinkingLevel={(th) => updateModelConfig({ thinkingLevel: th })}
+                balance={balance}
+                balanceLoading={balanceLoading}
+                costUsd={costUsd}
+                onRefreshBalance={() => refreshBalance(true)}
+                onCollapse={() => setPanelOpen(false)}
+                contextWindow={modelConfig?.contextWindow ?? 128000}
+                lastUsage={lastUsage}
+                mcpTools={mcpTools}
+                onProfile={(p) =>
+                  updateModelConfig({
+                    thinkingLevel: p.thinking,
+                    reasoningEnabled: p.reasoning,
+                  })
+                }
+              />
+            </aside>
+          </>
         )}
       </div>
 
@@ -931,68 +1295,84 @@ function App() {
         onOpenHistory={() => setShowHistory(true)}
       />
 
-      {showSettings && (
-        <SettingsModal
-          config={config}
-          onConfig={setConfig}
-          settings={settings}
-          onSaveSettings={setSettings}
-          models={models}
-          connecting={connecting}
-          modelsError={modelsError}
-          onConnect={connect}
-          currentTheme={theme}
-          onSelectTheme={setTheme}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {showSettings && (
+          <SettingsModal
+            config={config}
+            onConfig={setConfig}
+            settings={settings}
+            onSaveSettings={setSettings}
+            models={models}
+            connecting={connecting}
+            modelsError={modelsError}
+            connectionSuccess={connectionSuccess}
+            onConnect={connect}
+            currentTheme={theme}
+            onSelectTheme={setTheme}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
 
+        {showOnboarding && (
+          <OnboardingModal
+            isOpen={showOnboarding}
+            onClose={() => setShowOnboarding(false)}
+            settings={settings}
+            onSaveSettings={setSettings}
+            currentTheme={theme}
+            onSelectTheme={setTheme}
+            folders={folders}
+            onAddFolder={(p) => addFolder(p)}
+          />
+        )}
 
-      {showOnboarding && (
-        <OnboardingModal
-          isOpen={showOnboarding}
-          onClose={() => setShowOnboarding(false)}
-          settings={settings}
-          onSaveSettings={setSettings}
-          currentTheme={theme}
-          onSelectTheme={setTheme}
-          folders={folders}
-          onAddFolder={(p) => addFolder(p)}
-        />
-      )}
+        {showGitModal && (
+          <GitModal
+            folder={effectiveFolders[0] || ""}
+            onClose={() => setShowGitModal(false)}
+            onRefreshWorkspace={() => setRefreshTick((t) => t + 1)}
+          />
+        )}
 
-      {showGitModal && (
-        <GitModal
-          folder={effectiveFolders[0] || ""}
-          onClose={() => setShowGitModal(false)}
-          onRefreshWorkspace={() => setRefreshTick((t) => t + 1)}
-        />
-      )}
+        {showAnalyticsModal && (
+          <AnalyticsModal
+            settings={settings}
+            usage={usage}
+            lastUsage={lastUsage}
+            balance={balance}
+            balanceLoading={balanceLoading}
+            costUsd={costUsd}
+            onRefreshBalance={refreshBalance}
+            onClose={() => setShowAnalyticsModal(false)}
+          />
+        )}
 
-      {showAnalyticsModal && (
-        <AnalyticsModal
-          settings={settings}
-          usage={usage}
-          lastUsage={lastUsage}
-          balance={balance}
-          balanceLoading={balanceLoading}
-          costUsd={costUsd}
-          onRefreshBalance={refreshBalance}
-          onClose={() => setShowAnalyticsModal(false)}
-        />
-      )}
+        {showHistory && (
+          <HistoryModal
+            isOpen={showHistory}
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onOpen={handleOpenSession}
+            onNew={handleNewSession}
+            onDelete={handleDeleteSession}
+            onRename={handleRenameSession}
+            onClearAll={handleClearSessions}
+            onClose={() => setShowHistory(false)}
+          />
+        )}
 
-      <HistoryModal
-        isOpen={showHistory}
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onOpen={handleOpenSession}
-        onNew={handleNewSession}
-        onDelete={handleDeleteSession}
-        onRename={handleRenameSession}
-        onClearAll={handleClearSessions}
-        onClose={() => setShowHistory(false)}
-      />
+        {showEula && (
+          <BetaAgreementModal
+            isOpen={showEula}
+            isExpired={isBetaExpired}
+            expirationError={betaExpirationError}
+            onAccept={() => {
+              localStorage.setItem("makora_eula_accepted", "true");
+              setShowEula(false);
+            }}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

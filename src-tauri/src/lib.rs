@@ -55,6 +55,9 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<std::collections::HashMap<String, String>>)]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Type)]
@@ -153,12 +156,15 @@ fn normalize_path_str(p: &std::path::Path) -> String {
 }
 
 fn path_within(folders: &[String], path: &str) -> bool {
-    if folders.is_empty() {
-        return true;
-    }
     let p = std::path::Path::new(path);
     let p_canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     let p_norm = normalize_path_str(&p_canon);
+
+    if folders.is_empty() {
+        let temp = std::env::temp_dir();
+        let temp_norm = normalize_path_str(&temp);
+        return p_norm.starts_with(&temp_norm);
+    }
 
     folders.iter().any(|f| {
         let fp = std::path::Path::new(f);
@@ -273,11 +279,31 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
+fn read_file_binary(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("Error al leer archivo: {e}"))
+}
+
+#[tauri::command]
+#[specta::specta]
 fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     let picked = app.dialog().file().blocking_pick_folder();
     Ok(picked
         .and_then(|p| p.into_path().ok())
         .map(|pb| pb.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+#[specta::specta]
+fn pick_files(app: AppHandle) -> Result<Vec<String>, String> {
+    let picked = app.dialog().file().blocking_pick_files();
+    match picked {
+        Some(paths) => Ok(paths
+            .into_iter()
+            .filter_map(|p| p.into_path().ok())
+            .map(|pb| pb.to_string_lossy().to_string())
+            .collect()),
+        None => Ok(Vec::new()),
+    }
 }
 
 #[tauri::command]
@@ -384,7 +410,7 @@ fn term_kill(id: String) {
 }
 
 fn search_walk(dir: &str, q: &str, out: &mut Vec<String>, count: &mut u32) {
-    if *count >= 50 {
+    if *count >= 40 {
         return;
     }
     let rd = match std::fs::read_dir(dir) {
@@ -394,16 +420,30 @@ fn search_walk(dir: &str, q: &str, out: &mut Vec<String>, count: &mut u32) {
     let mut items: Vec<_> = rd.flatten().collect();
     items.sort_by_key(|e| e.file_name());
     for e in items {
-        if *count >= 50 {
+        if *count >= 40 {
             return;
         }
         let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || name == "node_modules" || name == "target" {
-            continue;
+        let name_lower = name.to_lowercase();
+        // Ignore build, vendor, and temporary caches
+        if name.starts_with('.')
+            || name == "node_modules"
+            || name == "target"
+            || name == "dist"
+            || name == "build"
+            || name == ".next"
+            || name == "__pycache__"
+            || name == ".venv"
+            || name == "venv"
+            || name == "coverage"
+        {
+            if !q.contains("node_modules") && !q.contains("dist") && !q.contains("target") {
+                continue;
+            }
         }
         let path = e.path().to_string_lossy().to_string();
         let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if name.to_lowercase().contains(q) || path.to_lowercase().contains(q) {
+        if name_lower.contains(q) || path.to_lowercase().contains(q) {
             out.push(path.clone());
             *count += 1;
         }
@@ -1084,6 +1124,33 @@ fn git_init(folder: String) -> Result<String, String> {
     }
 }
 
+// Fecha límite de evaluación beta: 30 de Septiembre de 2026 23:59:59 UTC (timestamp: 1790812799)
+const BETA_EXPIRATION_TIMESTAMP: i64 = 1790812799;
+
+#[tauri::command]
+#[specta::specta]
+fn check_beta_validity() -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp();
+    if now > BETA_EXPIRATION_TIMESTAMP {
+        return Err("Esta versión preliminar de MakoraIDE ha caducado. Por favor, solicita una actualización al desarrollador.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_initial_file() -> Result<Option<String>, String> {
+    for arg in std::env::args().skip(1) {
+        if !arg.starts_with('-') {
+            let p = std::path::Path::new(&arg);
+            if p.exists() && p.is_file() {
+                return Ok(Some(arg));
+            }
+        }
+    }
+    Ok(None)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta_builder = Builder::new()
@@ -1091,6 +1158,7 @@ pub fn run() {
             home_dir,
             list_dir,
             read_text_file,
+            read_file_binary,
             write_file,
             rename_path,
             create_file,
@@ -1098,6 +1166,7 @@ pub fn run() {
             delete_path,
             reveal_in_explorer,
             pick_folder,
+            pick_files,
             count_tokens,
             spawn_stream,
             list_models,
@@ -1133,7 +1202,9 @@ pub fn run() {
             git_remote_get,
             git_remote_set,
             git_fetch,
-            git_init
+            git_init,
+            get_initial_file,
+            check_beta_validity
         ])
         .events(collect_events![StreamEvent, ChatDeltaEvent]);
 
@@ -1152,3 +1223,5 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
