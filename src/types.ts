@@ -307,6 +307,39 @@ export interface UniversalTelemetry {
   modelUsage: Record<string, { input: number; output: number; cached: number; cost: number; turns: number }>;
 }
 
+export interface SessionWorkspaceState {
+  folders: string[];
+  openFiles: OpenFile[];
+  activeFilePath: string | null;
+  agentMode?: AgentMode;
+  status: "idle" | "running" | "completed" | "error";
+}
+
+export interface EnhancedChatSession extends ChatSession {
+  workspace?: SessionWorkspaceState;
+}
+
+export type SubagentRole = "explorer" | "coder" | "tester" | "reviewer";
+
+export interface MultiAgentPlanStep {
+  stepIndex: number;
+  title: string;
+  role: SubagentRole;
+  status: "pending" | "running" | "completed" | "failed";
+  resultSummary?: string | null;
+}
+
+export interface MultiAgentPlanState {
+  planId: string;
+  sessionId: string;
+  objective: string;
+  steps: MultiAgentPlanStep[];
+  activeStepIndex?: number | null;
+  isCompleted: boolean;
+  totalTokens: number;
+  totalCostUsd: number;
+}
+
 
 
 

@@ -3,6 +3,7 @@ mod balance;
 mod gateway;
 mod history;
 mod mcp;
+mod multiagent;
 mod terminal;
 mod token_engine;
 
@@ -1179,6 +1180,12 @@ fn get_initial_file() -> Result<Option<String>, String> {
     Ok(None)
 }
 
+#[tauri::command]
+#[specta::specta]
+fn create_multiagent_plan(session_id: String, objective: String) -> multiagent::MultiAgentPlanState {
+    multiagent::create_default_plan(&session_id, &objective)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta_builder = Builder::new()
@@ -1200,6 +1207,7 @@ pub fn run() {
             list_models,
             chat,
             chat_cancel,
+            create_multiagent_plan,
             mcp_configure,
             fetch_balance,
             term_spawn,

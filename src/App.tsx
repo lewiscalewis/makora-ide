@@ -28,6 +28,7 @@ import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
 import UnifiedWorkspace from "./components/UnifiedWorkspace";
 import AmbientCanvas3D from "./components/AmbientCanvas3D";
+import WorkspaceTabBar from "./components/WorkspaceTabBar";
 
 // Lazy-loaded heavy components for instant initial startup & smaller initial JS chunk
 const SettingsModal = lazy(() => import("./components/SettingsModal"));
@@ -1189,6 +1190,15 @@ function App() {
         onSelectTheme={setTheme}
         glassMode={glassMode}
         onToggleGlassMode={toggleGlassMode}
+      />
+
+      <WorkspaceTabBar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleOpenSession}
+        onNewSession={handleNewSession}
+        onCloseSession={handleDeleteSession}
+        runningSessionIds={new Set(agentBusy ? [activeSessionId] : [])}
       />
 
       <div className="layout-root">
