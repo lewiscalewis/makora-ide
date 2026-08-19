@@ -1511,6 +1511,7 @@ pub async fn run_multiagent(
     emit_plan(app, chat_id, &plan);
 
     let mut briefing = String::new();
+    let mut all_modified_files: Vec<String> = Vec::new();
     let mut turn: u32 = 0;
 
     for idx in 0..plan.steps.len() {
@@ -1540,13 +1541,18 @@ pub async fn run_multiagent(
         }
 
         let sub_system = format!(
-            "{full_system}\n\n## Subagente: {}\n{}\n\n## Objetivo de la tarea\n{objective}\n\n## Briefing acumulado de pasos previos\n{}",
+            "{full_system}\n\n## Subagente: {}\n{}\n\n## Objetivo de la tarea\n{objective}\n\n## Briefing acumulado de pasos previos\n{}{}",
             role.name(),
             role.system_prompt(),
             if briefing.is_empty() {
                 "(ninguno — este es el primer paso del flujo multi-agente)".to_string()
             } else {
                 briefing.clone()
+            },
+            if all_modified_files.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n## Archivos modificados en el workspace:\n{}", all_modified_files.join("\n"))
             }
         );
 
@@ -1626,6 +1632,15 @@ pub async fn run_multiagent(
                     return Err("cancelado por el usuario".into());
                 }
                 executed_tool_names.push(tc.name.clone());
+                if tc.name == "apply_patch" || tc.name == "write_file" {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&tc.arguments) {
+                        if let Some(p) = v.get("path").and_then(|x| x.as_str()) {
+                            if !all_modified_files.contains(&p.to_string()) {
+                                all_modified_files.push(p.to_string());
+                            }
+                        }
+                    }
+                }
                 let _ = app.emit(
                     "tool-start",
                     ToolStart {
@@ -1686,7 +1701,12 @@ pub async fn run_multiagent(
     }
 
     let synth_system = format!(
-        "{full_system}\n\n## Modo: Orquestador Principal Makora (Síntesis Final Multi-Agente)\nHas coordinado una ejecución en cadena con 4 fases especializadas (Exploración, Código, Validación, Revisión).\n\n### Briefings Técnicos de los Subagentes:\n{briefing}\n\nDirectiva:\nGenera la respuesta final de forma concisa, clara y objetiva respondiendo directamente a la solicitud del usuario: '{objective}'. Resume sin redundancias ni preámbulos qué se ha analizado, qué cambios exactos se han aplicado (rutas de archivo y funciones), el resultado de las pruebas y las conclusiones de calidad."
+        "{full_system}\n\n## Modo: Orquestador Principal Makora (Síntesis Final Multi-Agente)\nHas coordinado una ejecución en cadena con 4 fases especializadas (Exploración, Código, Validación, Revisión).\n\n### Archivos Modificados en la Tarea:\n{}\n\n### Briefings Técnicos de los Subagentes:\n{briefing}\n\nDirectiva:\nGenera la respuesta final de forma concisa, clara y objetiva respondiendo directamente a la solicitud del usuario: '{objective}'. Resume sin redundancias ni preámbulos qué se ha analizado, qué cambios exactos se han aplicado (rutas de archivo y funciones), el resultado de las pruebas y las conclusiones de calidad.",
+        if all_modified_files.is_empty() {
+            "Ninguno (operación de solo lectura / análisis).".to_string()
+        } else {
+            all_modified_files.join(", ")
+        }
     );
 
     let synth_user_content = format!(

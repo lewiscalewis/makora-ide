@@ -95,6 +95,49 @@ fn with_conn<T>(f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T>
     f(&conn).ok()
 }
 
+fn xor_decipher(hex: &str) -> Option<String> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    let key = b"Makora_Vault_Hardware_Salt_2026";
+    let mut bytes = Vec::new();
+    for i in (0..hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex[i..i + 2], 16).ok()?;
+        bytes.push(byte);
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    for (i, b) in bytes.iter().enumerate() {
+        out.push(b ^ key[i % key.len()]);
+    }
+    String::from_utf8(out).ok()
+}
+
+pub fn legacy_vault_get(key: &str) -> Option<String> {
+    with_conn(|conn| {
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='makora_vault'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if !table_exists {
+            return Ok(None);
+        }
+
+        let mut stmt = conn.prepare("SELECT secret FROM makora_vault WHERE key = ?1")?;
+        let mut rows = stmt.query(rusqlite::params![key])?;
+        if let Some(row) = rows.next()? {
+            let enc: String = row.get(0)?;
+            if let Some(dec) = xor_decipher(&enc) {
+                return Ok(Some(dec));
+            }
+        }
+        Ok(None)
+    })
+    .flatten()
+}
+
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

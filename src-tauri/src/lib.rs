@@ -599,12 +599,22 @@ fn keyring_get(provider_id: String) -> Result<Option<String>, String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
 
-    // OS Native Secure Store (Windows Credential Manager / Keychain / Secret Service)
+    // 1. OS Native Secure Store (Windows Credential Manager / Keychain / Secret Service)
     if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
         if let Ok(p) = entry.get_password() {
             if !p.trim().is_empty() {
                 return Ok(Some(p));
             }
+        }
+    }
+
+    // 2. Fallback to direct key or legacy SQLite makora_vault with transparent auto-migration
+    if let Some(legacy) = history::legacy_vault_get(&key).or_else(|| history::legacy_vault_get(&clean_id)) {
+        if !legacy.trim().is_empty() {
+            if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+                let _ = entry.set_password(&legacy);
+            }
+            return Ok(Some(legacy));
         }
     }
 

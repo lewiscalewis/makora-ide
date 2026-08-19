@@ -75,14 +75,25 @@ export function removeVaultEntry(id: string): void {
 
 export async function getVaultKey(id: string): Promise<string | null> {
   try {
+    // 1. Check credential ID (vault_<id>)
     const direct = await keyringGet(credentialId(id));
     if (direct && direct.trim()) return direct.trim();
 
-    // Fallback: look up provider from vault metadata
+    // 2. Check raw ID
+    const raw = await keyringGet(id);
+    if (raw && raw.trim()) return raw.trim();
+
+    // 3. Look up entry metadata in vault
     const entry = loadVault().find((e) => e.id === id);
-    if (entry && entry.providerId) {
-      const provKey = await keyringGet(entry.providerId);
-      if (provKey && provKey.trim()) return provKey.trim();
+    if (entry) {
+      if (entry.providerId) {
+        const provKey = await keyringGet(entry.providerId);
+        if (provKey && provKey.trim()) return provKey.trim();
+      }
+      if (entry.name && entry.name !== entry.providerId) {
+        const nameKey = await keyringGet(entry.name);
+        if (nameKey && nameKey.trim()) return nameKey.trim();
+      }
     }
   } catch {
     /* ignore */
