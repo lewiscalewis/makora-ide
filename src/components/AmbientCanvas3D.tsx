@@ -237,9 +237,6 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
     // Dynamic animation references
     let avPositionsRef: Float32Array | null = null;
     let avGeoRef: THREE.BufferGeometry | null = null;
-    let frostPositionsRef: Float32Array | null = null;
-    let frostSpeedsRef: Float32Array | null = null;
-    let frostGeoRef: THREE.BufferGeometry | null = null;
     let skyrimLogoRef: THREE.Group | null = null;
     let skyrimLightRef: THREE.PointLight | null = null;
     let ddDragonRingRef: THREE.Group | null = null;
@@ -262,19 +259,6 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       flickerPhase: number;
     }> = [];
     let ddSmokeRefs: Array<{ sprite: THREE.Sprite; speed: number; baseX: number; phase: number; opacity: number }> = [];
-    let skyFrostRefs: Array<{
-      positions: Float32Array;
-      speeds: Float32Array;
-      drift: Float32Array;
-      geo: THREE.BufferGeometry;
-      count: number;
-      mat: THREE.PointsMaterial;
-      baseOpacity: number;
-      freq: number;
-      phase: number;
-      floor: number;
-      ceiling: number;
-    }> = [];
     let skyMistRefs: Array<{ sprite: THREE.Sprite; speed: number; baseY: number; phase: number; opacity: number }> = [];
     let samuraiMaskRef: THREE.Group | null = null;
 
@@ -569,16 +553,16 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
 
       // --- Drifting Frost Mist Banks (subtle realistic atmospheric fog) ---
       skyMistRefs = [];
-      const mistTexture = makeSoftSpriteTexture("rgba(180,215,245,0.4)", "rgba(100,150,210,0.15)");
+      const mistTexture = makeSoftSpriteTexture("rgba(180,215,245,0.35)", "rgba(100,150,210,0.12)");
       for (let i = 0; i < 5; i++) {
         const mistMat = new THREE.SpriteMaterial({
           map: mistTexture,
           transparent: true,
-          opacity: 0.02 + Math.random() * 0.025,
+          opacity: 0.025 + Math.random() * 0.03,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         });
-        const sc = 4.0 + Math.random() * 4.5;
+        const sc = 5.0 + Math.random() * 5.0;
         const mist = makeSprite(
           mistMat,
           (Math.random() - 0.5) * 26,
@@ -590,91 +574,12 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         skyrimGroup.add(mist);
         skyMistRefs.push({
           sprite: mist,
-          speed: (Math.random() > 0.5 ? 1 : -1) * (0.02 + Math.random() * 0.04),
+          speed: (Math.random() > 0.5 ? 1 : -1) * (0.015 + Math.random() * 0.03),
           baseY: mist.position.y,
           phase: Math.random() * Math.PI * 2,
           opacity: mistMat.opacity,
         });
       }
-
-      // --- Realistic, Diffused Atmospheric Frost & Snow Particles (Non-Christmas) ---
-      skyFrostRefs = [];
-      const realisticFrostTexture = makeSoftDotTexture("rgba(215,235,255,0.9)", "rgba(150,195,240,0.35)");
-      const frostLayers = [
-        // 1. Foreground Bokeh Flakes (Soft out-of-focus drifting close past camera)
-        { count: 18, size: 0.85, color: 0xebf5ff, min: 0.008, max: 0.015, spread: 28, zMin: 3.5, zMax: 6.5, opacity: 0.45, freq: 1.4 },
-        // 2. Mid-Foreground Soft Frost Motes
-        { count: 110, size: 0.38, color: 0xd2e8ff, min: 0.006, max: 0.012, spread: 34, zMin: 0.5, zMax: 3.2, opacity: 0.55, freq: 1.8 },
-        // 3. Main Emblem Depth Flakes
-        { count: 240, size: 0.2, color: 0xbcd8f8, min: 0.004, max: 0.009, spread: 38, zMin: -4.0, zMax: 0.0, opacity: 0.48, freq: 1.2 },
-        // 4. Deep Atmospheric Frost Dust
-        { count: 420, size: 0.08, color: 0xa0c4ec, min: 0.002, max: 0.006, spread: 42, zMin: -11.0, zMax: -5.0, opacity: 0.35, freq: 0.8 },
-      ];
-      for (const layer of frostLayers) {
-        const geo = new THREE.BufferGeometry();
-        const pos = new Float32Array(layer.count * 3);
-        const speeds = new Float32Array(layer.count);
-        const drift = new Float32Array(layer.count);
-        for (let i = 0; i < layer.count; i++) {
-          pos[i * 3] = (Math.random() - 0.5) * layer.spread;
-          pos[i * 3 + 1] = (Math.random() - 0.5) * 24;
-          pos[i * 3 + 2] = layer.zMin + Math.random() * (layer.zMax - layer.zMin);
-          speeds[i] = layer.min + Math.random() * (layer.max - layer.min);
-          drift[i] = Math.random() * Math.PI * 2;
-        }
-        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-        const mat = new THREE.PointsMaterial({
-          size: layer.size,
-          map: realisticFrostTexture,
-          color: layer.color,
-          transparent: true,
-          opacity: layer.opacity,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        });
-        skyrimGroup.add(new THREE.Points(geo, mat));
-        skyFrostRefs.push({
-          positions: pos,
-          speeds,
-          drift,
-          geo,
-          count: layer.count,
-          mat,
-          baseOpacity: layer.opacity,
-          freq: layer.freq,
-          phase: Math.random() * Math.PI * 2,
-          floor: -12,
-          ceiling: 12,
-        });
-      }
-
-      // --- Rising Frost Dust (icy motes drifting upward) ---
-      const frostCount = 160;
-      const frostGeo = new THREE.BufferGeometry();
-      const frostPos = new Float32Array(frostCount * 3);
-      const frostSpeeds = new Float32Array(frostCount);
-      for (let i = 0; i < frostCount; i++) {
-        frostPos[i * 3] = (Math.random() - 0.5) * 28;
-        frostPos[i * 3 + 1] = (Math.random() - 0.5) * 16;
-        frostPos[i * 3 + 2] = (Math.random() - 0.5) * 10;
-        frostSpeeds[i] = 0.02 + Math.random() * 0.05;
-      }
-      frostGeo.setAttribute("position", new THREE.BufferAttribute(frostPos, 3));
-      frostPositionsRef = frostPos;
-      frostSpeedsRef = frostSpeeds;
-      frostGeoRef = frostGeo;
-
-      const frostMat = new THREE.PointsMaterial({
-        size: 0.07,
-        map: realisticFrostTexture,
-        color: 0xd0e8ff,
-        transparent: true,
-        opacity: 0.42,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const frostDust = new THREE.Points(frostGeo, frostMat);
-      skyrimGroup.add(frostDust);
 
       group.add(skyrimGroup);
     } else if (currentTheme === "dragons_dogma") {
@@ -1017,30 +922,6 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
           w.sprite.position.y = w.baseY + Math.sin(elapsed * 0.25 + w.phase) * 0.4;
           (w.sprite.material as THREE.SpriteMaterial).opacity =
             w.opacity * (0.75 + 0.25 * Math.sin(elapsed * 0.8 + w.phase));
-        }
-
-        for (const sys of skyFrostRefs) {
-          for (let i = 0; i < sys.count; i++) {
-            sys.positions[i * 3 + 1] -= sys.speeds[i];
-            sys.positions[i * 3] += Math.sin(elapsed * 0.9 + sys.drift[i]) * 0.0035;
-            if (sys.positions[i * 3 + 1] < sys.floor) {
-              sys.positions[i * 3 + 1] = sys.ceiling;
-              sys.positions[i * 3] = (Math.random() - 0.5) * 38;
-            }
-          }
-          sys.geo.attributes.position.needsUpdate = true;
-          sys.mat.opacity = sys.baseOpacity * (0.78 + 0.22 * Math.sin(elapsed * sys.freq + sys.phase));
-        }
-
-        if (frostPositionsRef && frostSpeedsRef && frostGeoRef) {
-          for (let i = 0; i < frostPositionsRef.length / 3; i++) {
-            frostPositionsRef[i * 3 + 1] += frostSpeedsRef[i];
-            frostPositionsRef[i * 3] += Math.sin(elapsed * 0.9 + i * 0.8) * 0.003;
-            if (frostPositionsRef[i * 3 + 1] > 8) {
-              frostPositionsRef[i * 3 + 1] = -8;
-            }
-          }
-          frostGeoRef.attributes.position.needsUpdate = true;
         }
       }
 
