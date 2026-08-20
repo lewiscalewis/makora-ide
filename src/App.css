@@ -2629,6 +2629,309 @@ input {
   background: rgba(0, 0, 0, 0.2);
 }
 
+/* ===== Question Panel (agente pregunta al usuario) ===== */
+.question-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 10px 12px;
+  background: linear-gradient(160deg, rgba(255, 215, 0, 0.08), rgba(18, 22, 34, 0.9));
+  border: 1px solid rgba(255, 215, 0, 0.45);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 215, 0, 0.12);
+  animation: question-pop 0.18s ease-out;
+}
+
+@keyframes question-pop {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.question-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffd700;
+  letter-spacing: 0.02em;
+}
+
+.question-panel-body {
+  font-size: 12.5px;
+  color: #f0f2f5;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.question-option-btn {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  border-radius: 8px;
+  border: 1px solid rgba(41, 121, 255, 0.5);
+  background: rgba(41, 121, 255, 0.12);
+  color: #cfe3ff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.question-option-btn:hover {
+  background: rgba(41, 121, 255, 0.28);
+  border-color: #2979ff;
+  color: #ffffff;
+}
+
+.question-custom-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.question-custom-input {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: #f0f2f5;
+  outline: none;
+}
+
+.question-custom-input:focus {
+  border-color: #2979ff;
+  box-shadow: 0 0 0 2px rgba(41, 121, 255, 0.25);
+}
+
+/* ===== Approval Panel (permisos ask/allow/deny) ===== */
+.approval-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 10px 12px;
+  background: linear-gradient(160deg, rgba(255, 61, 0, 0.09), rgba(18, 22, 34, 0.92));
+  border: 1px solid rgba(255, 61, 0, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 61, 0, 0.15);
+  animation: question-pop 0.18s ease-out;
+}
+
+.approval-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ff6d40;
+  letter-spacing: 0.02em;
+}
+
+.approval-panel-header .text-red {
+  color: #ff3d00;
+}
+
+.approval-panel-body {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  line-height: 1.45;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  border: 1px solid transparent;
+}
+
+.approval-allow {
+  background: rgba(0, 230, 118, 0.14);
+  border-color: rgba(0, 230, 118, 0.5);
+  color: #b7f5d3;
+}
+
+.approval-allow:hover {
+  background: rgba(0, 230, 118, 0.28);
+  color: #ffffff;
+}
+
+.approval-allow-always {
+  background: rgba(41, 121, 255, 0.14);
+  border-color: rgba(41, 121, 255, 0.5);
+  color: #cfe3ff;
+}
+
+.approval-allow-always:hover {
+  background: rgba(41, 121, 255, 0.28);
+  color: #ffffff;
+}
+
+.approval-deny {
+  background: rgba(255, 61, 0, 0.14);
+  border-color: rgba(255, 61, 0, 0.5);
+  color: #ffb59d;
+}
+
+.approval-deny:hover {
+  background: rgba(255, 61, 0, 0.28);
+  color: #ffffff;
+}
+
+.approval-trust {
+  background: rgba(255, 215, 0, 0.12);
+  border-color: rgba(255, 215, 0, 0.45);
+  color: #ffe9a8;
+}
+
+.approval-trust:hover {
+  background: rgba(255, 215, 0, 0.26);
+  color: #ffffff;
+}
+
+.approval-deny-always {
+  background: rgba(255, 61, 0, 0.08);
+  border-color: rgba(255, 61, 0, 0.35);
+  color: #d98d70;
+}
+
+.approval-deny-always:hover {
+  background: rgba(255, 61, 0, 0.2);
+  color: #ffffff;
+}
+
+/* ===== Undo pill (deshacer último turno) ===== */
+.undo-pill {
+  color: #ffd700;
+}
+
+.undo-pill:hover {
+  border-color: rgba(255, 215, 0, 0.6);
+  background: rgba(255, 215, 0, 0.14);
+}
+
+.undo-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.approval-feedback-row {
+  display: flex;
+}
+
+/* ===== Todo Strip (plan de tareas del agente) ===== */
+.todo-strip {
+  margin: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-strip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 230, 118, 0.35);
+  background: rgba(0, 230, 118, 0.08);
+  color: #b7f5d3;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.todo-strip-toggle:hover {
+  background: rgba(0, 230, 118, 0.16);
+  border-color: #00e676;
+  color: #ffffff;
+}
+
+.todo-strip-toggle .rotated {
+  transform: rotate(180deg);
+}
+
+.todo-running-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00e676;
+  box-shadow: 0 0 8px #00e676;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(18, 22, 34, 0.85);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.todo-status-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.todo-content.struck {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.todo-in_progress .todo-content {
+  color: #ffffff;
+  font-weight: 600;
+}
+
 /* ===== Mention Popover (@ References) ===== */
 .mention-pop {
   position: absolute;

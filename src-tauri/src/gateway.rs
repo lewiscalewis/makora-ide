@@ -13,6 +13,7 @@ pub struct ThinkingDelta {
     pub text: String,
 }
 
+#[derive(Clone)]
 pub struct ToolDef {
     pub name: String,
     pub description: String,
@@ -30,9 +31,37 @@ pub static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLo
         .connect_timeout(std::time::Duration::from_secs(45))
         .timeout(std::time::Duration::from_secs(900))
         .tcp_keepalive(std::time::Duration::from_secs(30))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build()
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            eprintln!("[HTTP_CLIENT] Fallo en configuración avanzada: {e}, usando cliente seguro con timeout");
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(900))
+                .build()
+                .unwrap_or_default()
+        })
 });
+
+pub fn find_sse_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
+    let len = bytes.len();
+    if len < 2 {
+        return None;
+    }
+    for i in 0..len - 1 {
+        if bytes[i] == b'\n' && bytes[i + 1] == b'\n' {
+            return Some((i, 2));
+        }
+        if bytes[i] == b'\r' {
+            if i + 3 < len && &bytes[i..i + 4] == b"\r\n\r\n" {
+                return Some((i, 4));
+            }
+            if bytes[i + 1] == b'\r' {
+                return Some((i, 2));
+            }
+        }
+    }
+    None
+}
 
 async fn for_each_sse_event<F>(response: reqwest::Response, chat_id: &str, mut f: F)
 where
@@ -48,13 +77,12 @@ where
         if let Ok(c) = chunk {
             raw_bytes.extend_from_slice(&c);
         }
-        while let Some(pos) = raw_bytes.windows(2).position(|w| w == b"\n\n" || w == b"\r\n\r\n") {
-            let (delim_len, slice_end) = if raw_bytes[pos..].starts_with(b"\r\n\r\n") {
-                (4, pos)
-            } else {
-                (2, pos)
-            };
-            let block_bytes: Vec<u8> = raw_bytes.drain(..slice_end + delim_len).collect();
+        while let Some((slice_end, delim_len)) = find_sse_boundary(&raw_bytes) {
+            let total_drain = slice_end.saturating_add(delim_len);
+            if total_drain > raw_bytes.len() {
+                break;
+            }
+            let block_bytes: Vec<u8> = raw_bytes.drain(..total_drain).collect();
             let block_str = String::from_utf8_lossy(&block_bytes[..slice_end]);
             let mut event = String::new();
             let mut data_lines: Vec<String> = Vec::new();
@@ -249,6 +277,80 @@ fn format_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
     classify_http_error(status, raw_body)
 }
 
+fn is_retryable_status(status: u16, body: &str) -> bool {
+    if status == 429 {
+        let lower = body.to_lowercase();
+        let exhausted = ["balance", "insufficient", "billing", "quota", "credit"]
+            .iter()
+            .any(|k| lower.contains(k));
+        return !exhausted;
+    }
+    status == 408 || (500..=599).contains(&status)
+}
+
+async fn sleep_backoff(
+    attempt: u32,
+    retry_after: Option<std::time::Duration>,
+    chat_id: &str,
+) -> Result<(), String> {
+    let base = 750u64;
+    let exp = 1u64 << attempt.min(4);
+    let jitter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 % 500)
+        .unwrap_or(0);
+    let mut delay = std::time::Duration::from_millis(base * exp + jitter);
+    if let Some(ra) = retry_after {
+        delay = delay.max(ra).min(std::time::Duration::from_secs(30));
+    }
+    tokio::time::sleep(delay).await;
+    if crate::agent::is_chat_cancelled(chat_id) {
+        return Err("cancelado por el usuario".into());
+    }
+    Ok(())
+}
+
+async fn send_with_retry<F>(chat_id: &str, mut build: F) -> Result<reqwest::Response, String>
+where
+    F: FnMut() -> reqwest::RequestBuilder,
+{
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err: Option<String> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        if crate::agent::is_chat_cancelled(chat_id) {
+            return Err("cancelado por el usuario".into());
+        }
+        let resp = match build().send().await {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = Some(format!("error de red: {e}"));
+                if attempt + 1 < MAX_ATTEMPTS {
+                    sleep_backoff(attempt, None, chat_id).await?;
+                }
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+        let retry_after = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|s| std::time::Duration::from_secs(s.min(30)));
+        let body_text = resp.text().await.unwrap_or_default();
+        if is_retryable_status(status.as_u16(), &body_text) && attempt + 1 < MAX_ATTEMPTS {
+            last_err = Some(format_http_error(status, &body_text));
+            sleep_backoff(attempt, retry_after, chat_id).await?;
+            continue;
+        }
+        return Err(format_http_error(status, &body_text));
+    }
+    Err(last_err.unwrap_or_else(|| "agotados los reintentos".into()))
+}
+
 fn sanitize_openai_wire(msgs: Vec<Value>) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::with_capacity(msgs.len());
     let mut i = 0;
@@ -399,17 +501,21 @@ pub async fn openai_turn(
     }
 
     let client = &*HTTP_CLIENT;
-    let api_key = cfg.api_key.trim();
-    let mut req = client.post(&url).bearer_auth(api_key).json(&body);
-    if is_gemini {
-        req = req.header("x-goog-api-key", api_key);
-    }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(format_http_error(status, &text));
-    }
+    let api_key = cfg.api_key.trim().to_string();
+    let url_retry = url.clone();
+    let body_retry = body.clone();
+    let gemini_retry = is_gemini;
+    let resp = send_with_retry(chat_id, move || {
+        let mut req = client
+            .post(&url_retry)
+            .bearer_auth(&api_key)
+            .json(&body_retry);
+        if gemini_retry {
+            req = req.header("x-goog-api-key", &api_key);
+        }
+        req
+    })
+    .await?;
 
     let mut usage = ChatUsage::default();
     let mut text = String::new();
@@ -430,7 +536,11 @@ pub async fn openai_turn(
                 if let Some(ec) = delta.get("extra_content") {
                     global_extra_content = Some(ec.clone());
                 }
-                if let Some(rc) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
+                let rc_opt = delta.get("reasoning_content")
+                    .or_else(|| delta.get("reasoning"))
+                    .or_else(|| delta.get("thought"))
+                    .and_then(|c| c.as_str());
+                if let Some(rc) = rc_opt {
                     if !rc.is_empty() {
                         let _ = app.emit(
                             "thinking-delta",
@@ -888,19 +998,17 @@ pub async fn anthropic_turn(
     }
 
     let client = &*HTTP_CLIENT;
-    let resp = client
-        .post(&url)
-        .header("x-api-key", &cfg.api_key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(format_http_error(status, &text));
-    }
+    let api_key_retry = cfg.api_key.clone();
+    let url_retry = url.clone();
+    let body_retry = body.clone();
+    let resp = send_with_retry(chat_id, move || {
+        client
+            .post(&url_retry)
+            .header("x-api-key", &api_key_retry)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body_retry)
+    })
+    .await?;
 
     let mut usage = ChatUsage::default();
     let mut text = String::new();
@@ -1176,6 +1284,31 @@ mod tests {
             "git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" status --short && git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" diff --stat"
         );
         assert_eq!(args["description"], "Inspect working tree changes");
+    }
+
+    #[test]
+    fn test_find_sse_boundary_lf_and_crlf() {
+        let lf_data = b"data: {\"test\": 1}\n\ndata: {\"test\": 2}\n\n";
+        assert_eq!(find_sse_boundary(lf_data), Some((17, 2)));
+
+        let crlf_data = b"data: {\"test\": 1}\r\n\r\ndata: {\"test\": 2}\r\n\r\n";
+        assert_eq!(find_sse_boundary(crlf_data), Some((17, 4)));
+
+        let incomplete = b"data: {\"test\": 1}\r\n";
+        assert_eq!(find_sse_boundary(incomplete), None);
+    }
+
+    #[test]
+    fn test_is_retryable_status() {
+        assert!(is_retryable_status(500, ""));
+        assert!(is_retryable_status(503, ""));
+        assert!(is_retryable_status(408, ""));
+        assert!(is_retryable_status(429, "rate limit exceeded"));
+        assert!(!is_retryable_status(429, "Insufficient Balance"));
+        assert!(!is_retryable_status(429, "quota exceeded"));
+        assert!(!is_retryable_status(401, ""));
+        assert!(!is_retryable_status(404, ""));
+        assert!(!is_retryable_status(400, ""));
     }
 }
 

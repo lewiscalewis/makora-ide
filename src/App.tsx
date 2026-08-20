@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } fro
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   fetchBalance,
+  generateTitle,
   gitStatus,
   homeDir,
   keyringGet,
@@ -50,6 +51,7 @@ const BetaAgreementModal = lazy(() => import("./components/BetaAgreementModal"))
 import {
   initSessions,
   saveSessions,
+  saveOpenTabIds,
   setActiveSessionId as persistActiveSessionId,
   makeSession,
   sanitizeMessages,
@@ -324,7 +326,12 @@ function App() {
         setSessionState((prev) => {
           const exists = prev.sessions.some((s) => s.id === targetSessionId);
           if (exists) {
-            return { ...prev, activeId: targetSessionId };
+            const nextTabs = prev.openTabIds.includes(targetSessionId)
+              ? prev.openTabIds
+              : [targetSessionId, ...prev.openTabIds];
+            saveOpenTabIds(nextTabs);
+            persistActiveSessionId(targetSessionId);
+            return { ...prev, openTabIds: nextTabs, activeId: targetSessionId };
           }
           return prev;
         });
@@ -334,14 +341,22 @@ function App() {
     }
   }, []);
   const sessions = sessionState.sessions;
+  const openTabIds = sessionState.openTabIds || [sessionState.activeId];
   const activeSessionId = sessionState.activeId;
+
+  const openSessions = useMemo(() => {
+    const map = new Map(sessions.map((s) => [s.id, s]));
+    const list = openTabIds.map((id) => map.get(id)).filter(Boolean) as ChatSession[];
+    return list.length > 0 ? list : sessions.slice(0, 1);
+  }, [sessions, openTabIds]);
+
   const [showHistory, setShowHistory] = useState(false);
   const sessionStateRef = useRef(sessionState);
   const saveTimerRef = useRef<number | null>(null);
 
   const activeSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId) ?? null
-    : null;
+    ? sessions.find((s) => s.id === activeSessionId) ?? openSessions[0] ?? null
+    : openSessions[0] ?? null;
   const activeWorkspace: SessionWorkspaceState = activeSession?.workspace ?? defaultWorkspace();
   const activeWorkspaceRef = useRef(activeWorkspace);
   activeWorkspaceRef.current = activeWorkspace;
@@ -1099,10 +1114,42 @@ function App() {
     });
   };
 
+  const titleGenAttempted = useRef(new Set<string>());
+  const maybeGenerateTitle = useCallback(
+    (id: string, msgs: ChatMessage[]) => {
+      if (titleGenAttempted.current.has(id)) return;
+      const firstUser = msgs.find((m) => m.role === "user" && m.content.trim());
+      if (!firstUser) return;
+      titleGenAttempted.current.add(id);
+      generateTitle(requestConfig, firstUser.content.trim().slice(0, 600))
+        .then((raw) => {
+          const title = (raw || "")
+            .trim()
+            .replace(/^["'`“”]+|["'`“”]+$/g, "")
+            .replace(/^(Título|Title)\s*:\s*/i, "")
+            .trim()
+            .slice(0, 120);
+          if (!title) return;
+          setSessionState((prev) => {
+            const target = prev.sessions.find((s) => s.id === id);
+            if (!target) return prev;
+            const nextSessions = prev.sessions.map((s) =>
+              s.id === id ? { ...s, title } : s,
+            );
+            saveSessions(nextSessions);
+            return { ...prev, sessions: nextSessions };
+          });
+        })
+        .catch(() => undefined);
+    },
+    [requestConfig],
+  );
+
   const persistTranscript = useCallback(
     (id: string, messages: ChatMessage[], sessionModel?: string) => {
       if (!id) return;
       const cleaned = sanitizeMessages(messages);
+      const current = sessions.find((s) => s.id === id);
       setSessionState((prev) => {
         const target = prev.sessions.find((s) => s.id === id);
         if (!target) return prev;
@@ -1124,14 +1171,16 @@ function App() {
           sessions: prev.sessions.map((s) => (s.id === id ? updated : s)),
         };
       });
+      if (!current?.title || current.title === "Nueva Conversación") {
+        maybeGenerateTitle(id, cleaned);
+      }
     },
-    [settings.model],
+    [settings.model, sessions, maybeGenerateTitle],
   );
 
   const handleNewSession = useCallback(() => {
     setSessionState((prev) => {
-      // Siempre se crea una pestaña nueva, incluso si la sesión activa está
-      // vacía, para permitir abrir un proyecto distinto por sesión en paralelo.
+      // Siempre se crea una pestaña nueva con sesión limpia añadida al historial
       const inheritFolders = [...activeWorkspaceRef.current.folders];
       const fresh = makeSession(settings.model || "", {
         folders: inheritFolders,
@@ -1141,72 +1190,159 @@ function App() {
         diff: null,
       });
       const nextSessions = [fresh, ...prev.sessions];
+      const nextOpenTabs = [fresh.id, ...prev.openTabIds];
       saveSessions(nextSessions);
+      saveOpenTabIds(nextOpenTabs);
       persistActiveSessionId(fresh.id);
       return {
         sessions: nextSessions,
+        openTabIds: nextOpenTabs,
         activeId: fresh.id,
       };
     });
   }, [settings.model]);
 
-  const handleOpenSession = useCallback(
+  // Selecciona o activa una pestaña existente de la barra superior
+  const handleSelectSessionTab = useCallback(
     (id: string) => {
-      if (id === activeSessionId) {
-        setShowHistory(false);
-        return;
-      }
-      const target = sessions.find((s) => s.id === id);
-      if (!target) return;
+      if (id === activeSessionId) return;
       setSessionState((prev) => ({ ...prev, activeId: id }));
-      setShowHistory(false);
+      persistActiveSessionId(id);
     },
-    [sessions, activeSessionId],
+    [activeSessionId],
   );
 
-  const handleDeleteSession = useCallback(
+  // Abre una sesión desde el modal de Historial (la añade a las pestañas abiertas si estaba cerrada)
+  const handleOpenSessionFromHistory = useCallback(
+    (id: string) => {
+      setSessionState((prev) => {
+        const target = prev.sessions.find((s) => s.id === id);
+        if (!target) return prev;
+        const nextOpenTabs = prev.openTabIds.includes(id)
+          ? prev.openTabIds
+          : [id, ...prev.openTabIds];
+        saveOpenTabIds(nextOpenTabs);
+        persistActiveSessionId(id);
+        return {
+          ...prev,
+          openTabIds: nextOpenTabs,
+          activeId: id,
+        };
+      });
+      setShowHistory(false);
+    },
+    [],
+  );
+
+  // Cierra exclusivamente la pestaña de la barra superior sin eliminar la sesión del historial
+  const handleCloseSessionTab = useCallback(
     (id: string) => {
       cancelTurn(id);
       destroySessionRuntime(id);
       setSessionState((prev) => {
-        const remaining = prev.sessions.filter((s) => s.id !== id);
-        if (prev.activeId !== id) {
-          return { ...prev, sessions: remaining };
+        const nextOpenTabs = prev.openTabIds.filter((tId) => tId !== id);
+        let nextActiveId = prev.activeId;
+        let nextSessions = prev.sessions;
+
+        if (prev.activeId === id) {
+          if (nextOpenTabs.length > 0) {
+            nextActiveId = nextOpenTabs[0];
+          } else {
+            // Si era la única pestaña abierta, crear una nueva sesión limpia
+            const fresh = makeSession(settings.model || "");
+            nextSessions = [fresh, ...prev.sessions];
+            nextOpenTabs.push(fresh.id);
+            nextActiveId = fresh.id;
+          }
         }
-        const nextActive = remaining[0]?.id || "";
-        if (!nextActive) {
-          const fresh = makeSession(settings.model || "");
-          return {
-            sessions: [fresh],
-            activeId: fresh.id,
-          };
-        }
+
+        saveSessions(nextSessions);
+        saveOpenTabIds(nextOpenTabs);
+        persistActiveSessionId(nextActiveId);
+
         return {
-          sessions: remaining,
-          activeId: nextActive,
+          sessions: nextSessions,
+          openTabIds: nextOpenTabs,
+          activeId: nextActiveId,
         };
       });
     },
     [settings.model],
   );
 
-  const handleRenameSession = useCallback((id: string, title: string) => {
-    setSessionState((prev) => ({
-      ...prev,
-      sessions: prev.sessions.map((s) =>
+  // Elimina permanentemente una sesión del historial (y de las pestañas si estaba abierta)
+  const handleDeleteFromHistory = useCallback(
+    (id: string) => {
+      cancelTurn(id);
+      destroySessionRuntime(id);
+      setSessionState((prev) => {
+        const remainingSessions = prev.sessions.filter((s) => s.id !== id);
+        const remainingTabs = prev.openTabIds.filter((tId) => tId !== id);
+
+        let nextActiveId = prev.activeId;
+        let nextSessions = remainingSessions;
+        let nextTabs = remainingTabs;
+
+        if (nextSessions.length === 0) {
+          const fresh = makeSession(settings.model || "");
+          nextSessions = [fresh];
+          nextTabs = [fresh.id];
+          nextActiveId = fresh.id;
+        } else if (prev.activeId === id) {
+          if (nextTabs.length > 0) {
+            nextActiveId = nextTabs[0];
+          } else {
+            nextActiveId = nextSessions[0].id;
+            nextTabs = [nextSessions[0].id];
+          }
+        }
+
+        saveSessions(nextSessions);
+        saveOpenTabIds(nextTabs);
+        persistActiveSessionId(nextActiveId);
+
+        return {
+          sessions: nextSessions,
+          openTabIds: nextTabs,
+          activeId: nextActiveId,
+        };
+      });
+    },
+    [settings.model],
+  );
+
+  const handleRenameHistorySession = useCallback((id: string, title: string) => {
+    setSessionState((prev) => {
+      const nextSessions = prev.sessions.map((s) =>
         s.id === id ? { ...s, title: title.trim().slice(0, 120) } : s,
-      ),
-    }));
+      );
+      saveSessions(nextSessions);
+      return {
+        ...prev,
+        sessions: nextSessions,
+      };
+    });
   }, []);
 
-  const handleClearSessions = useCallback(() => {
-    sessions.forEach((s) => {
-      cancelTurn(s.id);
-      destroySessionRuntime(s.id);
+  const handleClearAllHistory = useCallback(() => {
+    setSessionState((prev) => {
+      prev.sessions.forEach((s) => {
+        cancelTurn(s.id);
+        destroySessionRuntime(s.id);
+      });
+      const fresh = makeSession(settings.model || "");
+      const nextSessions = [fresh];
+      const nextTabs = [fresh.id];
+      saveSessions(nextSessions);
+      saveOpenTabIds(nextTabs);
+      persistActiveSessionId(fresh.id);
+      return {
+        sessions: nextSessions,
+        openTabIds: nextTabs,
+        activeId: fresh.id,
+      };
     });
-    const fresh = makeSession(settings.model || "");
-    setSessionState({ sessions: [fresh], activeId: fresh.id });
-  }, [sessions, settings.model]);
+  }, [settings.model]);
 
   // Terminal: el cwd se fija al abrir el terminal en el workspace activo de ese momento.
   const toggleTerminal = useCallback(() => {
@@ -1401,11 +1537,11 @@ function App() {
       />
 
       <WorkspaceTabBar
-        sessions={sessions}
+        sessions={openSessions}
         activeSessionId={activeSessionId}
-        onSelectSession={handleOpenSession}
+        onSelectSession={handleSelectSessionTab}
         onNewSession={handleNewSession}
-        onCloseSession={handleDeleteSession}
+        onCloseSession={handleCloseSessionTab}
         runningSessionIds={busySessionIds}
       />
 
@@ -1622,11 +1758,11 @@ function App() {
             isOpen={showHistory}
             sessions={sessions}
             activeSessionId={activeSessionId}
-            onOpen={handleOpenSession}
+            onOpen={handleOpenSessionFromHistory}
             onNew={handleNewSession}
-            onDelete={handleDeleteSession}
-            onRename={handleRenameSession}
-            onClearAll={handleClearSessions}
+            onDelete={handleDeleteFromHistory}
+            onRename={handleRenameHistorySession}
+            onClearAll={handleClearAllHistory}
             onClose={() => setShowHistory(false)}
           />
         )}

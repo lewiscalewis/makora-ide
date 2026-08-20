@@ -5,6 +5,7 @@ import {
   searchPaths,
   pickFiles,
   readTextFile,
+  revertLastTurn,
 } from "../api";
 import Markdown from "./Markdown";
 import DiffReviewModal from "./DiffReviewModal";
@@ -35,10 +36,19 @@ import {
   Clock,
   Rocket,
   Workflow,
+  HelpCircle,
+  ListTodo,
+  ShieldAlert,
+  CheckCheck,
+  ShieldCheck,
+  Ban,
+  Undo2,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { shouldAutoUseMultiAgent } from "../autoRouter";
 import {
+  answerApproval,
+  answerQuestion,
   appendAssistantMessage,
   cancelTurn,
   clearSessionDraft,
@@ -472,7 +482,10 @@ export default function Chat({
     });
   };
   const rt = useSessionRuntime(sessionId);
-  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments } = rt;
+  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments, todos, pendingQuestion, pendingApproval } = rt;
+  const [questionDraft, setQuestionDraft] = useState("");
+  const [approvalFeedback, setApprovalFeedback] = useState("");
+  const [todosExpanded, setTodosExpanded] = useState(false);
   const [input, setInputState] = useState(() => draftInput ?? "");
   const [attachments, setAttachmentsState] = useState<Attachment[]>(() => draftAttachments ?? []);
 
@@ -913,6 +926,7 @@ export default function Chat({
       images,
       displayText: text,
       useMultiAgent,
+      planMode: effectiveMode === "plan",
       onUsage,
       onTranscriptChange,
     });
@@ -1326,6 +1340,183 @@ export default function Chat({
         </button>
       )}
 
+      {pendingQuestion && (
+        <div className="question-panel">
+          <div className="question-panel-header">
+            <HelpCircle size={14} className="text-gold" />
+            <span>{pendingQuestion.header || "El agente necesita tu decisión"}</span>
+          </div>
+          <div className="question-panel-body font-mono">{pendingQuestion.question}</div>
+          {pendingQuestion.options.length > 0 && (
+            <div className="question-options">
+              {pendingQuestion.options.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className="question-option-btn"
+                  onClick={() => {
+                    setQuestionDraft("");
+                    void answerQuestion(sessionId, opt);
+                  }}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="question-custom-row">
+            <input
+              type="text"
+              className="question-custom-input font-mono"
+              placeholder="Escribe tu respuesta..."
+              value={questionDraft}
+              onChange={(e) => setQuestionDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && questionDraft.trim()) {
+                  const answer = questionDraft.trim();
+                  setQuestionDraft("");
+                  void answerQuestion(sessionId, answer);
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={!questionDraft.trim()}
+              onClick={() => {
+                const answer = questionDraft.trim();
+                setQuestionDraft("");
+                void answerQuestion(sessionId, answer);
+              }}
+            >
+              <Send size={12} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pendingApproval && (
+        <div className="approval-panel">
+          <div className="approval-panel-header">
+            <ShieldAlert size={14} className="text-red" />
+            <span>Permiso requerido para <b className="font-mono">{pendingApproval.tool}</b></span>
+          </div>
+          <pre className="approval-panel-body font-mono">
+            {pendingApproval.arguments || pendingApproval.summary}
+          </pre>
+          <div className="approval-actions">
+            <button
+              type="button"
+              className="approval-btn approval-allow"
+              onClick={() => {
+                setApprovalFeedback("");
+                void answerApproval(sessionId, "allow_once");
+              }}
+            >
+              <Check size={12} /> Permitir una vez
+            </button>
+            <button
+              type="button"
+              className="approval-btn approval-allow-always"
+              title="Recuerda esta decisión para esta operación en el resto de la sesión"
+              onClick={() => {
+                setApprovalFeedback("");
+                void answerApproval(sessionId, "allow_always");
+              }}
+            >
+              <CheckCheck size={12} /> Permitir siempre
+            </button>
+            <button
+              type="button"
+              className="approval-btn approval-trust"
+              title="Desactiva todas las preguntas de permisos en esta sesión (regla global)"
+              onClick={() => {
+                setApprovalFeedback("");
+                void answerApproval(sessionId, "trust_session");
+              }}
+            >
+              <ShieldCheck size={12} /> Confiar sesión
+            </button>
+            <button
+              type="button"
+              className="approval-btn approval-deny-always"
+              title="Rechaza y recuerda el rechazo para esta operación en el resto de la sesión"
+              onClick={() => {
+                const fb = approvalFeedback.trim();
+                setApprovalFeedback("");
+                void answerApproval(sessionId, "deny_always", fb);
+              }}
+            >
+              <Ban size={12} /> Denegar siempre
+            </button>
+            <button
+              type="button"
+              className="approval-btn approval-deny"
+              onClick={() => {
+                const fb = approvalFeedback.trim();
+                setApprovalFeedback("");
+                void answerApproval(sessionId, "deny", fb);
+              }}
+            >
+              <X size={12} /> Rechazar
+            </button>
+          </div>
+          <div className="approval-feedback-row">
+            <input
+              type="text"
+              className="question-custom-input font-mono"
+              placeholder="Motivo del rechazo (opcional, se le comunica al agente)..."
+              value={approvalFeedback}
+              onChange={(e) => setApprovalFeedback(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const fb = approvalFeedback.trim();
+                  setApprovalFeedback("");
+                  void answerApproval(sessionId, "deny", fb);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {todos.length > 0 && (
+        <div className="todo-strip">
+          <button
+            type="button"
+            className="todo-strip-toggle"
+            onClick={() => setTodosExpanded((v) => !v)}
+            title="Plan de tareas del agente"
+          >
+            <ListTodo size={12} className="text-cyan" />
+            <span>
+              {todos.filter((x) => x.status === "completed").length}/{todos.length} tareas
+            </span>
+            {todos.some((x) => x.status === "in_progress") && (
+              <span className="todo-running-dot" title="Trabajando..." />
+            )}
+            <ChevronDown
+              size={10}
+              className={`text-muted ${todosExpanded ? "rotated" : ""}`}
+            />
+          </button>
+          {todosExpanded && (
+            <div className="todo-list">
+              {todos.map((td, i) => (
+                <div key={`${td.content}_${i}`} className={`todo-item todo-${td.status}`}>
+                  <span className="todo-status-icon">
+                    {td.status === "completed" ? "✅" : td.status === "in_progress" ? "🔄" : td.status === "cancelled" ? "❌" : "⏳"}
+                  </span>
+                  <span className={`todo-content ${td.status === "completed" || td.status === "cancelled" ? "struck" : ""}`}>
+                    {td.content}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <form
         className="chat-input"
         onSubmit={(e) => {
@@ -1398,6 +1589,27 @@ export default function Chat({
         {/* Bottom Toolbar inside the chat input container */}
         <div className="chat-input-toolbar">
           <div className="chat-toolbar-left">
+            {/* Undo last turn: restores files touched by the agent */}
+            <button
+              type="button"
+              className="chat-pill-btn undo-pill"
+              title="Deshacer último turno: restaura los archivos modificados por el agente"
+              disabled={busy}
+              onClick={() => {
+                revertLastTurn(sessionId)
+                  .then((r) =>
+                    appendAssistantMessage(
+                      sessionId,
+                      `↩️ Turno deshecho — ${r || "sin cambios"}`,
+                    ),
+                  )
+                  .catch((e) =>
+                    appendAssistantMessage(sessionId, `↩️ ${String(e)}`),
+                  );
+              }}
+            >
+              <Undo2 size={11} className="text-gold" />
+            </button>
             {/* Model Selector Dropdown Button */}
             <div className="chat-model-btn-wrap" ref={modelMenuRef}>
               <button

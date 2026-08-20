@@ -36,6 +36,212 @@ pub fn is_chat_cancelled(chat_id: &str) -> bool {
     g.contains(chat_id) || g.contains(raw)
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    pub content: String,
+    pub status: String,
+    pub priority: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoUpdateEvent {
+    pub chat_id: String,
+    pub todos: Vec<TodoItem>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionAskEvent {
+    pub chat_id: String,
+    pub id: String,
+    pub question: String,
+    pub options: Vec<String>,
+    pub header: String,
+}
+
+static TODOS: LazyLock<StdMutex<HashMap<String, Vec<TodoItem>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+static PENDING_QUESTIONS: LazyLock<
+    StdMutex<HashMap<String, Option<tokio::sync::oneshot::Sender<String>>>>,
+> = LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+pub fn reply_question(question_id: &str, answer: String) -> Result<(), String> {
+    let sender = guard(&PENDING_QUESTIONS).remove(question_id);
+    match sender {
+        Some(Some(tx)) => {
+            let _ = tx.send(answer);
+            Ok(())
+        }
+        _ => Err("la pregunta ya fue respondida o expiró".into()),
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum PermAction {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone)]
+struct PermRule {
+    tool: String,
+    pattern: String,
+    action: PermAction,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalRequiredEvent {
+    pub chat_id: String,
+    pub id: String,
+    pub tool: String,
+    pub arguments: String,
+    pub summary: String,
+}
+
+struct PendingApproval {
+    chat_id: String,
+    tool: String,
+    pattern: String,
+}
+
+struct ApprovalReply {
+    decision: String,
+    feedback: String,
+}
+
+static SESSION_PERMS: LazyLock<StdMutex<HashMap<String, Vec<PermRule>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+static SKILLS_BY_CHAT: LazyLock<StdMutex<HashMap<String, Vec<Skill>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+static PENDING_APPROVALS: LazyLock<
+    StdMutex<HashMap<String, (PendingApproval, Option<tokio::sync::oneshot::Sender<ApprovalReply>>)>>,
+> = LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+pub fn reply_approval(
+    approval_id: &str,
+    decision: String,
+    feedback: String,
+) -> Result<(), String> {
+    let entry = guard(&PENDING_APPROVALS).remove(approval_id);
+    match entry {
+        Some((pending, Some(tx))) => {
+            let mut perms = guard(&SESSION_PERMS);
+            match decision.as_str() {
+                "allow_always" => perms
+                    .entry(pending.chat_id.clone())
+                    .or_default()
+                    .push(PermRule {
+                        tool: pending.tool.clone(),
+                        pattern: pending.pattern.clone(),
+                        action: PermAction::Allow,
+                    }),
+                "deny_always" => perms
+                    .entry(pending.chat_id.clone())
+                    .or_default()
+                    .push(PermRule {
+                        tool: pending.tool.clone(),
+                        pattern: pending.pattern.clone(),
+                        action: PermAction::Deny,
+                    }),
+                "trust_session" => perms
+                    .entry(pending.chat_id.clone())
+                    .or_default()
+                    .push(PermRule {
+                        tool: "*".to_string(),
+                        pattern: "*".to_string(),
+                        action: PermAction::Allow,
+                    }),
+                _ => {}
+            }
+            let _ = tx.send(ApprovalReply {
+                decision,
+                feedback,
+            });
+            Ok(())
+        }
+        _ => Err("la aprobación ya fue respondida o expiró".into()),
+    }
+}
+
+pub fn clear_session_perms(chat_id: &str) {
+    guard(&SESSION_PERMS).remove(chat_id);
+}
+
+fn bash_prefix(command: &str) -> String {
+    let tokens: Vec<&str> = command
+        .split_whitespace()
+        .take(3)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        "*".to_string()
+    } else {
+        format!("{} *", tokens.join(" "))
+    }
+}
+
+fn is_sensitive_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_lowercase();
+    let name = lower.rsplit('/').next().unwrap_or(&lower);
+    name.contains(".env")
+        || name.ends_with(".pem")
+        || name.ends_with(".key")
+        || name.starts_with("id_rsa")
+        || name.starts_with("id_ed25519")
+        || name.starts_with("id_dsa")
+        || name.ends_with(".npmrc")
+        || name.ends_with(".pypirc")
+        || name.ends_with(".gitconfig")
+        || name.ends_with(".htpasswd")
+        || name.contains("secret")
+        || name.contains("credential")
+        || name.contains("password")
+}
+
+fn pattern_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let p = pattern.replace('\\', "/").to_lowercase();
+    let v = value.replace('\\', "/").to_lowercase();
+    if p == v {
+        return true;
+    }
+    if let Some(prefix) = p.strip_suffix(" *") {
+        let prefix_tokens: Vec<&str> = prefix.split_whitespace().collect();
+        let value_tokens: Vec<&str> = v.split_whitespace().collect();
+        if prefix_tokens.len() <= value_tokens.len() {
+            return prefix_tokens
+                .iter()
+                .zip(value_tokens.iter())
+                .all(|(a, b)| a == b);
+        }
+    }
+    if let Some(prefix) = p.strip_suffix('*') {
+        if !prefix.is_empty() && v.starts_with(prefix) {
+            return true;
+        }
+    }
+    false
+}
+
+fn evaluate_rules(rules: &[PermRule], tool: &str, pattern: &str) -> Option<PermAction> {
+    let mut decision: Option<PermAction> = None;
+    for r in rules {
+        let tool_ok = r.tool == "*" || r.tool == tool;
+        if tool_ok && pattern_matches(&r.pattern, pattern) {
+            decision = Some(r.action.clone());
+        }
+    }
+    decision
+}
+
 const MAKORA_BASE_SKILL: &str = "\
 ## Makora Core Operating Engine (universal — estándar de máxima precisión y eficiencia)
 
@@ -61,6 +267,9 @@ const MAKORA_BASE_SKILL: &str = "\
 3. Cero Relleno: Prohibidas las frases de cortesía repetitivas, el parafraseo de la pregunta del usuario o la duplicación de bloques de código ya insertados.
 4. Terminal Silenciosa: Ejecuta comandos `bash` con banderas silenciosas (`-q`, `--quiet`, salidas acotadas). Prohibidos comandos interactivos o bloqueantes.
 5. Autonomía: Completa la tarea técnica en su totalidad sin detenerte a pedir confirmaciones innecesarias en pasos intermedios.
+6. Plan de Tareas: Para tareas de 3 o más pasos usa `todowrite` al inicio y actualízala al completar cada paso (una sola tarea in_progress a la vez). Para decisiones realmente bloqueantes (ambigüedad crítica de requisitos, elección de enfoque con consecuencias) usa `question` con opciones sugeridas; nunca para confirmaciones triviales.
+7. Documentación Web: Para consultar documentación externa (APIs, librerías, READMEs online) usa `webfetch` con la URL concreta de la página relevante; una única petición por página es suficiente, no descargues sitios completos.
+8. Skills de Proyecto: Si en el system prompt aparece una skill de proyecto relevante para la tarea, cárgala con la herramienta `skill` (nombre exacto) antes de empezar y sigue sus instrucciones al pie de la letra.
 ";
 
 fn now_id() -> String {
@@ -204,6 +413,64 @@ fn core_tools() -> Vec<ToolDef> {
                 "required": ["path", "content"]
             }),
         },
+        ToolDef {
+            name: "todowrite".into(),
+            description: "Crea/actualiza la lista de tareas del turno actual (visible para el usuario). Úsala SIEMPRE que la tarea requiera 3 o más pasos y actualízala en tiempo real al completar cada paso. Estados: pending, in_progress, completed, cancelled. Solo puede haber UNA tarea in_progress a la vez.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string", "description": "Descripción breve de la tarea" },
+                                "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"] },
+                                "priority": { "type": "string", "enum": ["high", "medium", "low"] }
+                            },
+                            "required": ["content", "status"]
+                        },
+                        "description": "Lista completa de tareas con su estado actual"
+                    }
+                },
+                "required": ["todos"]
+            }),
+        },
+        ToolDef {
+            name: "question".into(),
+            description: "Pregunta al usuario una duda bloqueante durante la ejecución (con opciones opcionales y opción libre). La ejecución espera la respuesta del usuario. Úsala SOLO para decisiones realmente bloqueantes e importantes (ambigüedad crítica de requisitos, elección de enfoque con consecuencias); nunca para confirmaciones triviales.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "question": { "type": "string", "description": "Pregunta concreta y clara para el usuario" },
+                    "options": { "type": "array", "items": { "type": "string" }, "description": "Opciones de respuesta sugeridas (el usuario siempre puede escribir una respuesta libre)" },
+                    "header": { "type": "string", "description": "Título corto opcional de la pregunta" }
+                },
+                "required": ["question"]
+            }),
+        },
+        ToolDef {
+            name: "webfetch".into(),
+            description: "Descarga y convierte a Markdown una página web (documentación, docs de APIs, READMEs online). Solo URLs http/https; máximo 5 MB; requiere aprobación del usuario por URL. Úsala para consultar documentación externa actualizada, nunca para contenido que ya tengas en el workspace.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "URL completa http/https a descargar" }
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolDef {
+            name: "skill".into(),
+            description: "Carga el contenido completo de una skill del proyecto (SKILL.md descubiertas en .makora/skills, .opencode/skills o ~/.claude/skills) para seguir sus instrucciones. Úsala solo cuando una skill de la lista de skills disponibles sea relevante para la tarea actual.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Nombre exacto de la skill a cargar (ver lista en el system prompt)" }
+                },
+                "required": ["name"]
+            }),
+        },
     ]
 }
 
@@ -244,7 +511,7 @@ fn role_short(role: multiagent::SubagentRole) -> &'static str {
 
 fn role_tools(role: multiagent::SubagentRole) -> Vec<ToolDef> {
     let allowed: &[&str] = match role {
-        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range"],
+        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range", "webfetch"],
         multiagent::SubagentRole::Coder => &["list_dir", "grep", "read_file_range", "apply_patch", "write_file"],
         multiagent::SubagentRole::Tester => &["bash", "list_dir", "grep", "read_file_range"],
         multiagent::SubagentRole::Reviewer => &["list_dir", "grep", "read_file_range"],
@@ -403,25 +670,33 @@ fn grep_dir(dir: &str, pattern: &str, out: &mut String, count: &mut u32, max: u3
     if *count >= max {
         return;
     }
-    let rd = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    let mut items: Vec<_> = rd.flatten().collect();
-    items.sort_by_key(|e| e.file_name());
-    for e in items {
+    let mut builder = ignore::WalkBuilder::new(dir);
+    builder
+        .max_depth(Some(12))
+        .follow_links(false)
+        .hidden(true)
+        .ignore(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true);
+    for result in builder.build() {
         if *count >= max {
             return;
         }
-        let name = e.file_name().to_string_lossy().to_string();
+        let Ok(entry) = result else { continue };
+        if entry.depth() == 0 {
+            continue;
+        }
+        let Some(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
         if is_ignored_path(&name) {
             continue;
         }
-        let path = e.path();
-        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir {
-            grep_dir(&path.to_string_lossy(), pattern, out, count, max);
-        } else if let Ok(text) = std::fs::read_to_string(&path) {
+        let path = entry.path();
+        if let Ok(text) = std::fs::read_to_string(path) {
             if text.len() > 2_000_000 {
                 continue;
             }
@@ -441,6 +716,55 @@ fn grep_dir(dir: &str, pattern: &str, out: &mut String, count: &mut u32, max: u3
             }
         }
     }
+}
+
+fn list_dir_entries(path: &str, max_entries: usize) -> Result<String, String> {
+    let mut builder = ignore::WalkBuilder::new(path);
+    builder
+        .max_depth(Some(1))
+        .follow_links(false)
+        .hidden(true)
+        .ignore(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true);
+    let mut dirs: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    for result in builder.build() {
+        let Ok(entry) = result else { continue };
+        if entry.depth() == 0 {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_ignored_path(&name) {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            dirs.push(name);
+        } else {
+            files.push(name);
+        }
+    }
+    dirs.sort();
+    files.sort();
+    let mut out = String::new();
+    let mut total = 0usize;
+    for d in dirs {
+        if total >= max_entries {
+            break;
+        }
+        out.push_str(&format!("{d}/\n"));
+        total += 1;
+    }
+    for f in files {
+        if total >= max_entries {
+            break;
+        }
+        out.push_str(&format!("{f}\n"));
+        total += 1;
+    }
+    Ok(out)
 }
 
 fn is_dangerous_command(cmd: &str) -> bool {
@@ -492,7 +816,49 @@ pub fn is_ignored_path(name: &str) -> bool {
 }
 
 pub fn is_read_only_tool(name: &str) -> bool {
-    matches!(name, "read_file" | "read_file_range" | "grep" | "list_dir")
+    matches!(
+        name,
+        "read_file" | "read_file_range" | "grep" | "list_dir" | "skill"
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ToolKind {
+    ReadOnly,
+    Neutral,
+    Mutating,
+}
+
+fn tool_kind(name: &str) -> ToolKind {
+    if is_read_only_tool(name) || name == "webfetch" {
+        ToolKind::ReadOnly
+    } else if name == "todowrite" || name == "question" {
+        ToolKind::Neutral
+    } else {
+        ToolKind::Mutating
+    }
+}
+
+fn valid_fetch_url(url: &str) -> bool {
+    let lower = url.trim().to_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+fn html_to_markdown(html: &str) -> String {
+    let mut cleaned = html.to_string();
+    for pat in [
+        r"(?is)<script.*?</script>",
+        r"(?is)<style.*?</style>",
+        r"(?is)<noscript.*?</noscript>",
+        r"(?is)<iframe.*?</iframe>",
+        r"(?is)<svg.*?</svg>",
+        r"(?is)<head.*?</head>",
+    ] {
+        if let Ok(re) = regex::Regex::new(pat) {
+            cleaned = re.replace_all(&cleaned, "").to_string();
+        }
+    }
+    html2md::parse_html(&cleaned)
 }
 
 async fn run_bash(
@@ -633,7 +999,8 @@ async fn run_bash(
     let out = guard(&combined).clone();
     let mut summarized = truncate_head_tail(&out, 40, 40);
     if summarized.chars().count() > 12000 {
-        summarized = truncate(&summarized, 12000);
+        let trimmed = truncate(&summarized, 12000);
+        summarized = spill_output("bash", &out, trimmed);
     }
     let _ = app.emit(
         "tool-output",
@@ -750,6 +1117,34 @@ fn truncate_head_tail(s: &str, head: usize, tail: usize) -> String {
         out.push('\n');
     }
     out
+}
+
+static SPILL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn spill_output(tool: &str, full: &str, truncated: String) -> String {
+    let dir = std::env::temp_dir().join("makora_truncated");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return truncated;
+    }
+    let id = SPILL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let name = format!("{}_{}_{}.txt", tool, std::process::id(), id);
+    let path = dir.join(&name);
+    if std::fs::write(&path, full).is_err() {
+        return truncated;
+    }
+    format!(
+        "{truncated}\n…[salida completa guardada en: {}]…",
+        path.to_string_lossy()
+    )
+}
+
+fn truncate_tool_output(tool: &str, text: &str, max_tokens: usize) -> String {
+    let truncated = token_engine::global().truncate(text, max_tokens);
+    if truncated.len() < text.len() {
+        spill_output(tool, text, truncated)
+    } else {
+        truncated
+    }
 }
 
 fn summarize_old_tool_result(content: &str) -> String {
@@ -995,25 +1390,189 @@ fn prepare_wire(msgs: &[ChatMessage], cfg: &ChatConfig) -> Vec<ChatMessage> {
     sanitize_history(&fitted)
 }
 
+fn serialize_msg_for_compaction(m: &ChatMessage) -> String {
+    match m.role.as_str() {
+        "user" => format!("[Usuario]: {}", truncate(&m.content, 1000)),
+        "assistant" => {
+            if let Some(tcs) = &m.tool_calls {
+                if !tcs.is_empty() {
+                    let calls: Vec<String> = tcs
+                        .iter()
+                        .map(|tc| format!("{}({})", tc.name, truncate(&tc.arguments, 300)))
+                        .collect();
+                    let mut s = format!("[Asistente - llamadas a herramientas]: {}", calls.join("; "));
+                    if !m.content.trim().is_empty() {
+                        s.push_str(&format!("\n[Asistente]: {}", truncate(&m.content, 500)));
+                    }
+                    return s;
+                }
+            }
+            format!("[Asistente]: {}", truncate(&m.content, 1000))
+        }
+        "tool" => format!("[Resultado de herramienta]: {}", summarize_old_tool_result(&m.content)),
+        _ => String::new(),
+    }
+}
+
+fn find_compaction_split(msgs: &[ChatMessage], keep_tail: usize) -> usize {
+    if msgs.len() <= keep_tail {
+        return 0;
+    }
+    let max_split = msgs.len() - keep_tail;
+    for i in (1..=max_split).rev() {
+        if msgs[i].role == "assistant"
+            && msgs[i]
+                .tool_calls
+                .as_ref()
+                .map(|t| !t.is_empty())
+                .unwrap_or(false)
+        {
+            return i;
+        }
+    }
+    for i in (1..=max_split).rev() {
+        if msgs[i].role == "user" {
+            return i;
+        }
+    }
+    max_split
+}
+
+fn serialize_head_for_compaction(msgs: &[ChatMessage], max_chars: usize) -> String {
+    let mut out = String::new();
+    for m in msgs.iter().rev() {
+        let line = serialize_msg_for_compaction(m);
+        if line.is_empty() {
+            continue;
+        }
+        if out.is_empty() && line.chars().count() > max_chars {
+            out = truncate(&line, max_chars.saturating_sub(16).max(1));
+            break;
+        }
+        let candidate = if out.is_empty() {
+            line
+        } else {
+            format!("{line}\n{out}")
+        };
+        if candidate.chars().count() > max_chars {
+            break;
+        }
+        out = candidate;
+    }
+    out
+}
+
+const COMPACTION_SYSTEM: &str = "\
+Eres un compactador de historial de conversación. Resume el historial proporcionado en español \
+técnico conciso, preservando TODA la información accionable para continuar la tarea sin perder \
+contexto: (1) decisiones de diseño tomadas y su razón, (2) archivos modificados y cambios \
+aplicados (rutas exactas), (3) errores encontrados y cómo se resolvieron o su estado, \
+(4) verificaciones ejecutadas y resultados, (5) pasos pendientes. No añadas información nueva. \
+Responde SOLO con el resumen (viñetas compactas, máximo 400 palabras).";
+
+async fn compact_history_llm(
+    app: &AppHandle,
+    cfg: &ChatConfig,
+    chat_id: &str,
+    msgs: &[ChatMessage],
+) -> Result<(Vec<ChatMessage>, ChatUsage), String> {
+    const MIN_HEAD_MSGS: usize = 4;
+    const KEEP_TAIL: usize = 8;
+    let split = find_compaction_split(msgs, KEEP_TAIL);
+    if split < MIN_HEAD_MSGS {
+        return Ok((msgs.to_vec(), ChatUsage::default()));
+    }
+    let head = &msgs[..split];
+    let tail = &msgs[split..];
+    let serialized = serialize_head_for_compaction(head, 12_000);
+    if serialized.trim().is_empty() {
+        return Ok((msgs.to_vec(), ChatUsage::default()));
+    }
+
+    let compact_chat_id = format!("{chat_id}__compact");
+    let mut cfg_small = cfg.clone();
+    cfg_small.max_output_tokens = Some(1_200);
+    cfg_small.reasoning_effort = None;
+    cfg_small.temperature = Some(0.3);
+    let prompt_msgs = vec![ChatMessage {
+        role: "user".into(),
+        content: format!("Historial a compactar:\n\n{serialized}"),
+        images: vec![],
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let outcome = if cfg.kind == "anthropic" {
+        gateway::anthropic_turn(
+            app,
+            &cfg_small,
+            &compact_chat_id,
+            COMPACTION_SYSTEM,
+            &prompt_msgs,
+            &[],
+        )
+        .await?
+    } else {
+        gateway::openai_turn(
+            app,
+            &cfg_small,
+            &compact_chat_id,
+            COMPACTION_SYSTEM,
+            &prompt_msgs,
+            &[],
+        )
+        .await?
+    };
+    let summary = outcome.text.trim().to_string();
+    if summary.is_empty() {
+        return Ok((msgs.to_vec(), outcome.usage));
+    }
+    let mut compacted = vec![
+        ChatMessage {
+            role: "user".into(),
+            content: "[Historial compactado para ahorrar contexto: el resumen siguiente sustituye a los mensajes anteriores]".into(),
+            images: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+        },
+        ChatMessage {
+            role: "assistant".into(),
+            content: format!("Resumen del historial anterior:\n{summary}"),
+            images: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+        },
+    ];
+    compacted.extend_from_slice(tail);
+    Ok((compacted, outcome.usage))
+}
+
 async fn execute_subagent_tool(
     app: &AppHandle,
     name: &str,
     arguments: &str,
     folders: &[String],
     chat_id: &str,
+    display_name: &str,
+    snapshot: &mut SnapshotGuard,
 ) -> Result<String, String> {
     let args: Value = if arguments.trim().is_empty() {
         json!({})
     } else {
         gateway::parse_tool_args(arguments)
     };
+    if let Some(pattern) = tool_permission_target(name, &args, folders) {
+        gate_permission(app, chat_id, name, display_name, &pattern, arguments).await?;
+    }
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let repaired = repair_tool_name(name, &[]);
+    let name = repaired.as_ref();
 
     match name {
         "read_file" => {
             let path = resolve_path(folders, &s("path"), false)?;
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            Ok(token_engine::global().truncate(&text, 10000))
+            Ok(truncate_tool_output("read_file", &text, 10000))
         }
         "read_file_range" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -1039,27 +1598,11 @@ async fn execute_subagent_tool(
             for (i, l) in slice.iter().enumerate() {
                 out.push_str(&format!("{}| {}\n", start + i, l));
             }
-            Ok(out)
+            Ok(truncate_tool_output("read_file_range", &out, 10000))
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            let mut out = String::new();
-            let mut entries: Vec<_> =
-                std::fs::read_dir(&path).map_err(|e| e.to_string())?.flatten().collect();
-            entries.sort_by(|a, b| {
-                let ad = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                let bd = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                bd.cmp(&ad).then(a.file_name().cmp(&b.file_name()))
-            });
-            for e in entries.iter().filter(|e| !is_ignored_path(&e.file_name().to_string_lossy())).take(200) {
-                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                out.push_str(&format!(
-                    "{}{}\n",
-                    e.file_name().to_string_lossy(),
-                    if is_dir { "/" } else { "" }
-                ));
-            }
-            Ok(out)
+            list_dir_entries(&path, 200)
         }
         "grep" => {
             let pattern = s("pattern").to_lowercase();
@@ -1080,12 +1623,13 @@ async fn execute_subagent_tool(
             if out.is_empty() {
                 out = "sin coincidencias".into();
             }
-            Ok(token_engine::global().truncate(&out, 3000))
+            Ok(truncate_tool_output("grep", &out, 3000))
         }
         "apply_patch" => {
             let path = resolve_path(folders, &s("path"), false)?;
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let (new_text, blocks) = apply_patch_to(&text, &s("patch"))?;
+            snapshot.capture(&path);
             std::fs::write(&path, &new_text).map_err(|e| e.to_string())?;
             let mut msg = format!("parche aplicado: {blocks} bloque(s) en {path}");
             if let Some(syntax_err) = check_file_syntax(&path, &new_text) {
@@ -1099,6 +1643,7 @@ async fn execute_subagent_tool(
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
+            snapshot.capture(&path);
             std::fs::write(&path, &content).map_err(|e| e.to_string())?;
             Ok(format!("archivo escrito: {path}"))
         }
@@ -1122,6 +1667,7 @@ async fn run_subagent(
     context: &str,
     folders: &[String],
     usage_acc: &mut ChatUsage,
+    snapshot: &mut SnapshotGuard,
 ) -> Result<SubagentReport, String> {
     let role_name = role.name();
     let role_short = role_short(role);
@@ -1152,10 +1698,17 @@ async fn run_subagent(
     let mut last_text = String::new();
     let mut modified: Vec<String> = Vec::new();
     let mut ok = true;
+    let mut prev_sig: Vec<String> = Vec::new();
+    let mut repeats: u32 = 0;
+    const MAX_SUBAGENT_TOKENS: u32 = 150_000;
 
-    for _step in 0..5 {
+    for _step in 0..6 {
         if is_chat_cancelled(chat_id) {
             return Err("cancelado por el usuario".into());
+        }
+        if usage_acc.input_tokens + usage_acc.output_tokens > MAX_SUBAGENT_TOKENS {
+            println!("[SUBAGENT] Presupuesto de tokens de subagente alcanzado ({} tok)", usage_acc.input_tokens + usage_acc.output_tokens);
+            break;
         }
         let outcome = if cfg.kind == "anthropic" {
             gateway::anthropic_turn(app, cfg, &sub_chat_id, &sub_system, &current, &tools).await?
@@ -1171,6 +1724,22 @@ async fn run_subagent(
         }
         if outcome.tool_calls.is_empty() {
             break;
+        }
+
+        let sig: Vec<String> = outcome
+            .tool_calls
+            .iter()
+            .map(|t| format!("{}:{}", t.name, t.arguments))
+            .collect();
+        if sig == prev_sig {
+            repeats += 1;
+            if repeats >= 2 {
+                println!("[SUBAGENT] Detección de bucle de herramientas en subagente; deteniendo delegación");
+                break;
+            }
+        } else {
+            repeats = 0;
+            prev_sig = sig;
         }
 
         current.push(ChatMessage {
@@ -1195,9 +1764,17 @@ async fn run_subagent(
                     chat_id: chat_id.to_string(),
                 },
             );
-            let result = execute_subagent_tool(app, &tc.name, &tc.arguments, folders, chat_id)
-                .await
-                .unwrap_or_else(|e| format!("ERROR: {e}"));
+            let result = execute_subagent_tool(
+                app,
+                &tc.name,
+                &tc.arguments,
+                folders,
+                chat_id,
+                &display_name,
+                snapshot,
+            )
+            .await
+            .unwrap_or_else(|e| format!("ERROR: {e}"));
             if result.starts_with("ERROR:") {
                 ok = false;
             }
@@ -1236,7 +1813,7 @@ async fn run_subagent(
 
     let summary = if last_text.trim().is_empty() {
         format!(
-            "[Subagente {role_name} completó su trabajo sin texto final{}]",
+            "[Subagente {role_name} concluyó sus operaciones{}]",
             if modified.is_empty() {
                 String::new()
             } else {
@@ -1253,6 +1830,281 @@ async fn run_subagent(
     })
 }
 
+#[derive(Clone)]
+struct Skill {
+    name: String,
+    description: String,
+    content: String,
+}
+
+fn parse_skill_frontmatter(raw: &str) -> Option<(String, String, String)> {
+    let rest = raw.strip_prefix("---")?;
+    let (fm, body) = rest.split_once("---")?;
+    let mut name = String::new();
+    let mut description = String::new();
+    for line in fm.lines() {
+        if let Some(v) = line.strip_prefix("name:") {
+            name = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("description:") {
+            description = v.trim().to_string();
+        }
+    }
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, description, body.trim().to_string()))
+}
+
+fn skill_dirs(folders: &[String]) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    for f in folders {
+        for rel in [".makora/skills", ".opencode/skills"] {
+            dirs.push(std::path::Path::new(f).join(rel));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        for rel in [".makora/skills", ".claude/skills"] {
+            dirs.push(home.join(rel));
+        }
+    }
+    dirs
+}
+
+fn load_skills(folders: &[String]) -> Vec<Skill> {
+    let mut skills: Vec<Skill> = Vec::new();
+    for root in skill_dirs(folders) {
+        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let md_path = e.path().join("SKILL.md");
+            if let Ok(raw) = std::fs::read_to_string(&md_path) {
+                if let Some((name, description, content)) = parse_skill_frontmatter(&raw) {
+                    if !skills.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+                        skills.push(Skill {
+                            name,
+                            description,
+                            content,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    skills
+}
+
+fn skills_system_section(skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n\n## Skills disponibles (cárgalas con la herramienta `skill` cuando apliquen)\n");
+    for s in skills {
+        let desc = if s.description.is_empty() {
+            "sin descripción".to_string()
+        } else {
+            truncate(&s.description, 200)
+        };
+        out.push_str(&format!("- `{}` — {desc}\n", s.name));
+    }
+    out
+}
+
+fn repair_tool_name<'a>(name: &'a str, mcp_names: &[String]) -> std::borrow::Cow<'a, str> {    const CORE: &[&str] = &[
+        "read_file",
+        "read_file_range",
+        "list_dir",
+        "grep",
+        "apply_patch",
+        "write_file",
+        "bash",
+        "explore_subagent",
+        "delegate_subagent",
+        "todowrite",
+        "question",
+        "webfetch",
+        "skill",
+    ];
+    let collapse = |s: &str| -> String {
+        s.trim()
+            .to_lowercase()
+            .replace(['-', ' ', ':', '/'], "_")
+            .split('_')
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join("_")
+    };
+    if CORE.iter().any(|c| *c == name) || mcp_names.iter().any(|c| c == name) {
+        return std::borrow::Cow::Borrowed(name);
+    }
+    let target = collapse(name);
+    for c in CORE {
+        if collapse(c) == target {
+            return std::borrow::Cow::Owned(c.to_string());
+        }
+    }
+    for m in mcp_names {
+        if collapse(m) == target {
+            return std::borrow::Cow::Owned(m.clone());
+        }
+    }
+    std::borrow::Cow::Borrowed(name)
+}
+
+fn normalize_todos(args: &Value) -> Result<Vec<TodoItem>, String> {
+    let arr = args
+        .get("todos")
+        .and_then(|t| t.as_array())
+        .ok_or("todowrite requiere un array 'todos'")?;
+    let mut todos: Vec<TodoItem> = Vec::new();
+    for item in arr {
+        let content = item
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if content.is_empty() {
+            continue;
+        }
+        let status = item
+            .get("status")
+            .and_then(|c| c.as_str())
+            .unwrap_or("pending");
+        let status = match status {
+            "in_progress" | "completed" | "cancelled" | "pending" => status.to_string(),
+            _ => "pending".to_string(),
+        };
+        let priority = item
+            .get("priority")
+            .and_then(|c| c.as_str())
+            .unwrap_or("medium");
+        todos.push(TodoItem {
+            content,
+            status,
+            priority: priority.to_string(),
+        });
+    }
+    let mut warned = false;
+    for t in &mut todos {
+        if t.status == "in_progress" {
+            if warned {
+                t.status = "pending".to_string();
+            }
+            warned = true;
+        }
+    }
+    Ok(todos)
+}
+
+fn tool_permission_target(name: &str, args: &Value, folders: &[String]) -> Option<String> {
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    match name {
+        "write_file" | "apply_patch" => {
+            let path = s("path");
+            if path.is_empty() {
+                None
+            } else {
+                resolve_path(folders, &path, true).ok()
+            }
+        }
+        "read_file" | "read_file_range" => {
+            let path = s("path");
+            if path.is_empty() {
+                None
+            } else {
+                let resolved = resolve_path(folders, &path, false).ok()?;
+                if is_sensitive_path(&resolved) {
+                    Some(resolved)
+                } else {
+                    None
+                }
+            }
+        }
+        "bash" => Some(bash_prefix(&s("command"))),
+        "webfetch" => Some(s("url")),
+        _ if name.starts_with("mcp__") => Some(name.to_string()),
+        _ => None,
+    }
+}
+
+async fn gate_permission(
+    app: &AppHandle,
+    chat_id: &str,
+    tool: &str,
+    display_name: &str,
+    pattern: &str,
+    arguments: &str,
+) -> Result<(), String> {
+    let rules = guard(&SESSION_PERMS).get(chat_id).cloned().unwrap_or_default();
+    match evaluate_rules(&rules, tool, pattern) {
+        Some(PermAction::Deny) => {
+            return Err("operación denegada por la política de permisos del usuario".into())
+        }
+        Some(PermAction::Allow) => return Ok(()),
+        None => {}
+    }
+    let id = now_id();
+    let (tx, rx) = tokio::sync::oneshot::channel::<ApprovalReply>();
+    guard(&PENDING_APPROVALS).insert(
+        id.clone(),
+        (
+            PendingApproval {
+                chat_id: chat_id.to_string(),
+                tool: tool.to_string(),
+                pattern: pattern.to_string(),
+            },
+            Some(tx),
+        ),
+    );
+    let _ = app.emit(
+        "approval-required",
+        ApprovalRequiredEvent {
+            chat_id: chat_id.to_string(),
+            id: id.clone(),
+            tool: display_name.to_string(),
+            arguments: arguments.to_string(),
+            summary: truncate(arguments, 140),
+        },
+    );
+    let cancel_fut = async {
+        loop {
+            if is_chat_cancelled(chat_id) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    };
+    let reply = tokio::select! {
+        r = rx => {
+            guard(&PENDING_APPROVALS).remove(&id);
+            match r {
+                Ok(v) => v,
+                Err(_) => return Err("la aprobación fue descartada".into()),
+            }
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
+            guard(&PENDING_APPROVALS).remove(&id);
+            return Err("sin respuesta del usuario a la solicitud de permiso (timeout 600s)".into());
+        }
+        _ = cancel_fut => {
+            guard(&PENDING_APPROVALS).remove(&id);
+            return Err("cancelado por el usuario".into());
+        }
+    };
+    match reply.decision.as_str() {
+        "allow_once" | "allow_always" => Ok(()),
+        _ => Err(if reply.feedback.trim().is_empty() {
+            "operación rechazada por el usuario".into()
+        } else {
+            format!(
+                "operación rechazada por el usuario. Motivo: {}",
+                reply.feedback.trim()
+            )
+        }),
+    }
+}
+
 async fn execute_tool(
     app: &AppHandle,
     cfg: &ChatConfig,
@@ -1262,6 +2114,32 @@ async fn execute_tool(
     registry: &'static McpRegistry,
     chat_id: &str,
     usage_acc: &mut ChatUsage,
+    snapshot: &mut SnapshotGuard,
+) -> Result<String, String> {
+    let args: Value = if arguments.trim().is_empty() {
+        json!({})
+    } else {
+        gateway::parse_tool_args(arguments)
+    };
+    if let Some(pattern) = tool_permission_target(name, &args, folders) {
+        gate_permission(app, chat_id, name, name, &pattern, arguments).await?;
+    }
+    execute_tool_inner(
+        app, cfg, name, arguments, folders, registry, chat_id, usage_acc, snapshot,
+    )
+    .await
+}
+
+async fn execute_tool_inner(
+    app: &AppHandle,
+    cfg: &ChatConfig,
+    name: &str,
+    arguments: &str,
+    folders: &[String],
+    registry: &'static McpRegistry,
+    chat_id: &str,
+    usage_acc: &mut ChatUsage,
+    snapshot: &mut SnapshotGuard,
 ) -> Result<String, String> {
     let args: Value = if arguments.trim().is_empty() {
         json!({})
@@ -1270,11 +2148,15 @@ async fn execute_tool(
     };
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+    let mcp_names: Vec<String> = guard(&registry.tools).keys().cloned().collect();
+    let repaired = repair_tool_name(name, &mcp_names);
+    let name = repaired.as_ref();
+
     match name {
         "read_file" => {
             let path = resolve_path(folders, &s("path"), false)?;
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            Ok(token_engine::global().truncate(&text, 15000))
+            Ok(truncate_tool_output("read_file", &text, 15000))
         }
         "read_file_range" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -1300,12 +2182,13 @@ async fn execute_tool(
             for (i, l) in slice.iter().enumerate() {
                 out.push_str(&format!("{}| {}\n", start + i, l));
             }
-            Ok(out)
+            Ok(truncate_tool_output("read_file_range", &out, 10000))
         }
         "apply_patch" => {
             let path = resolve_path(folders, &s("path"), false)?;
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let (new_text, blocks) = apply_patch_to(&text, &s("patch"))?;
+            snapshot.capture(&path);
             std::fs::write(&path, &new_text).map_err(|e| e.to_string())?;
             let mut msg = format!("parche aplicado: {blocks} bloque(s) modificados en {path}");
             if let Some(syntax_err) = check_file_syntax(&path, &new_text) {
@@ -1329,8 +2212,18 @@ async fn execute_tool(
                 return Err("debes especificar la tarea del subagente".into());
             }
             let mut sub_usage = ChatUsage::default();
-            let report =
-                run_subagent(app, cfg, chat_id, role, &task, &ctx, folders, &mut sub_usage).await?;
+            let report = run_subagent(
+                app,
+                cfg,
+                chat_id,
+                role,
+                &task,
+                &ctx,
+                folders,
+                &mut sub_usage,
+                snapshot,
+            )
+            .await?;
             *usage_acc += sub_usage;
             let mut out = format!(
                 "[Subagente {} — briefing condensado{}]\n{}",
@@ -1348,24 +2241,7 @@ async fn execute_tool(
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            let mut out = String::new();
-
-            let mut entries: Vec<_> =
-                std::fs::read_dir(&path).map_err(|e| e.to_string())?.flatten().collect();
-            entries.sort_by(|a, b| {
-                let ad = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                let bd = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                bd.cmp(&ad).then(a.file_name().cmp(&b.file_name()))
-            });
-            for e in entries.iter().take(300) {
-                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                out.push_str(&format!(
-                    "{}{}\n",
-                    e.file_name().to_string_lossy(),
-                    if is_dir { "/" } else { "" }
-                ));
-            }
-            Ok(out)
+            list_dir_entries(&path, 300)
         }
         "grep" => {
             let pattern = s("pattern").to_lowercase();
@@ -1395,6 +2271,7 @@ async fn execute_tool(
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
+            snapshot.capture(&path);
             std::fs::write(&path, &content).map_err(|e| e.to_string())?;
             let mut msg = format!("archivo escrito: {path}");
             if let Some(syntax_err) = check_file_syntax(&path, &content) {
@@ -1403,6 +2280,149 @@ async fn execute_tool(
             Ok(msg)
         }
 
+        "todowrite" => {
+            let todos = normalize_todos(&args)?;
+            guard(&TODOS).insert(chat_id.to_string(), todos.clone());
+            let _ = app.emit(
+                "todo-update",
+                TodoUpdateEvent {
+                    chat_id: chat_id.to_string(),
+                    todos: todos.clone(),
+                },
+            );
+            let done = todos.iter().filter(|t| t.status == "completed").count();
+            let mut out = format!(
+                "Lista de tareas actualizada ({done}/{} completadas):\n",
+                todos.len()
+            );
+            for t in &todos {
+                let icon = match t.status.as_str() {
+                    "completed" => "✅",
+                    "in_progress" => "🔄",
+                    "cancelled" => "❌",
+                    _ => "⏳",
+                };
+                out.push_str(&format!("{icon} [{status}] {content}\n", status = t.status, content = t.content));
+            }
+            Ok(out)
+        }
+        "question" => {
+            let question = s("question");
+            if question.trim().is_empty() {
+                return Err("question requiere una 'question' no vacía".into());
+            }            let options: Vec<String> = args
+                .get("options")
+                .and_then(|o| o.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let header = s("header");
+            let qid = now_id();
+            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+            guard(&PENDING_QUESTIONS).insert(qid.clone(), Some(tx));
+            let _ = app.emit(
+                "question-ask",
+                QuestionAskEvent {
+                    chat_id: chat_id.to_string(),
+                    id: qid.clone(),
+                    question: question.clone(),
+                    options: options.clone(),
+                    header,
+                },
+            );
+            let cancel_fut = async {
+                loop {
+                    if is_chat_cancelled(chat_id) {
+                        return true;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            };
+            let answer = tokio::select! {
+                a = rx => {
+                    guard(&PENDING_QUESTIONS).remove(&qid);
+                    match a {
+                        Ok(v) => v,
+                        Err(_) => return Err("la pregunta fue descartada por el usuario".into()),
+                    }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
+                    guard(&PENDING_QUESTIONS).remove(&qid);
+                    return Err("sin respuesta del usuario (timeout 600s)".into());
+                }
+                _ = cancel_fut => {
+                    guard(&PENDING_QUESTIONS).remove(&qid);
+                    return Err("cancelado por el usuario".into());
+                }
+            };
+            Ok(format!("Respuesta del usuario a «{question}»: {answer}"))
+        }
+        "webfetch" => {
+            let url = s("url");
+            if !valid_fetch_url(&url) {
+                return Err("solo se permiten URLs http/https".into());
+            }
+            let resp = tokio::time::timeout(
+                std::time::Duration::from_secs(25),
+                gateway::HTTP_CLIENT
+                    .get(&url)
+                    .header(
+                        reqwest::header::USER_AGENT,
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+                    )
+                    .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+                    .send(),
+            )
+            .await
+            .map_err(|_| "timeout (25s) descargando la página".to_string())?
+            .map_err(|e| format!("error descargando {url}: {e}"))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(format!("HTTP {status} descargando {url}"));
+            }
+            if resp.content_length().unwrap_or(0) > 5_000_000 {
+                return Err("respuesta demasiado grande (>5 MB)".into());
+            }
+            let text = resp
+                .text()
+                .await
+                .map_err(|e| format!("error leyendo respuesta: {e}"))?;
+            if text.len() > 5_000_000 {
+                return Err("respuesta demasiado grande (>5 MB)".into());
+            }
+            let markdown = html_to_markdown(&text);
+            let mut out = format!("Contenido de {url} (convertido a Markdown):\n\n");
+            out.push_str(&truncate_tool_output("webfetch", &markdown, 6000));
+            Ok(out)
+        }
+        "skill" => {
+            let skill_name = s("name");
+            let skills = guard(&SKILLS_BY_CHAT).get(chat_id).cloned().unwrap_or_default();
+            let found = skills
+                .iter()
+                .find(|sk| sk.name.eq_ignore_ascii_case(skill_name.trim()));
+            match found {
+                Some(sk) => Ok(format!(
+                    "## Skill: {}\n\n{}\n\n(Instrucciones de la skill cargadas. Síguelas para el resto de la tarea.)",
+                    sk.name,
+                    truncate_tool_output("skill", &sk.content, 8000)
+                )),
+                None => {
+                    let available: Vec<&str> = skills.iter().map(|sk| sk.name.as_str()).collect();
+                    if available.is_empty() {
+                        Err("no hay skills disponibles en este workspace".into())
+                    } else {
+                        Err(format!(
+                            "skill «{skill_name}» no encontrada. Disponibles: {}",
+                            available.join(", ")
+                        ))
+                    }
+                }
+            }
+        }
         _ if name.starts_with("mcp__") => {
             let reg: &'static McpRegistry = registry;
             let nm = name.to_string();
@@ -1424,6 +2444,157 @@ fn session_id_of(chat_id: &str) -> String {
     format!("{h:016x}")
 }
 
+fn snapshot_data_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("MAKORA_DATA_DIR") {
+        return std::path::PathBuf::from(d).join("snapshots");
+    }
+    let base = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| std::env::var("XDG_DATA_HOME").map(std::path::PathBuf::from))
+        .or_else(|_| {
+            dirs::home_dir()
+                .map(|h| h.join(".local").join("share"))
+                .ok_or(std::env::VarError::NotPresent)
+        })
+        .unwrap_or_else(|_| std::env::temp_dir());
+    base.join("MakoraIDE").join("snapshots")
+}
+
+pub struct TurnSnapshot {
+    sid: String,
+    run_id: String,
+    dir: std::path::PathBuf,
+    manifest: serde_json::Map<String, serde_json::Value>,
+    count: usize,
+}
+
+impl TurnSnapshot {
+    fn new(chat_id: &str) -> Option<Self> {
+        let sid = session_id_of(chat_id);
+        let run_id = now_id();
+        let dir = snapshot_data_dir().join(&sid).join(&run_id);
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(Self {
+            sid,
+            run_id,
+            dir,
+            manifest: serde_json::Map::new(),
+            count: 0,
+        })
+    }
+
+    fn capture(&mut self, path: &str) {
+        let key = normalize_path_str(std::path::Path::new(path));
+        if self.manifest.contains_key(&key) {
+            return;
+        }
+        let file = format!("f_{}.bin", self.count);
+        let entry = match std::fs::read(path) {
+            Ok(bytes) => {
+                let _ = std::fs::write(self.dir.join(&file), &bytes);
+                serde_json::json!({ "file": file })
+            }
+            Err(_) => serde_json::json!({ "created": true }),
+        };
+        self.manifest.insert(key, entry);
+        self.count += 1;
+        let _ = std::fs::write(
+            self.dir.join("manifest.json"),
+            serde_json::to_string(&serde_json::Value::Object(self.manifest.clone()))
+                .unwrap_or_default(),
+        );
+    }
+
+    fn commit(mut self) {
+        if self.count == 0 {
+            let _ = std::fs::remove_dir_all(&self.dir);
+            return;
+        }
+        let _ = std::fs::write(
+            self.dir.join("manifest.json"),
+            serde_json::to_string(&serde_json::Value::Object(self.manifest.clone()))
+                .unwrap_or_default(),
+        );
+        let mut g = guard(&SNAPSHOTS);
+        let list = g.entry(self.sid.clone()).or_default();
+        list.push(self.run_id.clone());
+        if list.len() > 5 {
+            let old = list.remove(0);
+            let _ = std::fs::remove_dir_all(snapshot_data_dir().join(&self.sid).join(&old));
+        }
+    }
+}
+
+pub struct SnapshotGuard(Option<TurnSnapshot>);
+
+impl SnapshotGuard {
+    fn none() -> Self {
+        SnapshotGuard(None)
+    }
+
+    fn capture(&mut self, path: &str) {
+        if let Some(s) = self.0.as_mut() {
+            s.capture(path);
+        }
+    }
+}
+
+impl Drop for SnapshotGuard {
+    fn drop(&mut self) {
+        if let Some(s) = self.0.take() {
+            s.commit();
+        }
+    }
+}
+
+static SNAPSHOTS: LazyLock<StdMutex<HashMap<String, Vec<String>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+pub fn revert_last_turn(chat_id: &str) -> Result<String, String> {
+    let sid = session_id_of(chat_id);
+    let run_id = {
+        let mut g = guard(&SNAPSHOTS);
+        let list = g.entry(sid.clone()).or_default();
+        list.pop()
+            .ok_or_else(|| "no hay turnos con cambios para deshacer".to_string())?
+    };
+    let dir = snapshot_data_dir().join(&sid).join(&run_id);
+    let manifest_raw = std::fs::read_to_string(dir.join("manifest.json"))
+        .map_err(|e| format!("no se pudo leer el snapshot: {e}"))?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_raw).map_err(|e| e.to_string())?;
+    let mut restored: Vec<String> = Vec::new();
+    let mut deleted: Vec<String> = Vec::new();
+    if let Some(obj) = manifest.as_object() {
+        for (path, entry) in obj {
+            if entry.get("created").and_then(|c| c.as_bool()) == Some(true) {
+                if std::fs::remove_file(path).is_ok() {
+                    deleted.push(path.clone());
+                }
+            } else if let Some(f) = entry.get("file").and_then(|f| f.as_str()) {
+                let bytes = std::fs::read(dir.join(f)).map_err(|e| e.to_string())?;
+                std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+                restored.push(path.clone());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut summary = String::new();
+    if !restored.is_empty() {
+        summary.push_str(&format!("restaurados: {}", restored.join(", ")));
+    }
+    if !deleted.is_empty() {
+        if !summary.is_empty() {
+            summary.push_str(" · ");
+        }
+        summary.push_str(&format!("eliminados: {}", deleted.join(", ")));
+    }
+    if summary.is_empty() {
+        summary = "sin cambios en archivos".to_string();
+    }
+    Ok(summary)
+}
+
 fn tools_with_mcp(registry: &'static McpRegistry, mut tools: Vec<ToolDef>) -> Vec<ToolDef> {
     let map = guard(&registry.tools);
     for (name, (_, schema)) in map.iter() {
@@ -1436,6 +2607,52 @@ fn tools_with_mcp(registry: &'static McpRegistry, mut tools: Vec<ToolDef>) -> Ve
     tools
 }
 
+pub fn compute_turn_cost_usd(kind: &str, model: &str, input: u32, cached: u32, output: u32) -> f64 {
+    let m = model.to_lowercase();
+    let k = kind.to_lowercase();
+    if k == "ollama" {
+        return 0.0;
+    }
+    let (in_price, out_price, cache_mult) = if m.contains("deepseek-reasoner") || m.contains("deepseek-r1") {
+        (0.55, 2.19, 0.10)
+    } else if m.contains("deepseek") {
+        (0.27, 1.10, 0.10)
+    } else if m.contains("gemini-3.1-pro") || m.contains("gemini-2.5-pro") || m.contains("gemini-1.5-pro") {
+        (1.25, 5.00, 0.25)
+    } else if m.contains("gemini") {
+        (0.075, 0.30, 0.25)
+    } else if m.contains("gpt-4o-mini") {
+        (0.15, 0.60, 0.50)
+    } else if m.contains("gpt-4o") {
+        (2.50, 10.00, 0.50)
+    } else if m.contains("o3-mini") {
+        (1.10, 4.40, 0.50)
+    } else if m.contains("o1") {
+        (15.00, 60.00, 0.50)
+    } else if m.contains("claude-3-5-haiku") {
+        (0.80, 4.00, 0.10)
+    } else if m.contains("claude") {
+        (3.00, 15.00, 0.10)
+    } else if m.contains("llama-3.1-8b") {
+        (0.05, 0.08, 1.0)
+    } else if m.contains("llama-3.3-70b") {
+        (0.59, 0.79, 1.0)
+    } else if m.contains("qwq") {
+        (0.29, 0.39, 1.0)
+    } else {
+        (0.50, 2.00, 0.50)
+    };
+
+    let cached = cached.min(input);
+    let non_cached = input.saturating_sub(cached);
+    let cost = (non_cached as f64 * in_price
+        + cached as f64 * in_price * cache_mult
+        + output as f64 * out_price)
+        / 1_000_000.0;
+    let factor = 1_000_000.0;
+    (cost * factor).ceil() / factor
+}
+
 async fn run_loop(
     app: &AppHandle,
     cfg: &ChatConfig,
@@ -1445,10 +2662,35 @@ async fn run_loop(
     folders: &[String],
     registry: &'static McpRegistry,
     tools: &[ToolDef],
+    plan_mode: bool,
 ) -> Result<ChatResult, String> {
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
     let mut total = ChatUsage::default();
     let counter = token_engine::global();
+    // Modo Plan: solo herramientas de lectura + planificación; las mutaciones
+    // quedan deshabilitadas a nivel de catálogo (el modelo no puede invocarlas).
+    let tools: Vec<ToolDef> = if plan_mode {
+        tools
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.name.as_str(),
+                    "read_file"
+                        | "read_file_range"
+                        | "grep"
+                        | "list_dir"
+                        | "todowrite"
+                        | "question"
+                        | "explore_subagent"
+                        | "webfetch"
+                        | "skill"
+                )
+            })
+            .cloned()
+            .collect()
+    } else {
+        tools.to_vec()
+    };
     let workspace = folders
         .iter()
         .find(|f| !f.is_empty())
@@ -1456,6 +2698,7 @@ async fn run_loop(
         .unwrap_or_else(|| "default".into());
     let session_id = session_id_of(chat_id);
     history::upsert_session(&session_id, &workspace, &cfg.model);
+    let mut snapshot = SnapshotGuard(TurnSnapshot::new(chat_id));
     // M4: resume por checkpoint cuando el frontend entrega un transcript vacío.
     if msgs.is_empty() {
         if let Some((_, restored)) = history::latest_checkpoint(&session_id) {
@@ -1472,10 +2715,61 @@ async fn run_loop(
     let mut repeats: u32 = 0;
     let mut consecutive_read_only: u32 = 0;
     let mut has_mutated: bool = false;
+    let mut last_compact_turn: u32 = 0;
+    let compact_threshold: usize =
+        ((cfg.context_window.unwrap_or(128_000) as usize) * 3 / 5).clamp(16_000, 64_000);
 
     loop {
         if is_chat_cancelled(chat_id) {
             return Err("cancelado por el usuario".into());
+        }
+        // M4: compactación jerárquica con resumen LLM cuando el historial crece
+        // más allá del 60% del contexto (los mensajes antiguos se sustituyen por
+        // un resumen estable que además mantiene el prefijo cacheable).
+        if turn >= 4 && turn.saturating_sub(last_compact_turn) >= 6 {
+            let history_tokens = counter.count_messages(&full_system, &msgs);
+            if history_tokens > compact_threshold {
+                match compact_history_llm(app, cfg, chat_id, &msgs).await {
+                    Ok((compacted, usage)) => {
+                        if compacted.len() < msgs.len() {
+                            println!(
+                                "[TOKEN_ENGINE] compactación LLM: {} -> {} mensajes ({} tokens de historial)",
+                                msgs.len(),
+                                compacted.len(),
+                                history_tokens
+                            );
+                            total += usage.clone();
+                            if usage.input_tokens > 0 || usage.output_tokens > 0 {
+                                let cost = compute_turn_cost_usd(
+                                    &cfg.kind,
+                                    &cfg.model,
+                                    usage.input_tokens,
+                                    usage.cached_tokens,
+                                    usage.output_tokens,
+                                );
+                                history::record_request(
+                                    &session_id,
+                                    turn,
+                                    &cfg.kind,
+                                    &cfg.model,
+                                    &RequestMeter {
+                                        input_tokens: usage.input_tokens,
+                                        cached_tokens: usage.cached_tokens,
+                                        output_tokens: usage.output_tokens,
+                                        cost_usd: cost,
+                                        latency_ms: 0,
+                                    },
+                                );
+                            }
+                            msgs = compacted;
+                            last_compact_turn = turn;
+                        }
+                    }
+                    Err(e) => {
+                        println!("[TOKEN_ENGINE] compactación fallida (se continúa sin compactar): {e}");
+                    }
+                }
+            }
         }
         // Motor M2 (D2): podado de historia y límite presupuestario por contexto
         let wire_msgs = prepare_wire(&msgs, cfg);
@@ -1490,6 +2784,13 @@ async fn run_loop(
         total.input_tokens += outcome.usage.input_tokens;
         total.output_tokens += outcome.usage.output_tokens;
         total.cached_tokens += outcome.usage.cached_tokens;
+        let turn_cost = compute_turn_cost_usd(
+            &cfg.kind,
+            &cfg.model,
+            outcome.usage.input_tokens,
+            outcome.usage.cached_tokens,
+            outcome.usage.output_tokens,
+        );
         history::record_request(
             &session_id,
             turn,
@@ -1499,7 +2800,7 @@ async fn run_loop(
                 input_tokens: outcome.usage.input_tokens,
                 cached_tokens: outcome.usage.cached_tokens,
                 output_tokens: outcome.usage.output_tokens,
-                cost_usd: 0.0,
+                cost_usd: turn_cost,
                 latency_ms: started.elapsed().as_millis() as i64,
             },
         );
@@ -1539,21 +2840,21 @@ async fn run_loop(
                 }
 
                 if !modified_files.is_empty() {
-                    let mut s = String::from("### ✅ Modificaciones aplicadas con éxito\n\nSe han integrado parches quirúrgicos en los siguientes archivos:\n");
+                    let mut s = String::from("### 📋 Resumen de modificaciones realizadas\n\nSe aplicaron operaciones en los siguientes archivos:\n");
                     for f in &modified_files {
                         s.push_str(&format!("- `{f}`\n"));
                     }
-                    s.push_str("\nTodos los cambios fueron aplicados y validados correctamente.");
+                    s.push_str("\n(El modelo concluyó el turno sin emitir texto explicativo adicional)");
                     s
                 } else if !read_files.is_empty() {
-                    let mut s = String::from("### 📋 Análisis completado\n\nSe inspeccionaron los componentes relevantes:\n");
+                    let mut s = String::from("### 📋 Resumen de inspección\n\nSe consultaron los siguientes archivos durante el turno:\n");
                     for f in &read_files {
                         s.push_str(&format!("- `{f}`\n"));
                     }
-                    s.push_str("\nEl análisis finalizó sin requerir modificaciones adicionales.");
+                    s.push_str("\n(El modelo finalizó la consulta de herramientas sin texto adicional)");
                     s
                 } else {
-                    "✅ Tarea procesada y completada correctamente.".to_string()
+                    "Turno completado sin texto ni herramientas adicionales.".to_string()
                 }
             };
 
@@ -1578,13 +2879,17 @@ async fn run_loop(
             });
         }
 
-        // Control de circuito inteligente y límites duros de seguridad
-        let is_all_read_only = outcome.tool_calls.iter().all(|tc| is_read_only_tool(&tc.name));
-        if is_all_read_only {
-            consecutive_read_only += 1;
-        } else {
+        // Control de circuito inteligente y límites duros de seguridad.
+        // Clasificación en 3 niveles: Neutral (todowrite/question) no afecta al
+        // contador; ReadOnly incrementa el breaker; Mutating lo reinicia.
+        let kinds: Vec<ToolKind> = outcome.tool_calls.iter().map(|tc| tool_kind(&tc.name)).collect();
+        let has_mutation = kinds.iter().any(|k| *k == ToolKind::Mutating);
+        let any_read = kinds.iter().any(|k| *k == ToolKind::ReadOnly);
+        if has_mutation {
             consecutive_read_only = 0;
             has_mutated = true;
+        } else if any_read {
+            consecutive_read_only += 1;
         }
 
         let is_token_exhausted = (total.input_tokens + total.output_tokens) >= MAX_TURN_TOKENS;
@@ -1625,6 +2930,13 @@ async fn run_loop(
             total.input_tokens += forced.usage.input_tokens;
             total.output_tokens += forced.usage.output_tokens;
             total.cached_tokens += forced.usage.cached_tokens;
+            let forced_cost = compute_turn_cost_usd(
+                &cfg.kind,
+                &cfg.model,
+                forced.usage.input_tokens,
+                forced.usage.cached_tokens,
+                forced.usage.output_tokens,
+            );
             history::record_request(
                 &session_id,
                 turn,
@@ -1634,7 +2946,7 @@ async fn run_loop(
                     input_tokens: forced.usage.input_tokens,
                     cached_tokens: forced.usage.cached_tokens,
                     output_tokens: forced.usage.output_tokens,
-                    cost_usd: 0.0,
+                    cost_usd: forced_cost,
                     latency_ms: 0,
                 },
             );
@@ -1715,6 +3027,7 @@ async fn run_loop(
                             registry,
                             chat_id,
                             &mut tool_usage,
+                            &mut snapshot,
                         )
                         .await;
                         total += tool_usage;
@@ -1759,8 +3072,9 @@ async fn run_loop(
                             let chat = chat_id.to_string();
                             async move {
                                 let mut u = ChatUsage::default();
+                                let mut snap = SnapshotGuard::none();
                                 let result =
-                                    execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat, &mut u)
+                                    execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat, &mut u, &mut snap)
                                         .await;
                                 let (ok, summary) = match &result {
                                     Ok(s) => (true, truncate(s, 400)),
@@ -1814,6 +3128,7 @@ async fn run_loop(
                         registry,
                         chat_id,
                         &mut tool_usage,
+                        &mut snapshot,
                     )
                     .await;
                     total += tool_usage;
@@ -1857,12 +3172,41 @@ pub async fn run(
     messages: &[ChatMessage],
     folders: &[String],
     registry: &'static McpRegistry,
+    plan_mode: bool,
 ) -> Result<ChatResult, String> {
     clear_cancel(chat_id);
-    let full_system = format!("{MAKORA_BASE_SKILL}\n\n{system}");
+    clear_session_perms(chat_id);
+    let skills = load_skills(folders);
+    guard(&SKILLS_BY_CHAT).insert(chat_id.to_string(), skills.clone());
+    let skills_section = skills_system_section(&skills);
+    let full_system = if plan_mode {
+        format!("{MAKORA_BASE_SKILL}\n\n{system}\n\n{PLAN_MODE_DIRECTIVE}{skills_section}")
+    } else {
+        format!("{MAKORA_BASE_SKILL}\n\n{system}{skills_section}")
+    };
     let tools = tools_with_mcp(registry, core_tools());
-    run_loop(app, cfg, chat_id, &full_system, messages, folders, registry, &tools).await
+    run_loop(
+        app,
+        cfg,
+        chat_id,
+        &full_system,
+        messages,
+        folders,
+        registry,
+        &tools,
+        plan_mode,
+    )
+    .await
 }
+
+const PLAN_MODE_DIRECTIVE: &str = "\
+## Modo Plan (activo y obligatorio)
+
+- Estás en MODO PLAN: las herramientas de modificación (`write_file`, `apply_patch`, `bash`) y de delegación ejecutora están DESHABILITADAS a nivel de sistema; no las llames.
+- Tu objetivo es producir UN PLAN DE ACCIÓN DETALLADO: archivos concretos a modificar, cambios específicos por archivo, pasos de verificación (tests/compilación) y riesgos.
+- Usa `read_file_range`/`grep`/`list_dir` de forma EFICIENTE para mapear el código, y `todowrite` para estructurar el plan en pasos.
+- NO repitas lecturas ya hechas: si el contexto es suficiente, pasa a redactar el plan final.
+- Cuando el usuario apruebe el plan con el botón «Implementar», recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.";
 
 const MULTI_DELEGATION_DIRECTIVE: &str = "\
 ## Modo Multi-Agente por Delegación (activo)
@@ -1883,14 +3227,34 @@ pub async fn run_multiagent(
     folders: &[String],
     objective: &str,
     registry: &'static McpRegistry,
+    plan_mode: bool,
 ) -> Result<ChatResult, String> {
     clear_cancel(chat_id);
-    let full_system = format!(
+    clear_session_perms(chat_id);
+    let skills = load_skills(folders);
+    guard(&SKILLS_BY_CHAT).insert(chat_id.to_string(), skills.clone());
+    let skills_section = skills_system_section(&skills);
+    let mut full_system = format!(
         "{MAKORA_BASE_SKILL}\n\n{system}\n\n{MULTI_DELEGATION_DIRECTIVE}\n\n## Objetivo del usuario\n{objective}"
     );
+    if plan_mode {
+        full_system.push_str(&format!("\n\n{PLAN_MODE_DIRECTIVE}"));
+    }
+    full_system.push_str(&skills_section);
     let mut tools = tools_with_mcp(registry, core_tools());
     tools.push(delegate_tool_def());
-    run_loop(app, cfg, chat_id, &full_system, messages, folders, registry, &tools).await
+    run_loop(
+        app,
+        cfg,
+        chat_id,
+        &full_system,
+        messages,
+        folders,
+        registry,
+        &tools,
+        plan_mode,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -2029,6 +3393,19 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_kind_classification() {
+        assert_eq!(tool_kind("read_file"), ToolKind::ReadOnly);
+        assert_eq!(tool_kind("grep"), ToolKind::ReadOnly);
+        assert_eq!(tool_kind("todowrite"), ToolKind::Neutral);
+        assert_eq!(tool_kind("question"), ToolKind::Neutral);
+        assert_eq!(tool_kind("write_file"), ToolKind::Mutating);
+        assert_eq!(tool_kind("apply_patch"), ToolKind::Mutating);
+        assert_eq!(tool_kind("bash"), ToolKind::Mutating);
+        assert_eq!(tool_kind("delegate_subagent"), ToolKind::Mutating);
+        assert_eq!(tool_kind("mcp__git__status"), ToolKind::Mutating);
+    }
+
+    #[test]
     fn test_sanitize_history_repairs_unanswered_tool_calls() {
         let msgs = vec![
             ChatMessage {
@@ -2085,6 +3462,323 @@ mod tests {
         assert_eq!(sanitized[3].tool_call_id.as_deref(), Some("call_2"));
         assert!(sanitized[3].content.contains("interrumpida"));
         assert_eq!(sanitized[4].role, "user");
+    }
+
+    #[test]
+    fn test_compute_turn_cost_usd_conservative() {
+        let cost_gemini = compute_turn_cost_usd("gemini", "gemini-3.7-flash", 10_000, 5_000, 2_000);
+        assert!(cost_gemini > 0.0);
+
+        let cost_claude = compute_turn_cost_usd("anthropic", "claude-3-7-sonnet", 100_000, 80_000, 4_000);
+        assert!(cost_claude > 0.0);
+
+        let cost_ollama = compute_turn_cost_usd("ollama", "deepseek-r1:8b", 50_000, 0, 5_000);
+        assert_eq!(cost_ollama, 0.0);
+    }
+
+    #[test]
+    fn test_repair_tool_name() {
+        let mcp: Vec<String> = vec!["mcp__git__status".into()];
+        assert_eq!(repair_tool_name("read_file", &mcp).as_ref(), "read_file");
+        assert_eq!(repair_tool_name("READ_FILE", &mcp).as_ref(), "read_file");
+        assert_eq!(repair_tool_name("list-dir", &mcp).as_ref(), "list_dir");
+        assert_eq!(repair_tool_name("read file range", &mcp).as_ref(), "read_file_range");
+        assert_eq!(repair_tool_name("mcp_git_status", &mcp).as_ref(), "mcp__git__status");
+        assert_eq!(repair_tool_name("unknown_tool", &mcp).as_ref(), "unknown_tool");
+    }
+
+    #[test]
+    fn test_grep_respects_gitignore() {
+        let root = std::env::temp_dir().join(format!("makora_gi_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(root.join(".git"));
+        std::fs::write(root.join(".gitignore"), "*.tmp\n").unwrap();
+        std::fs::write(root.join("keep.rs"), "fn needle_fn() {}\n").unwrap();
+        std::fs::write(root.join("junk.tmp"), "needle_fn hidden\n").unwrap();
+        let mut out = String::new();
+        let mut count = 0u32;
+        grep_dir(&root.to_string_lossy(), "needle_fn", &mut out, &mut count, 50);
+        assert!(out.contains("keep.rs"), "salida: {out}");
+        assert!(!out.contains("junk.tmp"), "salida: {out}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_list_dir_respects_gitignore() {
+        let root = std::env::temp_dir().join(format!("makora_ld_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(root.join(".git"));
+        std::fs::write(root.join(".gitignore"), "*.tmp\n").unwrap();
+        std::fs::write(root.join("keep.rs"), "x").unwrap();
+        std::fs::write(root.join("junk.tmp"), "x").unwrap();
+        let listing = list_dir_entries(&root.to_string_lossy(), 100).unwrap();
+        assert!(listing.contains("keep.rs"), "salida: {listing}");
+        assert!(!listing.contains("junk.tmp"), "salida: {listing}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_spill_output_writes_full_content() {
+        let full = "linea de salida larga\n".repeat(2_000);
+        let truncated = spill_output("bash", &full, "corto".into());
+        assert!(truncated.contains("salida completa guardada en"));
+        let path_str = truncated
+            .split("guardada en: ")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches("]…")
+            .trim();
+        let saved = std::fs::read_to_string(path_str).unwrap();
+        assert_eq!(saved, full);
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    #[test]
+    fn test_normalize_todos() {
+        let args = json!({
+            "todos": [
+                { "content": "a", "status": "in_progress" },
+                { "content": "b", "status": "in_progress" },
+                { "content": "c", "status": "bogus" },
+                { "content": "d", "status": "completed" }
+            ]
+        });
+        let todos = normalize_todos(&args).unwrap();
+        assert_eq!(todos.len(), 4);
+        let in_progress: Vec<_> = todos.iter().filter(|t| t.status == "in_progress").collect();
+        assert_eq!(in_progress.len(), 1);
+        assert_eq!(todos[2].status, "pending");
+        assert_eq!(todos[3].status, "completed");
+        assert!(normalize_todos(&json!({})).is_err());
+    }
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.into(),
+            content: content.into(),
+            images: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    fn msg_with_tools(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.into(),
+            content: content.into(),
+            images: vec![],
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".into(),
+                name: "read_file".into(),
+                arguments: "{\"path\":\"a\"}".into(),
+                extra_content: None,
+            }]),
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn test_find_compaction_split_prefers_assistant_with_tools() {
+        let msgs = vec![
+            msg("user", "u1"),
+            msg("assistant", "a1"),
+            msg("user", "u2"),
+            msg_with_tools("assistant", ""),
+            msg("tool", "t1"),
+            msg("tool", "t2"),
+            msg("assistant", "a2"),
+        ];
+        let split = find_compaction_split(&msgs, 3);
+        assert_eq!(split, 3);
+        assert_eq!(msgs[split].role, "assistant");
+        assert!(msgs[split].tool_calls.is_some());
+    }
+
+    #[test]
+    fn test_find_compaction_split_falls_back_to_user() {
+        let msgs = vec![
+            msg("user", "u1"),
+            msg("assistant", "a1"),
+            msg("user", "u2"),
+            msg("assistant", "a2"),
+            msg("assistant", "a3"),
+        ];
+        let split = find_compaction_split(&msgs, 2);
+        assert_eq!(split, 2);
+        assert_eq!(msgs[split].role, "user");
+    }
+
+    #[test]
+    fn test_serialize_head_for_compaction_truncates() {
+        let msgs = vec![
+            msg("user", "pregunta corta"),
+            msg("assistant", "respuesta corta"),
+            msg("user", "mensaje nuevo corto"),
+        ];
+        let serialized = serialize_head_for_compaction(&msgs, 500);
+        assert!(serialized.contains("[Usuario]: pregunta corta"));
+        assert!(serialized.contains("[Usuario]: mensaje nuevo corto"));
+        assert!(serialized.chars().count() <= 500);
+
+        let huge = vec![msg("user", &"x".repeat(5000))];
+        let truncated = serialize_head_for_compaction(&huge, 300);
+        assert!(!truncated.is_empty());
+        assert!(truncated.chars().count() <= 300);
+    }
+
+    #[test]
+    fn test_bash_prefix_and_pattern_matches() {
+        assert_eq!(bash_prefix("git status --short"), "git status --short *");
+        assert!(pattern_matches("git status *", "git status --short"));
+        assert!(pattern_matches("git status *", "git status"));
+        assert!(!pattern_matches("git status *", "git commit -m x"));
+        assert!(pattern_matches("*", "anything"));
+        assert!(pattern_matches("C:/Users/lewis/Projects/makora-ide/src/App.tsx", "C:/Users/lewis/Projects/makora-ide/src/App.tsx"));
+        assert!(pattern_matches("C:/Users/lewis/Projects/*", "C:/Users/lewis/Projects/makora-ide"));
+    }
+
+    #[test]
+    fn test_evaluate_rules_last_wins() {
+        let rules = vec![
+            PermRule {
+                tool: "bash".into(),
+                pattern: "git *".into(),
+                action: PermAction::Allow,
+            },
+            PermRule {
+                tool: "bash".into(),
+                pattern: "git push *".into(),
+                action: PermAction::Deny,
+            },
+        ];
+        assert_eq!(
+            evaluate_rules(&rules, "bash", "git status"),
+            Some(PermAction::Allow)
+        );
+        assert_eq!(
+            evaluate_rules(&rules, "bash", "git push origin main"),
+            Some(PermAction::Deny)
+        );
+        assert_eq!(evaluate_rules(&rules, "write_file", "x"), None);
+    }
+
+    #[test]
+    fn test_is_sensitive_path() {
+        assert!(is_sensitive_path("C:/proj/.env"));
+        assert!(is_sensitive_path("/etc/secrets/id_rsa"));
+        assert!(is_sensitive_path("src/credentials.json"));
+        assert!(!is_sensitive_path("src/main.rs"));
+        assert!(!is_sensitive_path("src/env.d.ts"));
+    }
+
+    #[test]
+    fn test_tool_permission_target() {
+        let folders = vec![std::env::temp_dir().to_string_lossy().to_string()];
+        let w = json!({"path": "src/main.rs"});
+        assert_eq!(
+            tool_permission_target("write_file", &w, &folders),
+            resolve_path(&folders, "src/main.rs", true).ok()
+        );
+        assert_eq!(tool_permission_target("read_file", &json!({"path": "src/main.rs"}), &folders), None);
+        let bash = json!({"command": "git status"});
+        assert_eq!(
+            tool_permission_target("bash", &bash, &folders),
+            Some("git status *".into())
+        );
+        assert_eq!(tool_permission_target("todowrite", &json!({}), &folders), None);
+        assert_eq!(
+            tool_permission_target("mcp__git__status", &json!({}), &folders),
+            Some("mcp__git__status".into())
+        );
+        assert_eq!(
+            tool_permission_target("webfetch", &json!({"url": "https://docs.rs/serde"}), &folders),
+            Some("https://docs.rs/serde".into())
+        );
+    }
+
+    #[test]
+    fn test_valid_fetch_url() {
+        assert!(valid_fetch_url("https://docs.rs/serde"));
+        assert!(valid_fetch_url("http://localhost:3000/docs"));
+        assert!(!valid_fetch_url("file:///etc/passwd"));
+        assert!(!valid_fetch_url("ftp://example.com/x"));
+        assert!(!valid_fetch_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn test_html_to_markdown_strips_scripts() {
+        let html = "<html><head><title>x</title></head><body><h1>Título</h1><script>alert('x')</script><p>texto <b>negrita</b></p></body></html>";
+        let md = html_to_markdown(html);
+        assert!(md.contains("Título"));
+        assert!(md.contains("negrita"));
+        assert!(!md.contains("alert"));
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter() {
+        let raw = "---\nname: deploy-vps\ndescription: Pasos para desplegar en el VPS\n---\n\n# Deploy\n\n1. Conecta por SSH";
+        let (name, desc, content) = parse_skill_frontmatter(raw).unwrap();
+        assert_eq!(name, "deploy-vps");
+        assert_eq!(desc, "Pasos para desplegar en el VPS");
+        assert!(content.starts_with("# Deploy"));
+        assert!(parse_skill_frontmatter("sin frontmatter").is_none());
+    }
+
+    #[test]
+    fn test_load_skills_from_workspace() {
+        let root = std::env::temp_dir().join(format!("makora_sk_test_{}", std::process::id()));
+        let skills_dir = root.join(".makora").join("skills").join("my-skill");
+        let _ = std::fs::create_dir_all(&skills_dir);
+        std::fs::write(
+            skills_dir.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: prueba\n---\n# Contenido",
+        )
+        .unwrap();
+        let skills = load_skills(&[root.to_string_lossy().to_string()]);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-skill");
+        let section = skills_system_section(&skills);
+        assert!(section.contains("my-skill"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn snap_test_root() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("makora_snap_common_{}", std::process::id()))
+    }
+
+    #[test]
+    fn test_turn_snapshot_capture_and_revert() {
+        let root = snap_test_root();
+        let _ = std::fs::create_dir_all(&root);
+        std::env::set_var("MAKORA_DATA_DIR", &root);
+        let file = root.join("data.txt");
+        std::fs::write(&file, "original").unwrap();
+        let chat_id = format!("snap_test_{}", std::process::id());
+        {
+            let mut snap = SnapshotGuard(TurnSnapshot::new(&chat_id));
+            snap.capture(&file.to_string_lossy());
+            std::fs::write(&file, "modificado").unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "modificado");
+        let summary = revert_last_turn(&chat_id).unwrap();
+        assert!(summary.contains("data.txt"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "original");
+        assert!(revert_last_turn(&chat_id).is_err());
+    }
+
+    #[test]
+    fn test_turn_snapshot_created_file_removed_on_revert() {
+        let root = snap_test_root();
+        let _ = std::fs::create_dir_all(&root);
+        std::env::set_var("MAKORA_DATA_DIR", &root);
+        let file = root.join("nuevo.txt");
+        let chat_id = format!("snap_new_{}", std::process::id());
+        {
+            let mut snap = SnapshotGuard(TurnSnapshot::new(&chat_id));
+            snap.capture(&file.to_string_lossy());
+            std::fs::write(&file, "creado por el agente").unwrap();
+        }
+        assert!(file.exists());
+        revert_last_turn(&chat_id).unwrap();
+        assert!(!file.exists());
     }
 }
 

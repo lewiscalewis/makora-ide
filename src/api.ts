@@ -26,9 +26,18 @@ export const chat = (
   messages: ChatMessage[],
   folders: string[],
   chatId: string,
-) => invoke<ChatResult>("chat", { config, system, messages, folders, chatId });
+  planMode: boolean,
+) => invoke<ChatResult>("chat", { config, system, messages, folders, chatId, planMode });
 export const chatCancel = (chatId: string) =>
   invoke<void>("chat_cancel", { chatId });
+export const questionReply = (questionId: string, answer: string) =>
+  invoke<void>("question_reply", { questionId, answer });
+export const approvalReply = (approvalId: string, decision: string, feedback: string) =>
+  invoke<void>("approval_reply", { approvalId, decision, feedback });
+export const revertLastTurn = (chatId: string) =>
+  invoke<string>("revert_last_turn", { chatId });
+export const generateTitle = (config: ChatConfig, content: string) =>
+  invoke<string>("generate_title", { config, content });
 export const runMultiagentPlan = (
   config: ChatConfig,
   system: string,
@@ -36,6 +45,7 @@ export const runMultiagentPlan = (
   folders: string[],
   chatId: string,
   objective: string,
+  planMode: boolean,
 ) =>
   invoke<ChatResult>("run_multiagent_plan", {
     config,
@@ -44,6 +54,7 @@ export const runMultiagentPlan = (
     folders,
     chatId,
     objective,
+    planMode,
   });
 export const workspaceSummary = (folders: string[]) =>
   invoke<string>("workspace_summary", { folders });

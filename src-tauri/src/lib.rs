@@ -138,9 +138,21 @@ fn home_dir() -> Result<String, String> {
 #[specta::specta]
 async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     tokio::task::spawn_blocking(move || {
+        let mut builder = ignore::WalkBuilder::new(&path);
+        builder
+            .max_depth(Some(1))
+            .follow_links(false)
+            .hidden(true)
+            .ignore(true)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true);
         let mut entries = Vec::new();
-        let rd = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
-        for entry in rd.flatten() {
+        for result in builder.build() {
+            let Ok(entry) = result else { continue };
+            if entry.depth() == 0 {
+                continue;
+            }
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             entries.push(DirEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
@@ -401,15 +413,95 @@ async fn chat(
     messages: Vec<ChatMessage>,
     folders: Vec<String>,
     chat_id: String,
+    plan_mode: bool,
 ) -> Result<ChatResult, String> {
     let folders = effective_folders(folders);
-    agent::run(&app, &config, &chat_id, &system, &messages, &folders, &MCP).await
+    agent::run(
+        &app,
+        &config,
+        &chat_id,
+        &system,
+        &messages,
+        &folders,
+        &MCP,
+        plan_mode,
+    )
+    .await
 }
 
 #[tauri::command]
 #[specta::specta]
 fn chat_cancel(chat_id: String) {
     agent::cancel_chat(&chat_id);
+}
+
+#[tauri::command]
+#[specta::specta]
+fn question_reply(question_id: String, answer: String) -> Result<(), String> {
+    agent::reply_question(&question_id, answer)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn approval_reply(approval_id: String, decision: String, feedback: String) -> Result<(), String> {
+    agent::reply_approval(&approval_id, decision, feedback)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn revert_last_turn(chat_id: String) -> Result<String, String> {
+    agent::revert_last_turn(&chat_id)
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn generate_title(app: AppHandle, config: ChatConfig, content: String) -> Result<String, String> {
+    let mut cfg = config.clone();
+    cfg.max_output_tokens = Some(24);
+    cfg.reasoning_effort = None;
+    cfg.temperature = Some(0.2);
+    let system = "Eres un generador de títulos. Genera un título de MÁXIMO 6 palabras, en el idioma del usuario, que resuma el objetivo de esta conversación de desarrollo. Responde ÚNICAMENTE con el título (sin comillas, sin prefijos como \"Título:\", sin explicaciones).";
+    let msgs = vec![ChatMessage {
+        role: "user".into(),
+        content: content.chars().take(600).collect(),
+        images: vec![],
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let title_chat_id = format!(
+        "{}__title_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+        if config.kind == "anthropic" {
+            gateway::anthropic_turn(&app, &cfg, &title_chat_id, system, &msgs, &[]).await
+        } else {
+            gateway::openai_turn(&app, &cfg, &title_chat_id, system, &msgs, &[]).await
+        }
+    })
+    .await
+    .map_err(|_| "timeout generando el título".to_string())??;
+    let title = outcome
+        .text
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(['"', '\'', '`', '"', '"', '“', '”'])
+        .trim_start_matches("Título:")
+        .trim_start_matches("Title:")
+        .trim()
+        .to_string();
+    if title.is_empty() {
+        Err("sin título generado".into())
+    } else {
+        Ok(title)
+    }
 }
 
 #[tauri::command]
@@ -422,10 +514,21 @@ async fn run_multiagent_plan(
     folders: Vec<String>,
     chat_id: String,
     objective: String,
+    plan_mode: bool,
 ) -> Result<ChatResult, String> {
     let folders = effective_folders(folders);
-    agent::run_multiagent(&app, &config, &chat_id, &system, &messages, &folders, &objective, &MCP)
-        .await
+    agent::run_multiagent(
+        &app,
+        &config,
+        &chat_id,
+        &system,
+        &messages,
+        &folders,
+        &objective,
+        &MCP,
+        plan_mode,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -486,19 +589,25 @@ fn search_walk(dir: &str, q: &str, out: &mut Vec<String>, count: &mut u32) {
     if *count >= 40 {
         return;
     }
-    let rd = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    let mut items: Vec<_> = rd.flatten().collect();
-    items.sort_by_key(|e| e.file_name());
-    for e in items {
+    let mut builder = ignore::WalkBuilder::new(dir);
+    builder
+        .max_depth(Some(12))
+        .follow_links(false)
+        .hidden(true)
+        .ignore(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true);
+    for result in builder.build() {
         if *count >= 40 {
             return;
         }
-        let name = e.file_name().to_string_lossy().to_string();
+        let Ok(entry) = result else { continue };
+        if entry.depth() == 0 {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
         let name_lower = name.to_lowercase();
-        // Ignore build, vendor, and temporary caches
         if name.starts_with('.')
             || name == "node_modules"
             || name == "target"
@@ -514,14 +623,10 @@ fn search_walk(dir: &str, q: &str, out: &mut Vec<String>, count: &mut u32) {
                 continue;
             }
         }
-        let path = e.path().to_string_lossy().to_string();
-        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let path = entry.path().to_string_lossy().to_string();
         if name_lower.contains(q) || path.to_lowercase().contains(q) {
-            out.push(path.clone());
+            out.push(path);
             *count += 1;
-        }
-        if is_dir {
-            search_walk(&path, q, out, count);
         }
     }
 }
@@ -1325,6 +1430,10 @@ pub fn run() {
             list_models,
             chat,
             chat_cancel,
+            question_reply,
+            approval_reply,
+            revert_last_turn,
+            generate_title,
             run_multiagent_plan,
             create_multiagent_plan,
             mcp_configure,

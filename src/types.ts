@@ -137,6 +137,47 @@ export interface MultiAgentPlanEvent {
   plan: MultiAgentPlanState;
 }
 
+export interface TodoItem {
+  content: string;
+  status: string;
+  priority: string;
+}
+
+export interface TodoUpdateEvent {
+  chatId: string;
+  todos: TodoItem[];
+}
+
+export interface QuestionAskEvent {
+  chatId: string;
+  id: string;
+  question: string;
+  options: string[];
+  header: string;
+}
+
+export interface PendingQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  header: string;
+}
+
+export interface ApprovalRequiredEvent {
+  chatId: string;
+  id: string;
+  tool: string;
+  arguments: string;
+  summary: string;
+}
+
+export interface PendingApproval {
+  id: string;
+  tool: string;
+  arguments: string;
+  summary: string;
+}
+
 export interface ToolActivity {
   id: string;
   name: string;

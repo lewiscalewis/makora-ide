@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { chat, chatCancel, runMultiagentPlan } from "./api";
+import { approvalReply, chat, chatCancel, questionReply, runMultiagentPlan } from "./api";
 import { computeCostUsd } from "./defaults";
 import type {
+  ApprovalRequiredEvent,
   Attachment,
   ChatConfig,
   ChatDeltaEvent,
@@ -11,7 +12,12 @@ import type {
   ModelConfig,
   MultiAgentPlanEvent,
   MultiAgentPlanState,
+  PendingApproval,
+  PendingQuestion,
+  QuestionAskEvent,
   ThinkingDeltaEvent,
+  TodoItem,
+  TodoUpdateEvent,
   ToolActivity,
   ToolEnd,
   ToolOutputEvent,
@@ -181,6 +187,9 @@ export interface SessionRuntimeSnapshot {
   error: string | null;
   draftInput: string;
   draftAttachments: Attachment[];
+  todos: TodoItem[];
+  pendingQuestion: PendingQuestion | null;
+  pendingApproval: PendingApproval | null;
 }
 
 interface SessionRuntime extends SessionRuntimeSnapshot {
@@ -206,6 +215,9 @@ const EMPTY_RUNTIME: SessionRuntime = Object.freeze({
   error: null,
   draftInput: "",
   draftAttachments: [],
+  todos: [],
+  pendingQuestion: null,
+  pendingApproval: null,
   nextUiId: 0,
   abortRequested: false,
   seeded: false,
@@ -243,6 +255,9 @@ function createRuntime(transcript: ChatMessage[] = []): SessionRuntime {
     error: null,
     draftInput: "",
     draftAttachments: [],
+    todos: [],
+    pendingQuestion: null,
+    pendingApproval: null,
     nextUiId,
     abortRequested: false,
     seeded: transcript.length > 0,
@@ -427,10 +442,12 @@ function installEventRouting(): void {
 
     const byChat = new Map<string, string>();
     for (const item of batch) {
-      byChat.set(item.chatId, (byChat.get(item.chatId) ?? "") + item.text);
+      const baseChatId = item.chatId.split("__sub_")[0];
+      byChat.set(baseChatId, (byChat.get(baseChatId) ?? "") + item.text);
     }
 
     for (const [chatId, deltaText] of byChat) {
+      if (!runtimes.has(chatId)) continue;
       update(chatId, (rt) => ({
         thinking: {
           id: rt.thinking?.id ?? rt.currentAssistantId,
@@ -450,6 +467,29 @@ function installEventRouting(): void {
   on<MultiAgentPlanEvent>("multiagent-plan-event", (p) =>
     update(p.chatId, () => ({ plan: p.plan })),
   );
+  on<TodoUpdateEvent>("todo-update", (t) =>
+    update(t.chatId, () => ({ todos: t.todos ?? [] })),
+  );
+  on<QuestionAskEvent>("question-ask", (q) =>
+    update(q.chatId, () => ({
+      pendingQuestion: {
+        id: q.id,
+        question: q.question,
+        options: q.options ?? [],
+        header: q.header ?? "",
+      },
+    })),
+  );
+  on<ApprovalRequiredEvent>("approval-required", (a) =>
+    update(a.chatId, () => ({
+      pendingApproval: {
+        id: a.id,
+        tool: a.tool,
+        arguments: a.arguments ?? "",
+        summary: a.summary ?? "",
+      },
+    })),
+  );
 }
 
 installEventRouting();
@@ -464,6 +504,7 @@ export interface SendTurnOptions {
   images: string[];
   displayText: string;
   useMultiAgent?: boolean;
+  planMode?: boolean;
   onUsage: (u: ChatUsage) => void;
   onTranscriptChange: (m: ChatMessage[]) => void;
 }
@@ -551,8 +592,16 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
           opts.folders,
           sessionId,
           objective,
+          Boolean(opts.planMode),
         )
-      : await chat(opts.config, opts.system, requestTranscript, opts.folders, sessionId);
+      : await chat(
+          opts.config,
+          opts.system,
+          requestTranscript,
+          opts.folders,
+          sessionId,
+          Boolean(opts.planMode),
+        );
     const durationMs = Math.max(50, Date.now() - startTime);
     opts.onUsage(result);
 
@@ -689,6 +738,34 @@ export function cancelTurn(sessionId: string): void {
   if (!rt || !rt.busy) return;
   update(sessionId, () => ({ abortRequested: true, busy: false }));
   chatCancel(sessionId).catch((e) => console.warn("cancel error:", e));
+}
+
+export async function answerQuestion(sessionId: string, answer: string): Promise<void> {
+  const rt = runtimes.get(sessionId);
+  const q = rt?.pendingQuestion;
+  if (!q) return;
+  update(sessionId, () => ({ pendingQuestion: null }));
+  try {
+    await questionReply(q.id, answer);
+  } catch (e) {
+    console.warn("question reply error:", e);
+  }
+}
+
+export async function answerApproval(
+  sessionId: string,
+  decision: "allow_once" | "allow_always" | "deny" | "deny_always" | "trust_session",
+  feedback = "",
+): Promise<void> {
+  const rt = runtimes.get(sessionId);
+  const a = rt?.pendingApproval;
+  if (!a) return;
+  update(sessionId, () => ({ pendingApproval: null }));
+  try {
+    await approvalReply(a.id, decision, feedback);
+  } catch (e) {
+    console.warn("approval reply error:", e);
+  }
 }
 
 export function appendAssistantMessage(sessionId: string, text: string): void {

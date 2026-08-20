@@ -1,9 +1,12 @@
 import type { AgentMode, ChatMessage, ChatSession, OpenFile, SessionWorkspaceState } from "./types";
 
-const STORAGE_KEY = "makora.sessions.v1";
+const STORAGE_KEY = "makora.history.v1";
+const LEGACY_STORAGE_KEY = "makora.sessions.v1";
+const OPEN_TABS_KEY = "makora.openTabs.v1";
 const ACTIVE_KEY = "makora.activeSession";
 
-const MAX_SESSIONS = 60;
+const MAX_SESSIONS = 100;
+const MAX_OPEN_TABS = 25;
 const MAX_MESSAGES_PER_SESSION = 200;
 const MAX_CONTENT_CHARS = 200_000;
 const MAX_IMAGES_PER_MESSAGE = 4;
@@ -166,7 +169,13 @@ function sanitizeSession(raw: unknown): ChatSession | null {
 
 export function loadSessions(): ChatSession[] {
   try {
-    const raw = getStorage()?.getItem(STORAGE_KEY);
+    const storage = getStorage();
+    if (!storage) return [];
+    let raw = storage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // Fallback a almacenamiento anterior si no existe aún el historial v1
+      raw = storage.getItem(LEGACY_STORAGE_KEY);
+    }
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -179,9 +188,39 @@ export function loadSessions(): ChatSession[] {
   }
 }
 
+export function loadOpenTabIds(availableSessions: ChatSession[]): string[] {
+  try {
+    const storage = getStorage();
+    if (!storage) return availableSessions.map((s) => s.id).slice(0, MAX_OPEN_TABS);
+    const raw = storage.getItem(OPEN_TABS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const sessionIds = new Set(availableSessions.map((s) => s.id));
+        const valid = parsed.filter((id): id is string => typeof id === "string" && sessionIds.has(id));
+        if (valid.length > 0) return valid.slice(0, MAX_OPEN_TABS);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  // Si no hay pestañas abiertas guardadas, abrir las sesiones más recientes disponibles
+  return availableSessions.map((s) => s.id).slice(0, 3);
+}
+
+export function saveOpenTabIds(ids: string[]): void {
+  try {
+    const storage = getStorage();
+    if (!storage) return;
+    storage.setItem(OPEN_TABS_KEY, JSON.stringify(ids.slice(0, MAX_OPEN_TABS)));
+  } catch {
+    /* ignore */
+  }
+}
+
 function shrinkSessions(sessions: ChatSession[]): string {
   // Poda no destructiva: Trunca outputs gigantes de herramientas y mensajes antiguos
-  // pero conserva siempre los mensajes recientes y metadatos de TODAS las pestañas.
+  // pero conserva siempre los mensajes recientes y metadatos de TODAS las sesiones.
   const pruned = sessions.map((s) => ({
     ...s,
     messages: s.messages.slice(-30).map((m) => ({
@@ -220,8 +259,6 @@ function shrinkSessions(sessions: ChatSession[]): string {
 }
 
 export function saveSessions(sessions: ChatSession[]): void {
-  // El orden del array es el orden de pestañas (creación, más reciente primero):
-  // se conserva tal cual para que las pestañas no salten al recargar.
   const ordered = sessions.slice(0, MAX_SESSIONS);
   const json = JSON.stringify(ordered);
   const storage = getStorage();
@@ -229,21 +266,26 @@ export function saveSessions(sessions: ChatSession[]): void {
 
   try {
     storage.setItem(STORAGE_KEY, json);
+    storage.setItem(LEGACY_STORAGE_KEY, json);
   } catch {
     // Tier 2: Truncate messages within sessions
     try {
-      storage.setItem(STORAGE_KEY, shrinkSessions(ordered));
+      const shrunk = shrinkSessions(ordered);
+      storage.setItem(STORAGE_KEY, shrunk);
+      storage.setItem(LEGACY_STORAGE_KEY, shrunk);
     } catch {
-      // Tier 3: Conservar últimas 10 sesiones con últimos 5 mensajes cada una
+      // Tier 3: Conservar últimas 15 sesiones con últimos 5 mensajes cada una
       try {
-        const minimal = ordered.slice(0, 10).map((s) => ({
+        const minimal = ordered.slice(0, 15).map((s) => ({
           ...s,
           messages: s.messages.slice(-5).map((m) => ({
             ...m,
             content: m.content.slice(0, 1000),
           })),
         }));
-        storage.setItem(STORAGE_KEY, JSON.stringify(minimal));
+        const minJson = JSON.stringify(minimal);
+        storage.setItem(STORAGE_KEY, minJson);
+        storage.setItem(LEGACY_STORAGE_KEY, minJson);
       } catch {
         /* En caso de saturación extrema, el estado en memoria de React sigue preservado */
       }
@@ -296,7 +338,13 @@ export function makeSession(model: string, workspace?: SessionWorkspaceState): C
   };
 }
 
-export function initSessions(): { sessions: ChatSession[]; activeId: string } {
+export interface InitialSessionState {
+  sessions: ChatSession[];
+  openTabIds: string[];
+  activeId: string;
+}
+
+export function initSessions(): InitialSessionState {
   const loaded = loadSessions();
 
   let folders: string[] = [];
@@ -322,16 +370,20 @@ export function initSessions(): { sessions: ChatSession[]; activeId: string } {
       diff: null,
     });
     saveSessions([fresh]);
+    saveOpenTabIds([fresh.id]);
     setActiveSessionId(fresh.id);
-    return { sessions: [fresh], activeId: fresh.id };
+    return { sessions: [fresh], openTabIds: [fresh.id], activeId: fresh.id };
   }
 
-  // Preservar todas las sesiones abiertas por el usuario (sin podas destructivas)
+  const openTabIds = loadOpenTabIds(loaded);
+  const effectiveOpenTabIds = openTabIds.length > 0 ? openTabIds : [loaded[0].id];
+
   const savedActiveId = getActiveSessionId();
-  const activeExists = savedActiveId && loaded.some((s) => s.id === savedActiveId);
-  const activeId = activeExists ? savedActiveId! : loaded[0].id;
+  const activeExists = savedActiveId && effectiveOpenTabIds.includes(savedActiveId);
+  const activeId = activeExists ? savedActiveId! : effectiveOpenTabIds[0];
 
   saveSessions(loaded);
+  saveOpenTabIds(effectiveOpenTabIds);
   setActiveSessionId(activeId);
-  return { sessions: loaded, activeId };
+  return { sessions: loaded, openTabIds: effectiveOpenTabIds, activeId };
 }

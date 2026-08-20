@@ -454,6 +454,27 @@ export function inferModelConfig(id: string, providerId: string = "deepseek"): M
   };
 }
 
+export function computeWorstCasePromptCost(
+  inputTokens: number,
+  maxOutputTokens: number = 4096,
+  modelConfig?: ModelConfig,
+  modelId?: string,
+  providerId?: string
+): number {
+  let inPrice = modelConfig?.inputPrice ?? 0;
+  let outPrice = modelConfig?.outputPrice ?? 0;
+
+  if (inPrice <= 0 || outPrice <= 0) {
+    const inferred = inferModelConfig(modelId || modelConfig?.id || "default", providerId || modelConfig?.providerId || "deepseek");
+    inPrice = inPrice > 0 ? inPrice : inferred.inputPrice;
+    outPrice = outPrice > 0 ? outPrice : inferred.outputPrice;
+  }
+
+  // Pre-flight worst case: 0% cache hit, full input rate + max output tokens at output rate
+  const rawCost = (Math.max(0, inputTokens) * inPrice + Math.max(0, maxOutputTokens) * outPrice) / 1_000_000;
+  return Number.isFinite(rawCost) && rawCost >= 0 ? Math.ceil(rawCost * 1_000_000) / 1_000_000 : 0;
+}
+
 export function computeCostUsd(
   usage: { inputTokens: number; outputTokens: number; cachedTokens?: number },
   modelConfig?: ModelConfig,
@@ -476,14 +497,16 @@ export function computeCostUsd(
   const lowerProv = (providerId || modelConfig?.providerId || "").toLowerCase();
   
   // Prompt caching discount:
-  // DeepSeek: 90% discount on cached tokens (only 10% price)
+  // DeepSeek & Anthropic: 90% discount on cached tokens (only 10% price)
   // Gemini: 75% discount on cached tokens
   // OpenAI / others: 50% discount
   let cacheMultiplier = 0.10;
   if (lowerProv.includes("gemini") || lowerId.includes("gemini")) {
     cacheMultiplier = 0.25;
-  } else if (lowerProv.includes("openai") || lowerId.includes("gpt")) {
+  } else if (lowerProv.includes("openai") || lowerId.includes("gpt") || lowerId.includes("o3") || lowerId.includes("o1")) {
     cacheMultiplier = 0.50;
+  } else if (lowerProv.includes("groq") || lowerProv.includes("ollama")) {
+    cacheMultiplier = 1.0;
   }
 
   const cost =
@@ -492,7 +515,8 @@ export function computeCostUsd(
       usage.outputTokens * outPrice) /
     1_000_000;
 
-  return Number.isFinite(cost) && cost >= 0 ? cost : 0;
+  // Redondeo al alza matemáticamente conservador (límite superior a 6 decimales)
+  return Number.isFinite(cost) && cost >= 0 ? Math.ceil(cost * 1_000_000) / 1_000_000 : 0;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

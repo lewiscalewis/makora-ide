@@ -69,21 +69,37 @@ impl TokenCounter {
         let budget = max_tokens.saturating_sub(self.count(&marker)).max(1);
         let mut lo = 0usize;
         let mut hi = text.len();
-        while lo + 1 < hi {
-            let mid = (lo + hi) / 2;
-            let cut = match text[..mid].rfind('\n') {
-                Some(pos) if pos > lo => pos,
-                _ => mid,
-            };
-            if self.count(&text[..cut]) <= budget {
-                lo = cut;
+        while lo < hi {
+            let mid = lo + (hi - lo + 1) / 2;
+            let safe_mid = floor_char_boundary(text, mid);
+            if safe_mid == lo {
+                break;
+            }
+            if self.count(&text[..safe_mid]) <= budget {
+                lo = safe_mid;
             } else {
-                hi = cut.max(lo + 1);
+                hi = safe_mid.saturating_sub(1);
             }
         }
-        let kept = &text[..lo.max(1)];
+        let safe_lo = floor_char_boundary(text, lo);
+        let cut = match text[..safe_lo].rfind('\n') {
+            Some(pos) if pos > 0 => pos,
+            _ => safe_lo,
+        };
+        let final_lo = floor_char_boundary(text, cut);
+        let kept = &text[..final_lo];
         format!("{kept}{marker}")
     }
+}
+
+fn floor_char_boundary(text: &str, mut idx: usize) -> usize {
+    if idx >= text.len() {
+        return text.len();
+    }
+    while !text.is_char_boundary(idx) {
+        idx = idx.saturating_sub(1);
+    }
+    idx
 }
 
 // Composer M2: presupuestos por componente y orden estable para el prefijo.
@@ -295,6 +311,17 @@ mod tests {
                 assert!(idx + 1 < fitted.len());
                 assert_eq!(fitted[idx + 1].role, "tool");
             }
+        }
+    }
+
+    #[test]
+    fn test_truncate_multibyte_utf8_does_not_panic() {
+        let c = TokenCounter::new();
+        let text = "✨ Pensamiento crítico: análisis de código en español con acentuación (á, é, í, ó, ú, ñ) y emojis 🔥🚀💡.\n".repeat(50);
+        for budget in [1, 5, 10, 25, 50, 100] {
+            let out = c.truncate(&text, budget);
+            assert!(c.count(&out) <= budget + 15);
+            assert!(out.contains("Truncado por presupuesto") || out == text);
         }
     }
 }

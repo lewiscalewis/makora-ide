@@ -121,4 +121,17 @@ describe("Session Management and Sanitization", () => {
     expect(getSessionRuntime(sessionA).draftAttachments.length).toBe(0);
     expect(getSessionRuntime(sessionB).draftInput).toBe("Borrador de texto para sesión B");
   });
+
+  it("decouples open tabs from history preserving all sessions when closing a tab", () => {
+    const s1 = makeSession("deepseek");
+    const s2 = makeSession("anthropic");
+    const s3 = makeSession("openai");
+    localStorage.setItem("makora.history.v1", JSON.stringify([s1, s2, s3]));
+    localStorage.setItem("makora.openTabs.v1", JSON.stringify([s1.id, s2.id]));
+
+    const state = initSessions();
+    expect(state.sessions.length).toBe(3);
+    expect(state.openTabIds).toEqual([s1.id, s2.id]);
+    expect(state.activeId).toBe(s1.id);
+  });
 });

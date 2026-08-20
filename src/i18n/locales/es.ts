@@ -148,9 +148,9 @@ export const es: TranslationSchema = {
     auto: "Multi (Auto)",
     always: "Multi (On)",
     off: "Multi (Off)",
-    autoHint: "Modo Multi-Agente: Auto (Decide inteligentemente según complejidad y eficiencia de tokens)",
-    alwaysHint: "Modo Multi-Agente: Forzado (Siempre orquesta Explorer → Coder → Tester → Reviewer)",
-    offHint: "Modo Multi-Agente: Desactivado (Siempre mono-agente directo)",
+    autoHint: "Modo Multi-Agente: Automático — Delega en subagentes especializados (explorar, programar, probar) cuando la tarea requiere análisis multifichero o cirugía compleja.",
+    alwaysHint: "Modo Multi-Agente: Forzado — Delega sistemáticamente en subagentes especializados para estructurar el trabajo en pasos aislados.",
+    offHint: "Modo Multi-Agente: Desactivado — Resuelve todo con un único agente principal (menor latencia y menor consumo de tokens).",
   },
   editor: {
     save: "Guardar",

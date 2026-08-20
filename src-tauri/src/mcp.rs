@@ -129,11 +129,14 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
                 "clientInfo": { "name": "makora-ide", "version": "0.1.0" }
             }),
         );
-        if let Err(e) = init_res {
-            eprintln!("[MCP] Error en handshake initialize para {}: {}", spec.name, e);
-            let _ = server.child.kill();
-            continue;
-        }
+        let init_caps = match init_res {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[MCP] Error en handshake initialize para {}: {}", spec.name, e);
+                let _ = server.child.kill();
+                continue;
+            }
+        };
 
         let mut note = json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string();
         note.push('\n');
@@ -164,6 +167,87 @@ pub fn configure(registry: &McpRegistry, specs: &[crate::McpSpec]) -> Result<Vec
                 names.push(full);
             }
         }
+
+        let has_resources = init_caps
+            .get("capabilities")
+            .and_then(|c| c.get("resources"))
+            .is_some();
+        if has_resources {
+            if let Ok(rl) = send_request(&mut server.stdin, &server.lines, 3, "resources/list", json!({})) {
+                if let Some(arr) = rl.get("resources").and_then(|r| r.as_array()) {
+                    let mut uris: Vec<String> = Vec::new();
+                    for r in arr {
+                        if let Some(uri) = r.get("uri").and_then(|u| u.as_str()) {
+                            uris.push(uri.to_string());
+                        }
+                    }
+                    if !uris.is_empty() {
+                        tools.insert(
+                            format!("mcp__{}__list_resources", spec.name),
+                            (spec.name.clone(), json!({"type": "object", "properties": {}})),
+                        );
+                        tools.insert(
+                            format!("mcp__{}__read_resource", spec.name),
+                            (
+                                spec.name.clone(),
+                                json!({
+                                    "type": "object",
+                                    "properties": {
+                                        "uri": {"type": "string", "description": "URI del recurso (ver list_resources)"}
+                                    },
+                                    "required": ["uri"]
+                                }),
+                            ),
+                        );
+                        names.push(format!("mcp__{}__list_resources", spec.name));
+                        names.push(format!("mcp__{}__read_resource", spec.name));
+                        println!(
+                            "[MCP] {} expone {} recursos",
+                            spec.name,
+                            uris.len()
+                        );
+                    }
+                }
+            }
+        }
+
+        let has_prompts = init_caps
+            .get("capabilities")
+            .and_then(|c| c.get("prompts"))
+            .is_some();
+        if has_prompts {
+            if let Ok(pl) = send_request(&mut server.stdin, &server.lines, 4, "prompts/list", json!({})) {
+                let count = pl
+                    .get("prompts")
+                    .and_then(|p| p.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    tools.insert(
+                        format!("mcp__{}__list_prompts", spec.name),
+                        (spec.name.clone(), json!({"type": "object", "properties": {}})),
+                    );
+                    tools.insert(
+                        format!("mcp__{}__get_prompt", spec.name),
+                        (
+                            spec.name.clone(),
+                            json!({
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string", "description": "Nombre del prompt (ver list_prompts)"},
+                                    "arguments": {"type": "object", "description": "Argumentos del prompt (opcional)"}
+                                },
+                                "required": ["name"]
+                            }),
+                        ),
+                    );
+                    names.push(format!("mcp__{}__list_prompts", spec.name));
+                    names.push(format!("mcp__{}__get_prompt", spec.name));
+                    println!("[MCP] {} expone {} prompts", spec.name, count);
+                }
+            }
+        }
+
         servers.insert(spec.name.clone(), server);
         all.extend(names);
     }
@@ -190,24 +274,109 @@ pub fn call(registry: &McpRegistry, full_name: &str, arguments: &str) -> Result<
         .get_mut(&server_name)
         .ok_or_else(|| "servidor MCP no activo".to_string())?;
 
-    let resp = send_request(
-        &mut server.stdin,
-        &server.lines,
-        100,
-        "tools/call",
-        json!({ "name": tool_name, "arguments": args }),
-    )?;
-
-    let mut text = String::new();
-    if let Some(content) = resp.get("content").and_then(|c| c.as_array()) {
-        for b in content {
-            if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
-                text.push_str(t);
+    match tool_name {
+        "list_resources" => {
+            let resp = send_request(&mut server.stdin, &server.lines, 100, "resources/list", json!({}))?;
+            let mut out = String::from("Recursos disponibles:\n");
+            if let Some(arr) = resp.get("resources").and_then(|r| r.as_array()) {
+                for r in arr {
+                    let uri = r.get("uri").and_then(|u| u.as_str()).unwrap_or("");
+                    let name = r.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    out.push_str(&format!("- {name} ({uri})\n"));
+                }
             }
+            Ok(out)
+        }
+        "read_resource" => {
+            let uri = args.get("uri").and_then(|u| u.as_str()).unwrap_or("");
+            if uri.is_empty() {
+                return Err("read_resource requiere el parámetro 'uri'".into());
+            }
+            let resp = send_request(
+                &mut server.stdin,
+                &server.lines,
+                101,
+                "resources/read",
+                json!({ "uri": uri }),
+            )?;
+            let mut text = String::new();
+            if let Some(content) = resp.get("contents").and_then(|c| c.as_array()) {
+                for b in content {
+                    if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                        text.push_str(t);
+                    }
+                }
+            }
+            if text.is_empty() {
+                text = resp.to_string();
+            }
+            Ok(text)
+        }
+        "list_prompts" => {
+            let resp = send_request(&mut server.stdin, &server.lines, 102, "prompts/list", json!({}))?;
+            let mut out = String::from("Prompts disponibles:\n");
+            if let Some(arr) = resp.get("prompts").and_then(|p| p.as_array()) {
+                for p in arr {
+                    let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let desc = p.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                    out.push_str(&format!("- {name}: {desc}\n"));
+                }
+            }
+            Ok(out)
+        }
+        "get_prompt" => {
+            let name = args.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err("get_prompt requiere el parámetro 'name'".into());
+            }
+            let mut params = json!({ "name": name });
+            if let Some(p_args) = args.get("arguments") {
+                params["arguments"] = p_args.clone();
+            }
+            let resp = send_request(
+                &mut server.stdin,
+                &server.lines,
+                103,
+                "prompts/get",
+                params,
+            )?;
+            let mut text = String::new();
+            if let Some(msgs) = resp.get("messages").and_then(|m| m.as_array()) {
+                for m in msgs {
+                    if let Some(c) = m.get("content").and_then(|c| c.as_object()) {
+                        if let Some(t) = c.get("text").and_then(|x| x.as_str()) {
+                            text.push_str(t);
+                            text.push('\n');
+                        }
+                    }
+                }
+            }
+            if text.is_empty() {
+                text = resp.to_string();
+            }
+            Ok(text)
+        }
+        _ => {
+            let resp = send_request(
+                &mut server.stdin,
+                &server.lines,
+                100,
+                "tools/call",
+                json!({ "name": tool_name, "arguments": args }),
+            )?;
+
+            let mut text = String::new();
+            if let Some(content) = resp.get("content").and_then(|c| c.as_array()) {
+                for b in content {
+                    if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                        text.push_str(t);
+                    }
+                }
+            }
+            if text.is_empty() {
+                text = resp.to_string();
+            }
+            Ok(text)
         }
     }
-    if text.is_empty() {
-        text = resp.to_string();
-    }
-    Ok(text)
 }
