@@ -43,6 +43,7 @@ import {
   ShieldCheck,
   Ban,
   Undo2,
+  AlertTriangle,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { shouldAutoUseMultiAgent } from "../autoRouter";
@@ -484,7 +485,7 @@ export default function Chat({
     });
   };
   const rt = useSessionRuntime(sessionId);
-  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments, todos, pendingQuestion, pendingApproval } = rt;
+  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments, todos, pendingQuestion, pendingApproval, notices } = rt;
   const [questionDraft, setQuestionDraft] = useState("");
   const [approvalFeedback, setApprovalFeedback] = useState("");
   const [todosExpanded, setTodosExpanded] = useState(false);
@@ -1395,6 +1396,17 @@ export default function Chat({
               <Send size={12} />
             </button>
           </div>
+        </div>
+      )}
+
+      {notices.length > 0 && (
+        <div className="agent-notices">
+          {notices.map((n, i) => (
+            <div key={`${n.slice(0, 24)}_${i}`} className="agent-notice-banner">
+              <AlertTriangle size={12} className="text-gold" />
+              <span>Vigilante Makora: {n}</span>
+            </div>
+          ))}
         </div>
       )}
 

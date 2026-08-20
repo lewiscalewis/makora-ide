@@ -204,6 +204,15 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   4. Subagentes: 8 pasos y 250k tokens (antes 6/150k).
 - **Consecuencias:** en modo Act el agente puede explorar tanto como necesite; el vigilante solo interviene ante bucles reales (repetición exacta o resultados redundantes) y el usuario mantiene el control del gasto con una pregunta en vez de una parada silenciosa. 47 tests Rust + 33 vitest pasan.
 
+## ADR-031 — Vigilante transparente (estilo opencode) + fix de "Confiar sesión" (2026-08-20)
+
+- **Problema (reportado en uso real):** (1) el nudge se inyectaba como mensaje `role: "user"` sintético: el modelo lo interpretaba como intervención del usuario, contaminaba el transcript persistido y confundía la conversación ("El comando bash fue rechazado; usaré las herramientas nativas"); (2) "Confiar sesión" añadía la regla global PERO `gate_permission` rechazaba la llamada actual (solo aceptaba `allow_once`/`allow_always`) y además `clear_session_perms` al inicio de cada turno borraba las reglas de confianza (la confianza duraba solo el turno actual).
+- **Decisión:**
+  1. **Nudge transparente:** el aviso al modelo viaja como NOTA DE SISTEMA (se añade a `system_extra` y se envía como parte del system prompt del siguiente turno — el modelo lo recibe como instrucción de sistema, no como usuario) y el transcript no se contamina. En paralelo se emite el evento `agent-notice` que la UI muestra como banner ámbar "Vigilante Makora" (visible para el usuario, no persistido).
+  2. **Force pregunta al usuario (estilo opencode doom_loop):** cuando se alcanza una señal de fuerza (repetición exacta, novedad nula, plan extenso), el agente PREGUNTA vía panel de pregunta: "Detener y sintetizar" o "Continuar sin límite". Continuar → se resetean las señales y se avisa al modelo vía nota de sistema. Solo los fusibles extremos (100 turnos/2M tokens) fuerzan directamente. Cooldown de 6 turnos entre preguntas (si se repite, se fuerza).
+  3. **Fix "Confiar sesión":** `gate_permission` acepta `trust_session` como éxito (la llamada actual se ejecuta) y las reglas de permisos YA NO se resetean por turno (persisten por sesión/chatId durante la vida de la app, como la memoria de aprobaciones de opencode).
+- **Consecuencias:** el usuario ve SIEMPRE cuándo interviene el vigilante y decide; el modelo no confunde avisos del sistema con palabras del usuario; "Confiar sesión" funciona como se espera (sin preguntas repetidas entre turnos). 47 tests Rust + 33 vitest pasan.
+
 
 
 
