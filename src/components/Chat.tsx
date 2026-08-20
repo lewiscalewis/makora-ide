@@ -9,6 +9,7 @@ import {
 } from "../api";
 import Markdown from "./Markdown";
 import DiffReviewModal from "./DiffReviewModal";
+import { formatResponse } from "../responseFormat";
 import { isModelReasoningSupported } from "../defaults";
 import {
   Zap,
@@ -835,7 +836,7 @@ export default function Chat({
   const copyTranscript = () => {
     if (messages.length === 0) return;
     const text = messages
-      .map((m) => `### ${m.role === "user" ? "Usuario" : "Makora"}\n\n${m.text}`)
+      .map((m) => `### ${m.role === "user" ? "Usuario" : "Makora"}\n\n${formatResponse(m.text)}`)
       .join("\n\n---\n\n");
     navigator.clipboard.writeText(text).then(() => {
       setCopiedTranscript(true);
@@ -847,7 +848,7 @@ export default function Chat({
     if (messages.length === 0) return;
     const content = `# MakoraIDE Transcript - ${new Date().toLocaleString()}\n\n` +
       messages
-        .map((m) => `### ${m.role === "user" ? "Usuario" : "Makora"}\n\n${m.text}`)
+        .map((m) => `### ${m.role === "user" ? "Usuario" : "Makora"}\n\n${formatResponse(m.text)}`)
         .join("\n\n---\n\n");
     const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
@@ -937,7 +938,7 @@ export default function Chat({
 
 
   const copyMessage = (id: number, text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(formatResponse(text)).then(() => {
       setCopiedMsgId(id);
       setTimeout(() => setCopiedMsgId(null), 1400);
     });
@@ -1205,7 +1206,7 @@ export default function Chat({
                   {/* 3. Assistant Response Markdown Text or Reassuring Working State */}
                   {m.text ? (
                     <div className="msg-content">
-                      <Markdown text={m.text} onApplyArtifact={handleInspectOrApplyArtifact} />
+                      <Markdown text={m.text} sanitize onApplyArtifact={handleInspectOrApplyArtifact} />
                     </div>
                   ) : isBusyCurrent ? (
                     <div className="ai-working-indicator">

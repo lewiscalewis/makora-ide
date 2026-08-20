@@ -243,6 +243,44 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   5. Estos patrones se aplican en `gateway.rs` tras el saneamiento del wire (equivalente funcional al pipeline de `transform.ts` para nuestro set de proveedores).
 - **Consecuencias:** menos 400s por particularidades de proveedor; reglas en un único punto auditable; 50 tests Rust + 33 vitest pasan.
 
+## ADR-035 — Formateador robusto de respuestas `responseFormat.ts` (2026-08-20)
+
+- **Problema (feedback del usuario):** al pedir un plan, el agente respondió con sintaxis XML de tool-calls SIN procesar en el contenido (`<function_calls> <invoke name="webfetch"> <parameter ...>...`). El `cleanLeakedTags` inline de `Markdown.tsx` solo cubría DSML/tool_call/thinking: el XML de DeepSeek se mostraba crudo y rompía la respuesta.
+- **Decisión:**
+  1. Nuevo módulo puro `src/responseFormat.ts` con `formatResponse(raw: unknown): string`, pipeline: guard de tipos → `cleanUnicode` → protección de fences de código → `stripToolSyntax` (loop hasta punto fijo, máx. 15) → restauración de fences → limpieza final.
+  2. **`cleanUnicode`:** CRLF→LF, strip de secuencias ANSI/OSC (salida de terminal copiada por el modelo), controles C0 (salvo `\n`/`\t`), `\u2028/\u2029`→`\n`, BOM, controles bidi U+202A–202E/U+2066–2069/U+061C (anti Trojan-Source), invisibles ZWSP/word-joiner/soft-hyphen, surrogates solitarios→U+FFFD, normalización NFC. Se PRESERVAN ZWJ/ZWNJ (emoji/escrituras índicas-árabes) y CJK/rtl intactos.
+  3. **`stripToolSyntax`:** pares cerrados (DSML `tool_calls`/`invoke`, `<function_calls>`, `<invoke>/<parameter>/<tool_call>/<tool_use>`, `<thinking>/<reasoning>/<search>...`, `<|tool_call|>`, variante HTML-escaped), self-closing, cierres huérfanos, tokens (`[toolu_bdrk_*]`, `<|python_tag|>`...), y **corte de etiquetas sin cerrar** (streaming interrumpido): si el último open no tiene close, se corta desde ahí (la prosa previa se conserva). Si el bloque ocupaba su línea entera, se traga también la línea (sin dejar huecos); si no, se sustituye por espacio.
+  4. **Protección de fences:** bloques ``` / ~~~ (cerrados O sin cerrar por streaming) se sacan con placeholders antes de strippear y se restauran después → XML legítimo dentro de bloques de código nunca se toca.
+  5. Si tras limpiar queda vacío pero había contenido visible → nota discreta (`TOOL_ONLY_NOTE`); whitespace-only o no-string → `""`.
+  6. Integración: `Markdown` añade prop `sanitize` (default false; `MarkdownViewer` de archivos NO sanea). Chat activa `sanitize` en las respuestas del assistant, y `copyMessage`/`copyTranscript`/`exportMarkdown` copian/exportan el texto ya formateado.
+- **Consecuencias:** respuestas con tool-calls filtrados en contenido ya no muestran XML crudo (ni en streaming ni al copiar/exportar); blindaje unicode contra caracteres que rompen el render. 61 tests vitest pasan (28 nuevos en `responseFormat.test.ts`); `npm run build` OK. El histórico enviado al modelo conserva el texto crudo (el wire lo sanean `sanitize_history`/transform en Rust); limpiar el contenido persistido es decisión futura si molesta el gasto de tokens.
+
+## ADR-036 — Auditoría y endurecimiento del módulo de herramientas (2026-08-20)
+
+- **Problema (encargo del usuario):** revisión completa del módulo de tools garantizando que todas funcionen; se auditaron ejecutores (main + subagente), helpers y permisos contra los patrones de opencode.
+- **Hallazgos y fixes aplicados (`agent.rs`):**
+  1. **Escape de workspace por colisión de prefijo:** `within()` usaba `starts_with` sin límite de componente → una carpeta hermana (`C:\proj2`) se consideraba dentro de `C:\proj`. Ahora exige igualdad o prefijo seguido de separador. (Security)
+  2. **SSRF en `webfetch`:** solo validaba el esquema. Ahora `is_public_url()` bloquea localhost/`.localhost`, IPs loopback/privadas/link-local/unspecified/multicast, CGNAT 100.64/10, IPv4-mapped IPv6; y un `FETCH_CLIENT` con `redirect::Policy::custom` re-valida CADA salto (máx. 5 redirecciones). El timeout de 25s ahora cubre también la lectura del body (antes un servidor lento podía colgar el turno).
+  3. **`webfetch` faltaba en el ejecutor del subagente** aunque `role_tools(Explorer)` lo anunciaba → el subagente siempre fallaba al usarlo ("no permitida en subagente"). Se comparte el helper `fetch_url_markdown()` entre ambos ejecutores.
+  4. **`run_bash` corrompía comandos:** la normalización `/c/...→C:/...` reescribía la PRIMERA aparición en cualquier posición (p. ej. `git clone https://host/a/b` → `a:/b`). Ahora `normalize_bash_command()` solo reescribe tokens de ruta (inicio o tras espacio/comilla/`=`).
+  5. **Cancelación/timeout de bash dejaba huérfanos en Windows:** `child.kill()` solo mata `cmd.exe`. Ahora `kill_process_tree()` ejecuta `taskkill /T /F` sobre el árbol.
+  6. **Guards de lectura:** `read_file_guarded()` (error claro si >8 MB o directorio, sugiere `read_file_range`) y `read_file_range_lines()` con `BufReader` (ya no carga el archivo entero; fuera de rango → mensaje informativo, no vacío silencioso).
+  7. **`grep` con `pattern` vacío devolvía 200 líneas arbitrarias** → ahora error explícito. `grep` principal ahora spillea igual que el subagente (`truncate_tool_output`).
+  8. **`list_dir`:** sobre un archivo o ruta inexistente daba salida vacía silenciosa → ahora error claro; directorio vacío → "(directorio vacío)".
+  9. **Paridad subagente:** `write_file` ahora chequea sintaxis (como `apply_patch`) y ambos rechazan rutas que resuelvan a directorio.
+  10. **`tool_kind("explore_subagent")` era Mutating** → en modo plan se contaba como mutación y reseteaba el contador del vigilante (un subagente de solo lectura "legalizaba" exploración infinita). Ahora ReadOnly.
+  11. **Fallo en modo plan (feedback del usuario):** el modelo emitió `<function_calls><invoke name="read_file_range">` con parámetros `string="true"`; el gateway extraía los invokes pero (a) insertaba TODOS los parámetros como String → `start_line`/`end_line` `"764"` no pasaban el `as_u64()` del ejecutor → leía la línea 1 en vez del rango pedido, y (b) el wrapper `<function_calls>` no se limpiaba del texto (los regex solo cubrían `tool_calls?`/DSML) → el XML sobraba en `outcome.text` y se colaba en historial/UI. Fix: parseo tipado de valores de parámetro XML (número/bool si JSON válido, si no String) + `function_calls` añadido a `RE_CLEAN_TOOL_CALLS`/`RE_CLEAN_STRAY_TAGS`; defensa en profundidad en el agente: `arg_number()` acepta números que lleguen como string en `read_file_range` (ambos ejecutores). Tests con el snippet exacto reportado (wrapper cerrado y stream cortado sin cierre).
+- **Consecuencias:** 55 tests Rust pasan (8 nuevos: `within` sibling-prefix, `is_public_url` SSRF, normalización bash, helpers de lectura, `tool_kind`, extracción XML `function_calls` con números tipados); 63 vitest pasan. `cargo test` y `npm run build` OK. Instaladores NSIS+MSI regenerados.
+
+## ADR-037 — Jerarquía y deduplicación de reglas de proyecto (2026-08-21)
+
+- **Problema:** con 2+ workspaces abiertos, `detect_project_rules` concatenaba TODOS los candidatos existentes de cada carpeta: inyectaba hasta 2× el mismo `MAKORA.md` universal (el de makora-ide y el de ai_quant_trading eran virtualmente idénticos), duplicando tokens en el system prompt de cada turno. Además no existía precedencia entre `.makora/rules.md` y `MAKORA.md` dentro de un mismo proyecto.
+- **Decisión:**
+  1. **Precedencia estricta por workspace:** `detect_project_rules` recorre los candidatos en orden (`.makora/rules.md` → `.makora/RULES.md` → `.makorarules` → `MAKORA.md` → `AGENTS.md` → `CLAUDE.md` → `.cursorrules`) y `break` en la primera coincidencia encontrada: un solo archivo de reglas por proyecto.
+  2. **Deduplicación entre workspaces:** se normaliza el contenido (minúsculas + colapso de whitespace) en un `HashSet`; el mismo archivo presente en varios workspaces se inyecta una única vez.
+  3. **MAKORA.md específicos por repositorio:** `makora-ide/MAKORA.md` quedó específico del IDE (reglas Rust/Tauri, contratos IPC, bindings specta) y `ai_quant_trading/MAKORA.md` específico del pipeline de trading (determinismo, invariantes numéricas, tests de estrategias). Se elimina el contenido universal duplicado en origen.
+- **Consecuencias:** el prompt de sistema ya no repite las reglas universales (ahorro de tokens por turno); se añadieron 4 tests unitarios (`rules_precedence_within_workspace`, `rules_empty_when_no_files`, `rules_deduplicated_across_workspaces`, `rules_distinct_across_workspaces`) en `lib.rs`. El contrato IPC (`Result<Option<String>, String>`) se mantiene intacto: sin cambios en frontend ni bindings.
+
 
 
 

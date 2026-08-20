@@ -546,7 +546,15 @@ fn within(folders: &[String], p: &std::path::Path) -> bool {
         let fp = std::path::Path::new(f);
         let f_canon = fp.canonicalize().unwrap_or_else(|_| fp.to_path_buf());
         let f_norm = normalize_path_str(&f_canon);
-        p_norm.starts_with(&f_norm)
+        if p_norm == f_norm {
+            return true;
+        }
+        let prefix = if f_norm.ends_with('/') {
+            f_norm.clone()
+        } else {
+            format!("{f_norm}/")
+        };
+        p_norm.starts_with(&prefix)
     })
 }
 
@@ -719,6 +727,10 @@ fn grep_dir(dir: &str, pattern: &str, out: &mut String, count: &mut u32, max: u3
 }
 
 fn list_dir_entries(path: &str, max_entries: usize) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("no se pudo acceder a {path}: {e}"))?;
+    if !meta.is_dir() {
+        return Err(format!("{path} es un archivo, no un directorio; usa read_file"));
+    }
     let mut builder = ignore::WalkBuilder::new(path);
     builder
         .max_depth(Some(1))
@@ -764,7 +776,64 @@ fn list_dir_entries(path: &str, max_entries: usize) -> Result<String, String> {
         out.push_str(&format!("{f}\n"));
         total += 1;
     }
+    if out.is_empty() {
+        return Ok("(directorio vacío)".into());
+    }
     Ok(out)
+}
+
+const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
+
+fn arg_number(args: &Value, key: &str) -> Option<u64> {
+    match args.get(key) {
+        Some(Value::Number(n)) => n.as_u64(),
+        Some(Value::String(s)) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
+fn read_file_guarded(path: &str, max_tokens: usize) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        return Err(format!("{path} es un directorio; usa list_dir"));
+    }
+    if meta.len() > MAX_READ_BYTES {
+        return Err(format!(
+            "archivo demasiado grande ({} MB) para read_file; usa read_file_range con líneas concretas",
+            meta.len() / (1024 * 1024)
+        ));
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    Ok(truncate_tool_output("read_file", &text, max_tokens))
+}
+
+fn read_file_range_lines(
+    path: &str,
+    start: usize,
+    end: usize,
+    max_tokens: usize,
+) -> Result<String, String> {
+    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(f);
+    let mut out = String::new();
+    let mut found = 0usize;
+    for (i, line) in reader.lines().enumerate() {
+        let ln = i + 1;
+        if ln > end {
+            break;
+        }
+        if ln < start {
+            continue;
+        }
+        let line = line.map_err(|e| e.to_string())?;
+        out.push_str(&format!("{ln}| {line}\n"));
+        found += 1;
+    }
+    if found == 0 {
+        return Ok("(sin líneas en el rango solicitado: el archivo es más corto)".into());
+    }
+    Ok(truncate_tool_output("read_file_range", &out, max_tokens))
 }
 
 fn is_dangerous_command(cmd: &str) -> bool {
@@ -830,7 +899,7 @@ enum ToolKind {
 }
 
 fn tool_kind(name: &str) -> ToolKind {
-    if is_read_only_tool(name) || name == "webfetch" {
+    if is_read_only_tool(name) || name == "webfetch" || name == "explore_subagent" {
         ToolKind::ReadOnly
     } else if name == "todowrite" || name == "question" {
         ToolKind::Neutral
@@ -839,9 +908,115 @@ fn tool_kind(name: &str) -> ToolKind {
     }
 }
 
-fn valid_fetch_url(url: &str) -> bool {
-    let lower = url.trim().to_lowercase();
-    lower.starts_with("https://") || lower.starts_with("http://")
+fn ip_is_local_or_private(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || {
+                    let oct = v4.octets();
+                    oct[0] == 100 && (64..=127).contains(&oct[1])
+                }
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+        }
+    }
+}
+
+fn is_public_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let scheme = parsed.scheme().to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host_lower = host.to_ascii_lowercase();
+    if host_lower == "localhost" || host_lower.ends_with(".localhost") {
+        return false;
+    }
+    let host_clean = host_lower.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host_clean.parse::<std::net::IpAddr>() {
+        let canonical = match ip {
+            std::net::IpAddr::V6(v6) => v6.to_canonical(),
+            other => other,
+        };
+        if ip_is_local_or_private(&canonical) {
+            return false;
+        }
+    }
+    true
+}
+
+static FETCH_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            attempt.error("demasiadas redirecciones")
+        } else if is_public_url(attempt.url().as_str()) {
+            attempt.follow()
+        } else {
+            attempt.error("la redirección apunta a una dirección no permitida (local/privada)")
+        }
+    });
+    reqwest::Client::builder()
+        .redirect(policy)
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default()
+});
+
+async fn fetch_url_markdown(url: &str) -> Result<String, String> {
+    if !is_public_url(url) {
+        return Err(
+            "solo se permiten URLs http/https públicas (sin localhost, IPs privadas ni destinos internos)"
+                .into(),
+        );
+    }
+    let text = tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        async {
+            let resp = FETCH_CLIENT
+                .get(url)
+                .header(
+                    reqwest::header::USER_AGENT,
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+                )
+                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+                .send()
+                .await
+                .map_err(|e| format!("error descargando {url}: {e}"))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(format!("HTTP {status} descargando {url}"));
+            }
+            if resp.content_length().unwrap_or(0) > 5_000_000 {
+                return Err("respuesta demasiado grande (>5 MB)".into());
+            }
+            resp.text()
+                .await
+                .map_err(|e| format!("error leyendo respuesta: {e}"))
+        },
+    )
+    .await
+    .map_err(|_| "timeout (25s) descargando la página".to_string())??;
+    if text.len() > 5_000_000 {
+        return Err("respuesta demasiado grande (>5 MB)".into());
+    }
+    let markdown = html_to_markdown(&text);
+    let mut out = format!("Contenido de {url} (convertido a Markdown):\n\n");
+    out.push_str(&truncate_tool_output("webfetch", &markdown, 6000));
+    Ok(out)
 }
 
 fn html_to_markdown(html: &str) -> String {
@@ -859,6 +1034,36 @@ fn html_to_markdown(html: &str) -> String {
         }
     }
     html2md::parse_html(&cleaned)
+}
+
+fn normalize_bash_command(command: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        // Normaliza rutas estilo unix (/c/Users/... -> C:/Users/...) que los LLMs
+        // envían por error, SOLO cuando el patrón aparece como token de ruta
+        // (inicio, tras espacio, comilla o igual). Así no corrompe URLs como
+        // https://host/a/b ni textos arbitrarios.
+        if let Ok(re) = regex::Regex::new(r#"(?i)(^|[\s"'=])/([a-z])/(\S*)"#) {
+            let out = re.replace_all(command, |caps: &regex::Captures<'_>| {
+                let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let drive = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                let rest = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+                format!("{prefix}{drive}:/{rest}")
+            });
+            return out.into_owned();
+        }
+    }
+    command.to_string()
+}
+
+#[cfg(target_os = "windows")]
+async fn kill_process_tree(pid: Option<u32>) {
+    let Some(pid) = pid else { return };
+    let mut cmd = tokio::process::Command::new("taskkill");
+    cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    let _ = cmd.spawn();
 }
 
 async fn run_bash(
@@ -882,13 +1087,7 @@ async fn run_bash(
 
     #[cfg(target_os = "windows")]
     let mut cmd = {
-        // Normalizar rutas tipo Unix (/c/Users/... -> C:/Users/...) que los LLMs suelen enviar por error
-        let mut normalized_cmd = command.to_string();
-        if let Some(caps) = regex::Regex::new(r"/(?i)([a-z])/(.*)").ok().and_then(|re| re.captures(command)) {
-            let drive = &caps[1];
-            let rest = &caps[2];
-            normalized_cmd = format!("{drive}:/{rest}");
-        }
+        let normalized_cmd = normalize_bash_command(command);
         let mut c = tokio::process::Command::new("cmd.exe");
         c.args(["/C", &normalized_cmd]);
         #[cfg(windows)]
@@ -971,17 +1170,21 @@ async fn run_bash(
         }
     });
 
-    // Espera con cancelación por chat: mata también el proceso hijo.
+    // Espera con cancelación por chat: mata también el árbol de procesos hijo.
     let timeout_duration = std::time::Duration::from_secs(600);
     let deadline = std::time::Instant::now() + timeout_duration;
     let exit_code: i32;
     loop {
         if is_chat_cancelled(chat_id) {
             let _ = child.kill().await;
+            #[cfg(target_os = "windows")]
+            kill_process_tree(child.id()).await;
             return Err("cancelado por el usuario".into());
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill().await;
+            #[cfg(target_os = "windows")]
+            kill_process_tree(child.id()).await;
             return Err("timeout (600s) ejecutando el comando bash".into());
         }
         match tokio::time::timeout(std::time::Duration::from_millis(300), child.wait()).await {
@@ -1576,41 +1779,26 @@ async fn execute_subagent_tool(
     match name {
         "read_file" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            Ok(truncate_tool_output("read_file", &text, 10000))
+            read_file_guarded(&path, 10000)
         }
         "read_file_range" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            let start = args
-                .get("start_line")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(1)
-                .max(1) as usize;
-            let end = args
-                .get("end_line")
-                .and_then(|x| x.as_u64())
+            let start = arg_number(&args, "start_line").unwrap_or(1).max(1) as usize;
+            let end = arg_number(&args, "end_line")
                 .unwrap_or(start as u64)
                 .max(start as u64) as usize;
-            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            let lines: Vec<&str> = text.lines().collect();
-            let slice: Vec<&str> = lines
-                .iter()
-                .skip(start - 1)
-                .take(end - start + 1)
-                .copied()
-                .collect();
-            let mut out = String::new();
-            for (i, l) in slice.iter().enumerate() {
-                out.push_str(&format!("{}| {}\n", start + i, l));
-            }
-            Ok(truncate_tool_output("read_file_range", &out, 10000))
+            read_file_range_lines(&path, start, end, 10000)
         }
         "list_dir" => {
             let path = resolve_path(folders, &s("path"), false)?;
             list_dir_entries(&path, 200)
         }
         "grep" => {
-            let pattern = s("pattern").to_lowercase();
+            let pattern = s("pattern");
+            if pattern.trim().is_empty() {
+                return Err("grep requiere un 'pattern' no vacío".into());
+            }
+            let pattern = pattern.to_lowercase();
             let path_arg = s("path");
             let dirs: Vec<String> = if path_arg.is_empty() {
                 folders.to_vec()
@@ -1630,8 +1818,15 @@ async fn execute_subagent_tool(
             }
             Ok(truncate_tool_output("grep", &out, 3000))
         }
+        "webfetch" => {
+            let url = s("url");
+            fetch_url_markdown(&url).await
+        }
         "apply_patch" => {
             let path = resolve_path(folders, &s("path"), false)?;
+            if std::path::Path::new(&path).is_dir() {
+                return Err(format!("{path} es un directorio; apply_patch solo edita archivos"));
+            }
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let (new_text, blocks) = apply_patch_to(&text, &s("patch"))?;
             snapshot.capture(&path);
@@ -1644,13 +1839,20 @@ async fn execute_subagent_tool(
         }
         "write_file" => {
             let path = resolve_path(folders, &s("path"), true)?;
+            if std::path::Path::new(&path).is_dir() {
+                return Err(format!("{path} es un directorio; write_file solo escribe archivos"));
+            }
             let content = s("content");
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             snapshot.capture(&path);
             std::fs::write(&path, &content).map_err(|e| e.to_string())?;
-            Ok(format!("archivo escrito: {path}"))
+            let mut msg = format!("archivo escrito: {path}");
+            if let Some(syntax_err) = check_file_syntax(&path, &content) {
+                msg.push_str(&format!("\n⚠️ ALERTA DE SINTAXIS: {syntax_err}"));
+            }
+            Ok(msg)
         }
         "bash" => run_bash(app, &s("command"), folders, chat_id).await,
         _ => Err(format!("herramienta no permitida en subagente: {name}")),
@@ -2215,37 +2417,21 @@ async fn execute_tool_inner(
     match name {
         "read_file" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            Ok(truncate_tool_output("read_file", &text, 15000))
+            read_file_guarded(&path, 15000)
         }
         "read_file_range" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            let start = args
-                .get("start_line")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(1)
-                .max(1) as usize;
-            let end = args
-                .get("end_line")
-                .and_then(|x| x.as_u64())
+            let start = arg_number(&args, "start_line").unwrap_or(1).max(1) as usize;
+            let end = arg_number(&args, "end_line")
                 .unwrap_or(start as u64)
                 .max(start as u64) as usize;
-            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            let lines: Vec<&str> = text.lines().collect();
-            let slice: Vec<&str> = lines
-                .iter()
-                .skip(start - 1)
-                .take(end - start + 1)
-                .copied()
-                .collect();
-            let mut out = String::new();
-            for (i, l) in slice.iter().enumerate() {
-                out.push_str(&format!("{}| {}\n", start + i, l));
-            }
-            Ok(truncate_tool_output("read_file_range", &out, 10000))
+            read_file_range_lines(&path, start, end, 10000)
         }
         "apply_patch" => {
             let path = resolve_path(folders, &s("path"), false)?;
+            if std::path::Path::new(&path).is_dir() {
+                return Err(format!("{path} es un directorio; apply_patch solo edita archivos"));
+            }
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let (new_text, blocks) = apply_patch_to(&text, &s("patch"))?;
             snapshot.capture(&path);
@@ -2304,7 +2490,11 @@ async fn execute_tool_inner(
             list_dir_entries(&path, 300)
         }
         "grep" => {
-            let pattern = s("pattern").to_lowercase();
+            let pattern = s("pattern");
+            if pattern.trim().is_empty() {
+                return Err("grep requiere un 'pattern' no vacío".into());
+            }
+            let pattern = pattern.to_lowercase();
             let path_arg = s("path");
             let dirs: Vec<String> = if path_arg.is_empty() {
                 folders.to_vec()
@@ -2322,11 +2512,14 @@ async fn execute_tool_inner(
             if out.is_empty() {
                 out = "sin coincidencias".into();
             }
-            Ok(token_engine::global().truncate(&out, 3000))
+            Ok(truncate_tool_output("grep", &out, 3000))
         }
         "bash" => run_bash(app, &s("command"), folders, chat_id).await,
         "write_file" => {
             let path = resolve_path(folders, &s("path"), true)?;
+            if std::path::Path::new(&path).is_dir() {
+                return Err(format!("{path} es un directorio; write_file solo escribe archivos"));
+            }
             let content = s("content");
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -2386,41 +2579,7 @@ async fn execute_tool_inner(
         }
         "webfetch" => {
             let url = s("url");
-            if !valid_fetch_url(&url) {
-                return Err("solo se permiten URLs http/https".into());
-            }
-            let resp = tokio::time::timeout(
-                std::time::Duration::from_secs(25),
-                gateway::HTTP_CLIENT
-                    .get(&url)
-                    .header(
-                        reqwest::header::USER_AGENT,
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-                    )
-                    .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
-                    .send(),
-            )
-            .await
-            .map_err(|_| "timeout (25s) descargando la página".to_string())?
-            .map_err(|e| format!("error descargando {url}: {e}"))?;
-            let status = resp.status();
-            if !status.is_success() {
-                return Err(format!("HTTP {status} descargando {url}"));
-            }
-            if resp.content_length().unwrap_or(0) > 5_000_000 {
-                return Err("respuesta demasiado grande (>5 MB)".into());
-            }
-            let text = resp
-                .text()
-                .await
-                .map_err(|e| format!("error leyendo respuesta: {e}"))?;
-            if text.len() > 5_000_000 {
-                return Err("respuesta demasiado grande (>5 MB)".into());
-            }
-            let markdown = html_to_markdown(&text);
-            let mut out = format!("Contenido de {url} (convertido a Markdown):\n\n");
-            out.push_str(&truncate_tool_output("webfetch", &markdown, 6000));
-            Ok(out)
+            fetch_url_markdown(&url).await
         }
         "skill" => {
             let skill_name = s("name");
@@ -3581,6 +3740,8 @@ mod tests {
     fn test_tool_kind_classification() {
         assert_eq!(tool_kind("read_file"), ToolKind::ReadOnly);
         assert_eq!(tool_kind("grep"), ToolKind::ReadOnly);
+        assert_eq!(tool_kind("webfetch"), ToolKind::ReadOnly);
+        assert_eq!(tool_kind("explore_subagent"), ToolKind::ReadOnly);
         assert_eq!(tool_kind("todowrite"), ToolKind::Neutral);
         assert_eq!(tool_kind("question"), ToolKind::Neutral);
         assert_eq!(tool_kind("write_file"), ToolKind::Mutating);
@@ -3588,6 +3749,82 @@ mod tests {
         assert_eq!(tool_kind("bash"), ToolKind::Mutating);
         assert_eq!(tool_kind("delegate_subagent"), ToolKind::Mutating);
         assert_eq!(tool_kind("mcp__git__status"), ToolKind::Mutating);
+    }
+
+    #[test]
+    fn test_within_blocks_sibling_prefix_escape() {
+        let root = std::env::temp_dir().join(format!("makora_within_test_{}", std::process::id()));
+        let ws = root.join("proj");
+        let sibling = root.join("proj2");
+        let _ = std::fs::create_dir_all(&ws);
+        let _ = std::fs::create_dir_all(&sibling);
+        let file_in = ws.join("src").join("main.rs");
+        let file_out = sibling.join("secret.txt");
+        let _ = std::fs::create_dir_all(file_in.parent().unwrap());
+        std::fs::write(&file_out, "x").unwrap();
+
+        let folders = vec![ws.to_string_lossy().to_string()];
+        assert!(within(&folders, &file_in));
+        assert!(!within(&folders, &file_out));
+        assert!(!within(&folders, &sibling));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_is_public_url_blocks_ssrf_targets() {
+        assert!(is_public_url("https://docs.rs/regex"));
+        assert!(is_public_url("https://example.com/path?q=1"));
+        assert!(!is_public_url("http://localhost:3000"));
+        assert!(!is_public_url("https://localhost/docs"));
+        assert!(!is_public_url("http://127.0.0.1/x"));
+        assert!(!is_public_url("http://[::1]/x"));
+        assert!(!is_public_url("http://10.0.0.5/x"));
+        assert!(!is_public_url("http://172.16.2.1/x"));
+        assert!(!is_public_url("http://192.168.1.1/x"));
+        assert!(!is_public_url("http://169.254.169.254/latest/meta-data"));
+        assert!(!is_public_url("http://100.64.0.1/x"));
+        assert!(!is_public_url("http://[::ffff:127.0.0.1]/x"));
+        assert!(!is_public_url("file:///etc/passwd"));
+        assert!(!is_public_url("ftp://example.com"));
+        assert!(!is_public_url("not a url"));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_normalize_bash_command_only_rewrites_path_tokens() {
+        assert_eq!(
+            normalize_bash_command("cd /d/Projects && dir"),
+            "cd d:/Projects && dir"
+        );
+        assert_eq!(normalize_bash_command("/c/Users/foo/file.txt"), "c:/Users/foo/file.txt");
+        assert_eq!(
+            normalize_bash_command("git clone https://github.com/user/repo"),
+            "git clone https://github.com/user/repo"
+        );
+        assert_eq!(
+            normalize_bash_command("curl https://api.example.com/a/b/c"),
+            "curl https://api.example.com/a/b/c"
+        );
+        assert_eq!(normalize_bash_command("cd C:\\Projects"), "cd C:\\Projects");
+    }
+
+    #[test]
+    fn test_read_helpers_guard_sizes_and_ranges() {
+        let root = std::env::temp_dir().join(format!("makora_range_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        let file = root.join("f.txt");
+        std::fs::write(&file, "uno\ndos\ntres\n").unwrap();
+        let f = file.to_string_lossy().to_string();
+
+        let full = read_file_guarded(&f, 1000).unwrap();
+        assert!(full.contains("tres"));
+
+        assert!(read_file_range_lines(&f, 2, 3, 1000).unwrap().contains("2| dos"));
+        assert!(read_file_range_lines(&f, 1, 1, 1000).unwrap().contains("1| uno"));
+        assert!(read_file_range_lines(&f, 10, 20, 1000).unwrap().contains("sin líneas"));
+
+        assert!(read_file_guarded(&root.to_string_lossy(), 1000).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -3887,11 +4124,11 @@ mod tests {
 
     #[test]
     fn test_valid_fetch_url() {
-        assert!(valid_fetch_url("https://docs.rs/serde"));
-        assert!(valid_fetch_url("http://localhost:3000/docs"));
-        assert!(!valid_fetch_url("file:///etc/passwd"));
-        assert!(!valid_fetch_url("ftp://example.com/x"));
-        assert!(!valid_fetch_url("javascript:alert(1)"));
+        assert!(is_public_url("https://docs.rs/serde"));
+        assert!(!is_public_url("http://localhost:3000/docs"));
+        assert!(!is_public_url("file:///etc/passwd"));
+        assert!(!is_public_url("ftp://example.com/x"));
+        assert!(!is_public_url("javascript:alert(1)"));
     }
 
     #[test]

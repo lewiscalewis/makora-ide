@@ -847,7 +847,7 @@ static RE_TAG_JSON: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new
 });
 
 static RE_CLEAN_TOOL_CALLS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?tool_calls?\s*>.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?tool_calls?\s*>"#).unwrap()
+    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>"#).unwrap()
 });
 
 static RE_CLEAN_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -855,7 +855,7 @@ static RE_CLEAN_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock:
 });
 
 static RE_CLEAN_STRAY_TAGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"<\s*/?\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|invoke|parameter|DSML).*?>"#).unwrap()
+    regex::Regex::new(r#"<\s*/?\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls|invoke|parameter|DSML).*?>"#).unwrap()
 });
 
 fn sanitize_and_extract_embedded_tool_calls(
@@ -877,7 +877,11 @@ fn sanitize_and_extract_embedded_tool_calls(
             for p_cap in RE_PARAM.captures_iter(body) {
                 let p_name = p_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
                 let p_val = p_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-                args_map.insert(p_name, Value::String(p_val));
+                let typed = match serde_json::from_str::<Value>(&p_val) {
+                    Ok(v) => v,
+                    Err(_) => Value::String(p_val),
+                };
+                args_map.insert(p_name, typed);
             }
             let args_str = Value::Object(args_map).to_string();
             if !name.is_empty() {
@@ -1468,6 +1472,24 @@ mod tests {
             "git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" status --short && git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" diff --stat"
         );
         assert_eq!(args["description"], "Inspect working tree changes");
+    }
+
+    #[test]
+    fn test_sanitize_and_extract_function_calls_wrapper_with_numeric_params() {
+        let mut text = "Tengo ya el mapa interno.\n\n<function_calls> <invoke name=\"read_file_range\"> <parameter name=\"end_line\" string=\"true\">778</parameter> <parameter name=\"path\" string=\"true\">C:\\Users\\lewis\\Projects\\makora-ide\\src-tauri\\src\\lib.rs</parameter> <parameter name=\"start_line\" string=\"true\">764</parameter> </invoke> <invoke name=\"read_file_range\"> <parameter name=\"end_line\" string=\"true\">790</parameter> <parameter name=\"path\" string=\"true\">C:\\Users\\lewis\\Projects\\makora-ide\\src-tauri\\src\\lib.rs</parameter> <parameter name=\"start_line\" string=\"true\">778</parameter> </invoke> </function_calls>".to_string();
+        let mut tool_calls = Vec::new();
+        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 111222);
+
+        assert_eq!(text, "Tengo ya el mapa interno.");
+        assert_eq!(tool_calls.len(), 2);
+        assert_eq!(tool_calls[0].name, "read_file_range");
+        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
+        assert_eq!(args["start_line"], 764);
+        assert_eq!(args["end_line"], 778);
+        assert!(args["path"].as_str().unwrap_or("").contains("lib.rs"));
+        let args2: Value = serde_json::from_str(&tool_calls[1].arguments).unwrap();
+        assert_eq!(args2["start_line"], 778);
+        assert_eq!(args2["end_line"], 790);
     }
 
     #[test]

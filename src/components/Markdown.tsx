@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { formatResponse } from "../responseFormat";
 
 interface CodeBlockProps {
   className?: string;
@@ -74,23 +75,11 @@ function CodeBlock({ className, children, onApplyArtifact }: CodeBlockProps) {
 interface MarkdownProps {
   text: string;
   onApplyArtifact?: (path: string, content: string) => void;
+  sanitize?: boolean;
 }
 
-function cleanLeakedTags(t: string): string {
-  if (!t) return "";
-  return t
-    .replace(/<\s*\|\s*DSML\s*\|\s*tool_calls\s*>[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*tool_calls\s*>/gi, "")
-    .replace(/<\s*\|\s*DSML\s*\|\s*invoke[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*invoke\s*>/gi, "")
-    .replace(/<\s*tool_call\s*>[\s\S]*?<\s*\/\s*tool_call\s*>/gi, "")
-    .replace(/<\s*\|?\s*DSML\s*\|?.*?>/gi, "")
-    .replace(/<\s*\/\s*\|?\s*DSML\s*\|?.*?>/gi, "")
-    .replace(/<\s*thought\s*>[\s\S]*?<\s*\/\s*thought\s*>/gi, "")
-    .replace(/<\s*thinking\s*>[\s\S]*?<\s*\/\s*thinking\s*>/gi, "")
-    .trim();
-}
-
-export default function Markdown({ text, onApplyArtifact }: MarkdownProps) {
-  const sanitized = cleanLeakedTags(text);
+export default function Markdown({ text, onApplyArtifact, sanitize = false }: MarkdownProps) {
+  const rendered = sanitize ? formatResponse(text) : text;
   return (
     <div className="markdown">
       <ReactMarkdown
@@ -123,7 +112,7 @@ export default function Markdown({ text, onApplyArtifact }: MarkdownProps) {
           },
         }}
       >
-        {sanitized}
+        {rendered}
       </ReactMarkdown>
     </div>
   );

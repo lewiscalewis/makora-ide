@@ -784,6 +784,9 @@ fn detect_project_rules(folders: Vec<String>) -> Result<Option<String>, String> 
     ];
 
     let mut rules_found = Vec::new();
+    // Deduplicación por contenido normalizado entre workspaces: evita inyectar
+    // el mismo archivo de reglas más de una vez (p.ej. un MAKORA.md universal).
+    let mut seen = std::collections::HashSet::new();
 
     for f in effective_folders(folders) {
         let base = std::path::Path::new(&f);
@@ -793,9 +796,20 @@ fn detect_project_rules(folders: Vec<String>) -> Result<Option<String>, String> 
                 if let Ok(content) = std::fs::read_to_string(&p) {
                     let trimmed = content.trim();
                     if !trimmed.is_empty() {
-                        rules_found.push(format!("### Reglas del Proyecto ({})\n{}", c, trimmed));
+                        // Normalización: minúsculas + colapso de whitespace.
+                        let norm: String = trimmed
+                            .to_lowercase()
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if seen.insert(norm) {
+                            rules_found
+                                .push(format!("### Reglas del Proyecto ({})\n{}", c, trimmed));
+                        }
                     }
                 }
+                // Precedencia estricta: el primer candidato existente gana por workspace.
+                break;
             }
         }
     }
@@ -1495,6 +1509,80 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_project(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("makora_rules_test_{}_{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn rules_precedence_within_workspace() {
+        let proj = temp_project("precedence");
+        std::fs::create_dir_all(proj.join(".makora")).unwrap();
+        std::fs::write(proj.join(".makora/rules.md"), "RULES_DOT_MAKORA").unwrap();
+        std::fs::write(proj.join("MAKORA.md"), "ROOT_MAKORA").unwrap();
+
+        let result = detect_project_rules(vec![proj.to_string_lossy().into_owned()]).unwrap();
+        let content = result.expect("reglas esperadas");
+        assert!(content.contains("RULES_DOT_MAKORA"));
+        assert!(!content.contains("ROOT_MAKORA"));
+
+        std::fs::remove_dir_all(&proj).ok();
+    }
+
+    #[test]
+    fn rules_empty_when_no_files() {
+        let proj = temp_project("none");
+        let result = detect_project_rules(vec![proj.to_string_lossy().into_owned()]).unwrap();
+        assert!(result.is_none());
+        std::fs::remove_dir_all(&proj).ok();
+    }
+
+    #[test]
+    fn rules_deduplicated_across_workspaces() {
+        let a = temp_project("dup_a");
+        let b = temp_project("dup_b");
+        std::fs::write(a.join("MAKORA.md"), "UNIVERSAL RULES").unwrap();
+        std::fs::write(b.join("MAKORA.md"), "UNIVERSAL RULES").unwrap();
+
+        let result = detect_project_rules(vec![
+            a.to_string_lossy().into_owned(),
+            b.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        let content = result.expect("reglas esperadas");
+        assert_eq!(content.matches("UNIVERSAL RULES").count(), 1);
+
+        std::fs::remove_dir_all(&a).ok();
+        std::fs::remove_dir_all(&b).ok();
+    }
+
+    #[test]
+    fn rules_distinct_across_workspaces() {
+        let a = temp_project("dist_a");
+        let b = temp_project("dist_b");
+        std::fs::write(a.join("MAKORA.md"), "RULES A").unwrap();
+        std::fs::write(b.join("MAKORA.md"), "RULES B").unwrap();
+
+        let result = detect_project_rules(vec![
+            a.to_string_lossy().into_owned(),
+            b.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        let content = result.expect("reglas esperadas");
+        assert!(content.contains("RULES A"));
+        assert!(content.contains("RULES B"));
+
+        std::fs::remove_dir_all(&a).ok();
+        std::fs::remove_dir_all(&b).ok();
+    }
 }
 
 

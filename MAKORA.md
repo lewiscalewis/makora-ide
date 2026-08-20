@@ -1,6 +1,6 @@
 # ⚔️ Reglas Maestras de Desarrollo Agéntico y Eficiencia de Tokens (MakoraIDE)
 
-> **Invariantes Operativos Universales para Modelos de Razonamiento y Agentes de Código (Gemini 3.7 Flash, Claude 3.7, DeepSeek v4, GPT-4o).**
+> **Invariantes Operativos Universales para Modelos de Razonamiento y Agentes de Código que trabajen sobre el repositorio makora-ide (IDE Tauri/Rust).**
 
 ---
 
@@ -28,6 +28,14 @@
 6. **Terminal Silenciosa (`bash`):**
    * Ejecuta comandos con banderas silenciosas (`-q`, `--quiet`, `--no-progress`).
    * Acota las salidas para evitar volcados masivos en el transcript.
+
+---
+
+## 🧩 1.5. Específico del Proyecto (makora-ide)
+
+- Backend Rust/Tauri: todo comando expuesto lleva `#[tauri::command]` + `#[specta::specta]`; al cambiar firmas públicas, regenerar `src/bindings.ts` (export de specta) y mantener compatibilidad con `src/api.ts`.
+- Contratos IPC: cambiar el tipo de retorno de un comando exige migrar también frontend y bindings; no romper firmas sin actualizar los consumidores.
+- Frontend React/TS en `src/`; los bindings de comandos se consumen vía `src/api.ts`.
 
 ---
 
