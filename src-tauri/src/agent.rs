@@ -1295,6 +1295,7 @@ fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
                     images: vec![],
                     tool_calls: None,
                     tool_call_id: m.tool_call_id.clone(),
+                    reasoning: None,
                 }
             } else {
                 m.clone()
@@ -1355,6 +1356,7 @@ fn sanitize_history(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
                                     images: vec![],
                                     tool_calls: None,
                                     tool_call_id: Some(id.clone()),
+                                    reasoning: None,
                                 });
                             }
                         }
@@ -1500,6 +1502,7 @@ async fn compact_history_llm(
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
+        reasoning: None,
     }];
     let outcome = if cfg.kind == "anthropic" {
         gateway::anthropic_turn(
@@ -1533,6 +1536,7 @@ async fn compact_history_llm(
             images: vec![],
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         },
         ChatMessage {
             role: "assistant".into(),
@@ -1540,6 +1544,7 @@ async fn compact_history_llm(
             images: vec![],
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         },
     ];
     compacted.extend_from_slice(tail);
@@ -1691,6 +1696,7 @@ async fn run_subagent(
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
+        reasoning: None,
     }];
     let tools = role_tools(role);
     let sub_chat_id = format!("{chat_id}__sub_{role_short}");
@@ -1748,6 +1754,11 @@ async fn run_subagent(
             images: vec![],
             tool_calls: Some(outcome.tool_calls.clone()),
             tool_call_id: None,
+            reasoning: if outcome.reasoning.is_empty() {
+                None
+            } else {
+                Some(outcome.reasoning.clone())
+            },
         });
 
         for tc in &outcome.tool_calls {
@@ -1807,6 +1818,7 @@ async fn run_subagent(
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
+                reasoning: None,
             });
         }
     }
@@ -2712,6 +2724,11 @@ async fn forced_final_turn(
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
+        reasoning: if forced.reasoning.is_empty() {
+            None
+        } else {
+            Some(forced.reasoning)
+        },
     });
     history::create_checkpoint(session_id, turn, &final_msgs);
     history::archive_transcript(session_id, turn, &final_msgs);
@@ -2993,6 +3010,11 @@ async fn run_loop(
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning: if outcome.reasoning.is_empty() {
+                    None
+                } else {
+                    Some(outcome.reasoning.clone())
+                },
             });
             history::create_checkpoint(&session_id, turn, &msgs);
             history::archive_transcript(&session_id, turn, &msgs);
@@ -3074,6 +3096,11 @@ async fn run_loop(
             images: vec![],
             tool_calls: Some(outcome.tool_calls.clone()),
             tool_call_id: None,
+            reasoning: if outcome.reasoning.is_empty() {
+                None
+            } else {
+                Some(outcome.reasoning.clone())
+            },
         });
 
         // Ejecución concurrente inteligente por lotes:
@@ -3150,6 +3177,7 @@ async fn run_loop(
                             images: vec![],
                             tool_calls: None,
                             tool_call_id: Some(tc.id.clone()),
+                            reasoning: None,
                         });
                     } else {
                         for tc in &calls {
@@ -3205,6 +3233,7 @@ async fn run_loop(
                                 images: vec![],
                                 tool_calls: None,
                                 tool_call_id: Some(id),
+                                reasoning: None,
                             });
                         }
                     }
@@ -3254,6 +3283,7 @@ async fn run_loop(
                         images: vec![],
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
+                        reasoning: None,
                     });
                 }
             }
@@ -3569,6 +3599,7 @@ mod tests {
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning: None,
             },
             ChatMessage {
                 role: "assistant".into(),
@@ -3589,6 +3620,7 @@ mod tests {
                     },
                 ]),
                 tool_call_id: None,
+                reasoning: None,
             },
             // Solo se respondió call_1, call_2 fue interrumpido
             ChatMessage {
@@ -3597,6 +3629,7 @@ mod tests {
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: Some("call_1".into()),
+                reasoning: None,
             },
             ChatMessage {
                 role: "user".into(),
@@ -3604,6 +3637,7 @@ mod tests {
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning: None,
             },
         ];
 
@@ -3712,6 +3746,7 @@ mod tests {
             images: vec![],
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         }
     }
 
@@ -3727,6 +3762,7 @@ mod tests {
                 extra_content: None,
             }]),
             tool_call_id: None,
+            reasoning: None,
         }
     }
 

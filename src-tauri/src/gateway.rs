@@ -24,6 +24,7 @@ pub struct TurnOutcome {
     pub usage: ChatUsage,
     pub text: String,
     pub tool_calls: Vec<ToolCall>,
+    pub reasoning: String,
 }
 
 pub static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
@@ -225,10 +226,21 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
         };
         obj["tool_call_id"] = json!(id);
     }
+    if let Some(rc) = &m.reasoning {
+        if !rc.is_empty() && requires_reasoning_echo(cfg) {
+            obj["reasoning_content"] = json!(rc);
+        }
+    }
     if m.role == "tool" && m.content.trim().is_empty() {
         obj["content"] = json!("[sin salida]");
     }
     obj
+}
+
+fn requires_reasoning_echo(cfg: &ChatConfig) -> bool {
+    let m = cfg.model.to_lowercase();
+    let b = cfg.base_url.to_lowercase();
+    m.contains("deepseek") || m.contains("reasoner") || b.contains("deepseek") || b.contains("openrouter")
 }
 
 fn is_local_endpoint(base: &str) -> bool {
@@ -519,6 +531,7 @@ pub async fn openai_turn(
 
     let mut usage = ChatUsage::default();
     let mut text = String::new();
+    let mut reasoning = String::new();
     let mut output_chars = 0usize;
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
     let mut global_extra_content: Option<Value> = None;
@@ -542,6 +555,7 @@ pub async fn openai_turn(
                     .and_then(|c| c.as_str());
                 if let Some(rc) = rc_opt {
                     if !rc.is_empty() {
+                        reasoning.push_str(rc);
                         let _ = app.emit(
                             "thinking-delta",
                             ThinkingDelta {
@@ -654,6 +668,7 @@ pub async fn openai_turn(
         usage,
         text,
         tool_calls,
+        reasoning,
     })
 }
 
@@ -1107,6 +1122,7 @@ pub async fn anthropic_turn(
         usage,
         text,
         tool_calls,
+        reasoning: String::new(),
     })
 }
 
@@ -1230,6 +1246,7 @@ mod tests {
                 })),
             }]),
             tool_call_id: None,
+            reasoning: None,
         };
 
         let wire = to_wire(&msg, &cfg);

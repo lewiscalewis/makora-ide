@@ -227,6 +227,7 @@ impl ContextComposer {
                     images: vec![],
                     tool_calls: None,
                     tool_call_id: None,
+                    reasoning: None,
                 },
             );
         }
@@ -245,6 +246,7 @@ mod tests {
             images: vec![],
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         }
     }
 
@@ -295,6 +297,7 @@ mod tests {
                     extra_content: None,
                 }]),
                 tool_call_id: None,
+                reasoning: None,
             });
             msgs.push(ChatMessage {
                 role: "tool".into(),
@@ -302,6 +305,7 @@ mod tests {
                 images: vec![],
                 tool_calls: None,
                 tool_call_id: Some(format!("call_{i}")),
+                reasoning: None,
             });
         }
         let fitted = composer.fit_history(&c, &msgs);

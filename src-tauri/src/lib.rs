@@ -83,6 +83,8 @@ pub struct ChatMessage {
     pub images: Vec<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Default, Type)]
@@ -469,6 +471,7 @@ async fn generate_title(app: AppHandle, config: ChatConfig, content: String) -> 
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
+        reasoning: None,
     }];
     let title_chat_id = format!(
         "{}__title_{}",

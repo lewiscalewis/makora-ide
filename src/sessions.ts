@@ -71,6 +71,8 @@ export function sanitizeMessage(raw: ChatMessage): ChatMessage {
         }))
       : undefined,
     toolCallId: typeof raw.toolCallId === "string" ? raw.toolCallId : null,
+    reasoning:
+      typeof raw.reasoning === "string" ? raw.reasoning.slice(0, 100_000) : undefined,
   };
 }
 

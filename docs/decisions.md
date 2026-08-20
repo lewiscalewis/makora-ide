@@ -223,6 +223,15 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   4. El presupuesto de coste (`maxCostPerTurn`, off por defecto) es la ÚNICA pregunta posible y solo existe porque el usuario la configuró explícitamente.
 - **Consecuencias:** para el usuario el agente "solo funciona"; ante un bucle real el modelo es corregido en silencio y, si persiste, el turno concluye con una respuesta normal. 47 tests Rust + 33 vitest pasan.
 
+## ADR-033 — Echo de `reasoning_content` para DeepSeek thinking (2026-08-20)
+
+- **Problema:** DeepSeek en modo thinking exige que el `reasoning_content` de los mensajes assistant se DEVUELVA a la API en las peticiones siguientes; Makora lo descartaba (decisión ADR-era pensada para Anthropic, que factura los thinking blocks si se preservan) → `HTTP 400: The reasoning_content in the thinking mode must be passed back to the API` a partir del segundo turno.
+- **Decisión:**
+  1. `ChatMessage.reasoning: Option<String>` (serde default + skip si none): `gateway.rs::openai_turn` acumula `delta.reasoning_content` y lo devuelve en `TurnOutcome.reasoning`; TODOS los assistant que se persisten (finales, con tool_calls, subagentes, síntesis forzada) llevan su reasoning.
+  2. `to_wire` añade `reasoning_content` SOLO cuando el proveedor lo requiere (`requires_reasoning_echo`: modelo/base_url con deepseek/reasoner/openrouter). OpenAI/Gemini/Ollama no reciben el campo.
+  3. Persistencia: el transcript del frontend (`sessions.ts`) conserva `reasoning` (cap 100k chars) para que las sesiones restauradas no fallen. Nota: sesiones antiguas (sin reasoning persistido) pueden seguir dando 400 con deepseek thinking → abrir sesión nueva.
+- **Consecuencias:** multi-turno con deepseek-v4-pro/reasoner funciona sin 400; Anthropic sigue sin almacenar thinking (no se le envía). 47 tests Rust + 33 vitest pasan.
+
 
 
 

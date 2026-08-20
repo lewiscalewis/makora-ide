@@ -57,6 +57,7 @@ export interface ChatMessage {
   toolCallId?: string | null;
   thinking?: string;
   metrics?: TurnMetrics;
+  reasoning?: string | null;
 }
 
 export interface ChatUsage {
