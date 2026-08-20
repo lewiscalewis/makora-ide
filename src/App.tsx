@@ -1142,7 +1142,7 @@ function App() {
       });
       const nextSessions = [fresh, ...prev.sessions];
       saveSessions(nextSessions);
-      setActiveSessionId(fresh.id);
+      persistActiveSessionId(fresh.id);
       return {
         sessions: nextSessions,
         activeId: fresh.id,

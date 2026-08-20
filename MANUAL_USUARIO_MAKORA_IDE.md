@@ -68,9 +68,10 @@ Siempre te explica qué cambió y dónde (con la ruta y la línea exactas). Tú 
 - 🖥️ **Interfaz de escritorio completa**: paneles redimensionables, explorador de archivos en árbol y una terminal integrada que tú y el agente compartís.
 - 🧠 **Conecta tu propio modelo de IA** mediante API key. Soporta varios proveedores: **OpenAI, DeepSeek, OpenRouter, Anthropic, Ollama** (modelos locales) y conexiones personalizadas.
 - 🔌 **Extensiones MCP** (Model Context Protocol): conectar herramientas externas adicionales desde la interfaz.
- - 🖼️ **Multimodal**: pegar imágenes o arrastrar archivos al chat para que el agente los tenga en cuenta.
- - 🗂️ **Múltiples sesiones en paralelo**: abre tantas pestañas de conversación como necesites (el botón **+** siempre está disponible) para trabajar en un proyecto distinto por pestaña, cada una con su propio workspace y chat independientes.
- - @️⃣ **Menciones** (`@`): referenciar archivos o elementos concretos del proyecto directamente en tu mensaje.
+- 🖼️ **Multimodal**: pegar imágenes o arrastrar archivos al chat para que el agente los tenga en cuenta.
+- 🗂️ **Múltiples sesiones en paralelo**: abre tantas pestañas de conversación como necesites (el botón **+** siempre está disponible) para trabajar en un proyecto distinto por pestaña, cada una con su propio workspace y chat independientes con persistencia protegida.
+- 🛡️ **Protección Anti-Bucles y Circuit Breakers**: límites duros de turnos (máx 25) y disyuntores de tokens/lectura pasiva que impiden que el agente se quede en bucles infinitos o gaste saldo innecesariamente.
+- @️⃣ **Menciones** (`@`): referenciar archivos o elementos concretos del proyecto directamente en tu mensaje.
 - 📝 **Respuestas enriquecidas**: markdown, tablas, bloques de código con botón de copiar y **artifacts** que puedes aplicar al proyecto con un clic o descargar.
 - 💰 **Monitor de créditos y tokens**: control en tiempo real del consumo y el coste estimado por modelo, para que no gastes de más.
 

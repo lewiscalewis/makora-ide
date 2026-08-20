@@ -120,5 +120,20 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
 - **Decisión:** `handleNewSession` elimina la heurística de reutilización y crea SIEMPRE una pestaña nueva (heredando las carpetas del workspace activo), de modo que el usuario puede abrir desde el inicio un proyecto distinto por sesión y trabajar en paralelo. `initSessions()` conserva las sesiones con `workspace.folders`/`workspace.openFiles`/`workspace.activeFilePath` asignados aunque aún no tengan mensajes, y solo poda las completamente vacías (sin mensajes y sin workspace).
 - **Consecuencias:** el botón **+** permanece renderizado de forma incondicional en `WorkspaceTabBar` (ya lo estaba); cada pestaña mantiene workspace y chat independientes; las pestañas vacías con proyecto abierto sobreviven a la recarga.
 
+## ADR-023 — Blindaje Integral Anti-Bucles, Circuit Breaker Semántico y Persistencia No Destructiva (2026-08-20)
+
+- **Problema:**
+  1. Consultas analíticas complejas o fallos de comandos en Windows causaban bucles infinitos de herramientas sin límite en `run_loop` (`loop {}`), acumulando más de 400 iteraciones, 28 millones de tokens y costes descontrolados de API.
+  2. El detector de bucles degenerados (`sig == prev_sig`) fallaba si el modelo variaba ligeramente un argumento o leía un rango diferente de líneas.
+  3. `run_bash` en Windows (`cmd.exe /C`) fallaba ante rutas Unix (`/c/Users/...`), provocando reintentos infinitos del LLM.
+  4. La saturación de memoria por transcripts masivos forzaba a `shrinkSessions` a vaciar los mensajes de todas las pestañas (`messages: []`), provocando que `initSessions` eliminara pestañas sanas al reiniciar.
+- **Decisión:**
+  1. **Techo de Seguridad (`MAX_AGENT_TURNS = 25`):** Ninguna consulta puede extenderse más allá de 25 turnos en `run_loop`.
+  2. **Presupuesto Máximo (`MAX_TURN_TOKENS = 500_000`):** Parada de seguridad automática ante consumos anómalos masivos de tokens.
+  3. **Circuit Breaker Semántico (`MAX_CONSECUTIVE_READ_ONLY = 6`):** Si se encadenan 6 lecturas de solo lectura (`read_file`, `grep`, `list_dir`) sin mutar código, se fuerza la síntesis y conclusión final.
+  4. **Normalización Windows en `run_bash`:** Las rutas Unix se convierten automáticamente a formato Windows (`C:/Users/...`).
+  5. **Persistencia No Destructiva en `sessions.ts`:** `shrinkSessions` trunca únicamente mensajes antiguos y outputs gigantes de la sesión pesada sin borrar jamás los mensajes de las demás pestañas. `initSessions()` preserva todas las pestañas abiertas por el usuario. `handleNewSession` guarda inmediatamente de forma síncrona en `localStorage`.
+
+
 
 
