@@ -232,6 +232,17 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   3. Persistencia: el transcript del frontend (`sessions.ts`) conserva `reasoning` (cap 100k chars) para que las sesiones restauradas no fallen. Nota: sesiones antiguas (sin reasoning persistido) pueden seguir dando 400 con deepseek thinking → abrir sesión nueva.
 - **Consecuencias:** multi-turno con deepseek-v4-pro/reasoner funciona sin 400; Anthropic sigue sin almacenar thinking (no se le envía). 47 tests Rust + 33 vitest pasan.
 
+## ADR-034 — Reglas de wire por proveedor portadas de `opencode/provider/transform.ts` (2026-08-20)
+
+- **Problema:** Makora mantenía reglas de comunicación por proveedor a mano y dispersas (cada 400 de proveedor era un fix puntual). opencode centraliza TODO en `ProviderTransform.message()`: normalización por proveedor, caching, unsupported parts y requisitos especiales de wire.
+- **Decisión (port de los patrones verificados en el repo de opencode, adaptados a los proveedores de Makora):**
+  1. **DeepSeek (transform.ts:304-320):** TODOS los assistant de deepseek/reasoner/openrouter llevan `reasoning_content` — si no hay reasoning guardado se envía VACÍO. Esto además arregla sesiones antiguas (ADR-033 cubría solo las nuevas).
+  2. **Claude (transform.ts:225-252):** scrub de `toolCallId` a `[a-zA-Z0-9_-]` (antes solo `:`→`_`), aplicado consistente en `tool_use` y `tool_result`.
+  3. **Mistral (transform.ts:254-302):** toolCallId reducido a 9 alfanuméricos rellenados con ceros + puente `assistant "Done."` entre `tool`→`user` (secuencia ilegal en Mistral).
+  4. **Schemas OpenAI (transform.ts:1428-1509):** `ensure_schema_types`: infiere `type` (object/array/string/number), convierte schemas booleanos a `{"type":"string"}` y desciende por properties/items/combiners/defs — solo para modelos gpt/o1/o3/openai.com (protege MCP tools).
+  5. Estos patrones se aplican en `gateway.rs` tras el saneamiento del wire (equivalente funcional al pipeline de `transform.ts` para nuestro set de proveedores).
+- **Consecuencias:** menos 400s por particularidades de proveedor; reglas en un único punto auditable; 50 tests Rust + 33 vitest pasan.
+
 
 
 

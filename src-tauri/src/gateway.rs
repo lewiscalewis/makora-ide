@@ -226,10 +226,10 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
         };
         obj["tool_call_id"] = json!(id);
     }
-    if let Some(rc) = &m.reasoning {
-        if !rc.is_empty() && requires_reasoning_echo(cfg) {
-            obj["reasoning_content"] = json!(rc);
-        }
+    // opencode transform.ts: DeepSeek exige reasoning en TODOS los assistant
+    // (se envía vacío si no hay, para evitar el 400 en multi-turno).
+    if m.role == "assistant" && requires_reasoning_echo(cfg) {
+        obj["reasoning_content"] = json!(m.reasoning.as_deref().unwrap_or(""));
     }
     if m.role == "tool" && m.content.trim().is_empty() {
         obj["content"] = json!("[sin salida]");
@@ -241,6 +241,160 @@ fn requires_reasoning_echo(cfg: &ChatConfig) -> bool {
     let m = cfg.model.to_lowercase();
     let b = cfg.base_url.to_lowercase();
     m.contains("deepseek") || m.contains("reasoner") || b.contains("deepseek") || b.contains("openrouter")
+}
+
+fn scrub_tool_id(id: &str) -> String {
+    let s: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    if s.trim_matches('_').is_empty() {
+        "call_0".to_string()
+    } else {
+        s
+    }
+}
+
+fn mistral_tool_id(id: &str) -> String {
+    let s: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).take(9).collect();
+    format!("{s:0<9}")
+}
+
+fn is_mistral(cfg: &ChatConfig) -> bool {
+    let m = cfg.model.to_lowercase();
+    let b = cfg.base_url.to_lowercase();
+    m.contains("mistral") || m.contains("pixtral") || b.contains("mistral")
+}
+
+fn fix_mistral_wire(msgs: Vec<Value>) -> Vec<Value> {
+    let mut msgs: Vec<Value> = msgs
+        .into_iter()
+        .map(|mut m| {
+            if m.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                if let Some(arr) = m.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                    for tc in arr.iter_mut() {
+                        if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                            tc["id"] = json!(mistral_tool_id(id));
+                        }
+                    }
+                }
+            }
+            if m.get("role").and_then(|r| r.as_str()) == Some("tool") {
+                if let Some(id) = m.get("tool_call_id").and_then(|i| i.as_str()) {
+                    m["tool_call_id"] = json!(mistral_tool_id(id));
+                }
+            }
+            m
+        })
+        .collect();
+    let mut out: Vec<Value> = Vec::with_capacity(msgs.len() + 4);
+    for i in 0..msgs.len() {
+        out.push(msgs[i].clone());
+        let cur_role = msgs[i].get("role").and_then(|r| r.as_str());
+        let next_role = msgs
+            .get(i + 1)
+            .and_then(|m| m.get("role"))
+            .and_then(|r| r.as_str());
+        if cur_role == Some("tool") && next_role == Some("user") {
+            out.push(json!({"role": "assistant", "content": "Done."}));
+        }
+    }
+    out
+}
+
+fn ensure_schema_types(value: &mut Value) {
+    match value {
+        Value::Bool(_) => {
+            *value = json!({"type": "string"});
+        }
+        Value::Object(map) => {
+            let looks_like_schema = map.contains_key("type")
+                || map.contains_key("properties")
+                || map.contains_key("items")
+                || map.contains_key("enum")
+                || map.contains_key("description")
+                || map.contains_key("required")
+                || map.contains_key("anyOf")
+                || map.contains_key("oneOf")
+                || map.contains_key("allOf")
+                || map.contains_key("$ref")
+                || map.contains_key("minimum")
+                || map.contains_key("maximum")
+                || map.is_empty();
+            if !looks_like_schema {
+                return;
+            }
+            let has_type = map.contains_key("type")
+                || map.contains_key("$ref")
+                || map.contains_key("anyOf")
+                || map.contains_key("oneOf")
+                || map.contains_key("allOf");
+            if !has_type {
+                if map.contains_key("properties") || map.contains_key("required") {
+                    map.insert("type".into(), json!("object"));
+                } else if map.contains_key("items") {
+                    map.insert("type".into(), json!("array"));
+                } else if map.contains_key("enum") {
+                    map.insert("type".into(), json!("string"));
+                } else if map.contains_key("minimum") || map.contains_key("maximum") {
+                    map.insert("type".into(), json!("number"));
+                } else {
+                    map.insert("type".into(), json!("string"));
+                }
+            }
+            if let Some(props) = map.get_mut("properties") {
+                if let Value::Object(pm) = props {
+                    let keys: Vec<String> = pm.keys().cloned().collect();
+                    for k in keys {
+                        if let Some(child) = pm.get_mut(&k) {
+                            ensure_schema_types(child);
+                        }
+                    }
+                }
+            }
+            if let Some(ap) = map.get_mut("additionalProperties") {
+                if ap.is_object() {
+                    ensure_schema_types(ap);
+                }
+            }
+            if let Some(it) = map.get_mut("items") {
+                ensure_schema_types(it);
+            }
+            for comb in ["anyOf", "oneOf", "allOf"] {
+                if let Some(arr) = map.get_mut(comb) {
+                    if let Value::Array(a) = arr {
+                        for item in a.iter_mut() {
+                            ensure_schema_types(item);
+                        }
+                    }
+                }
+            }
+            for def in ["$defs", "definitions"] {
+                if let Some(defs) = map.get_mut(def) {
+                    if let Value::Object(dm) = defs {
+                        let keys: Vec<String> = dm.keys().cloned().collect();
+                        for k in keys {
+                            if let Some(child) = dm.get_mut(&k) {
+                                ensure_schema_types(child);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                ensure_schema_types(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn requires_openai_schema_sanitize(cfg: &ChatConfig) -> bool {
+    let m = cfg.model.to_lowercase();
+    let b = cfg.base_url.to_lowercase();
+    m.contains("gpt") || m.contains("o1") || m.contains("o3") || b.contains("openai.com")
 }
 
 fn is_local_endpoint(base: &str) -> bool {
@@ -462,7 +616,10 @@ pub async fn openai_turn(
     for m in messages.iter() {
         msgs.push(to_wire(m, cfg));
     }
-    let msgs = sanitize_openai_wire(msgs);
+    let mut msgs = sanitize_openai_wire(msgs);
+    if is_mistral(cfg) {
+        msgs = fix_mistral_wire(msgs);
+    }
 
     let mut model_name = cfg.model.trim_start_matches("models/");
     let is_gemini = cfg.base_url.contains("googleapis.com") || model_name.starts_with("gemini");
@@ -494,16 +651,21 @@ pub async fn openai_turn(
         body["temperature"] = json!(t);
     }
     if !tools.is_empty() {
+        let schema_sanitize = requires_openai_schema_sanitize(cfg);
         let arr: Vec<Value> = tools
             .iter()
             .map(|t| {
                 let clean_name = t.name.replace(':', "_");
+                let mut parameters = t.parameters.clone();
+                if schema_sanitize {
+                    ensure_schema_types(&mut parameters);
+                }
                 json!({
                     "type": "function",
                     "function": {
                         "name": clean_name,
                         "description": t.description,
-                        "parameters": t.parameters
+                        "parameters": parameters
                     }
                 })
             })
@@ -894,7 +1056,7 @@ pub async fn anthropic_turn(
                         let id = if tc.id.trim().is_empty() {
                             format!("call_{i}")
                         } else {
-                            tc.id.clone()
+                            scrub_tool_id(&tc.id)
                         };
                         known_tool_ids.insert(id.clone());
                         blocks.push(json!({
@@ -914,8 +1076,13 @@ pub async fn anthropic_turn(
                 });
             }
             "tool" => {
-                let id = m.tool_call_id.clone().unwrap_or_default();
-                if id.trim().is_empty() || !known_tool_ids.contains(&id) {
+                let raw_id = m.tool_call_id.clone().unwrap_or_default();
+                let id = if raw_id.trim().is_empty() {
+                    "call_0".to_string()
+                } else {
+                    scrub_tool_id(&raw_id)
+                };
+                if !known_tool_ids.contains(&id) {
                     continue;
                 }
                 let content = if m.content.trim().is_empty() {
@@ -1326,6 +1493,87 @@ mod tests {
         assert!(!is_retryable_status(401, ""));
         assert!(!is_retryable_status(404, ""));
         assert!(!is_retryable_status(400, ""));
+    }
+
+    #[test]
+    fn test_deepseek_assistant_always_gets_reasoning_content() {
+        let cfg = ChatConfig {
+            kind: "openai".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            model: "deepseek-v4-pro".into(),
+            api_key: "dummy".into(),
+            reasoning_effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            vision_enabled: false,
+            context_window: None,
+        };
+        let with_reasoning = ChatMessage {
+            role: "assistant".into(),
+            content: "hola".into(),
+            images: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning: Some("pienso luego existo".into()),
+        };
+        let wire = to_wire(&with_reasoning, &cfg);
+        assert_eq!(wire["reasoning_content"], "pienso luego existo");
+
+        let without_reasoning = ChatMessage {
+            role: "assistant".into(),
+            content: "hola".into(),
+            images: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning: None,
+        };
+        let wire2 = to_wire(&without_reasoning, &cfg);
+        assert_eq!(wire2["reasoning_content"], "");
+
+        let other_cfg = ChatConfig {
+            model: "gpt-5".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            ..cfg
+        };
+        let wire3 = to_wire(&with_reasoning, &other_cfg);
+        assert!(wire3.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_fix_mistral_wire_done_bridge() {
+        let msgs = vec![
+            json!({"role": "user", "content": "u"}),
+            json!({"role": "assistant", "content": "", "tool_calls": [{"id": "call_abc-123", "function": {"name": "read_file", "arguments": "{}"}}]}),
+            json!({"role": "tool", "tool_call_id": "call_abc-123", "content": "ok"}),
+            json!({"role": "user", "content": "next"}),
+        ];
+        let fixed = fix_mistral_wire(msgs);
+        assert_eq!(fixed.len(), 5);
+        assert_eq!(fixed[3]["role"], "assistant");
+        assert_eq!(fixed[3]["content"], "Done.");
+        let id1 = fixed[1]["tool_calls"][0]["id"].as_str().unwrap();
+        let id2 = fixed[2]["tool_call_id"].as_str().unwrap();
+        assert_eq!(id1, id2);
+        assert!(id1.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert_eq!(id1.len(), 9);
+    }
+
+    #[test]
+    fn test_ensure_schema_types_infers() {
+        let mut v = json!({
+            "type": "object",
+            "properties": {
+                "name": {"description": "sin tipo"},
+                "tags": {"type": "array", "items": true},
+                "mode": {"enum": ["a", "b"]}
+            },
+            "required": ["name"]
+        });
+        ensure_schema_types(&mut v);
+        assert_eq!(v["properties"]["name"]["type"], "string");
+        assert_eq!(v["properties"]["tags"]["type"], "array");
+        assert_eq!(v["properties"]["tags"]["items"]["type"], "string");
+        assert_eq!(v["properties"]["mode"]["type"], "string");
     }
 }
 
