@@ -1140,8 +1140,11 @@ function App() {
         status: "idle",
         diff: null,
       });
+      const nextSessions = [fresh, ...prev.sessions];
+      saveSessions(nextSessions);
+      setActiveSessionId(fresh.id);
       return {
-        sessions: [fresh, ...prev.sessions],
+        sessions: nextSessions,
         activeId: fresh.id,
       };
     });

@@ -91,13 +91,13 @@ describe("Session Management and Sanitization", () => {
     expect(session2.workspace.thinkingLevel).toBe("low");
   });
 
-  it("initSessions prunes zombie empty sessions and returns a single clean session", () => {
-    // Simulate legacy storage with multiple empty sessions
-    const emptySessions = Array.from({ length: 10 }, () => makeSession("deepseek"));
-    localStorage.setItem("makora.sessions.v1", JSON.stringify(emptySessions));
+  it("initSessions preserves all user-opened sessions reliably without destructive pruning", () => {
+    // Simular almacenamiento con múltiples sesiones creadas por el usuario
+    const userSessions = Array.from({ length: 3 }, () => makeSession("deepseek"));
+    localStorage.setItem("makora.sessions.v1", JSON.stringify(userSessions));
 
     const { sessions, activeId } = initSessions();
-    expect(sessions.length).toBe(1);
+    expect(sessions.length).toBe(3);
     expect(activeId).toBe(sessions[0].id);
     expect(sessions[0].messages).toEqual([]);
   });

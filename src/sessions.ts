@@ -180,17 +180,19 @@ export function loadSessions(): ChatSession[] {
 }
 
 function shrinkSessions(sessions: ChatSession[]): string {
+  // Poda no destructiva: Trunca outputs gigantes de herramientas y mensajes antiguos
+  // pero conserva siempre los mensajes recientes y metadatos de TODAS las pestañas.
   const pruned = sessions.map((s) => ({
     ...s,
-    messages: s.messages.slice(-60).map((m) => ({
+    messages: s.messages.slice(-30).map((m) => ({
       ...sanitizeMessage(m),
       images: undefined,
-      content: m.content.slice(0, 20_000),
+      content: m.content.slice(0, 10_000),
       toolCalls: Array.isArray(m.toolCalls)
         ? m.toolCalls.map((tc) => ({
             id: safeString(tc.id),
             name: safeString(tc.name),
-            arguments: safeString(tc.arguments).slice(0, 10_000),
+            arguments: safeString(tc.arguments).slice(0, 2_000),
             extraContent: tc.extraContent,
           }))
         : undefined,
@@ -198,8 +200,23 @@ function shrinkSessions(sessions: ChatSession[]): string {
   }));
   const prunedJson = JSON.stringify(pruned);
   if (prunedJson.length <= MAX_STORAGE_BYTES) return prunedJson;
-  const metadata = sessions.slice(0, 10).map((s) => ({ ...s, messages: [] as ChatMessage[] }));
-  return JSON.stringify(metadata);
+
+  // Si aún supera el límite de localStorage, conservar los últimos 10 mensajes por sesión
+  const compact = sessions.map((s) => ({
+    ...s,
+    messages: s.messages.slice(-10).map((m) => ({
+      ...m,
+      content: m.content.slice(0, 2_000),
+      toolCalls: Array.isArray(m.toolCalls)
+        ? m.toolCalls.map((tc) => ({
+            id: safeString(tc.id),
+            name: safeString(tc.name),
+            arguments: safeString(tc.arguments).slice(0, 500),
+          }))
+        : undefined,
+    })),
+  }));
+  return JSON.stringify(compact);
 }
 
 export function saveSessions(sessions: ChatSession[]): void {
@@ -217,27 +234,18 @@ export function saveSessions(sessions: ChatSession[]): void {
     try {
       storage.setItem(STORAGE_KEY, shrinkSessions(ordered));
     } catch {
-      // Tier 3: Keep only the 10 most recent sessions with last 10 messages each
+      // Tier 3: Conservar últimas 10 sesiones con últimos 5 mensajes cada una
       try {
         const minimal = ordered.slice(0, 10).map((s) => ({
           ...s,
-          messages: s.messages.slice(-10).map((m) => ({
+          messages: s.messages.slice(-5).map((m) => ({
             ...m,
-            content: m.content.slice(0, 4000),
+            content: m.content.slice(0, 1000),
           })),
         }));
         storage.setItem(STORAGE_KEY, JSON.stringify(minimal));
       } catch {
-        // Tier 4: Emergency session metadata headers only
-        try {
-          const headersOnly = ordered.slice(0, 10).map((s) => ({
-            ...s,
-            messages: [] as ChatMessage[],
-          }));
-          storage.setItem(STORAGE_KEY, JSON.stringify(headersOnly));
-        } catch {
-          /* En caso de saturación extrema, el estado en memoria de React sigue preservado */
-        }
+        /* En caso de saturación extrema, el estado en memoria de React sigue preservado */
       }
     }
   }
@@ -290,19 +298,6 @@ export function makeSession(model: string, workspace?: SessionWorkspaceState): C
 
 export function initSessions(): { sessions: ChatSession[]; activeId: string } {
   const loaded = loadSessions();
-  // Poda de sesiones zombie vacías (sin mensajes y sin proyecto asignado),
-  // preservando aquellas que ya tengan un workspace/proyecto abierto aunque
-  // todavía no hayan enviado mensajes (trabajo en paralelo por pestaña).
-  const nonEmptySessions = loaded.filter((s) => {
-    const hasMessages = Array.isArray(s.messages) && s.messages.length > 0;
-    const ws = s.workspace;
-    const hasWorkspace =
-      !!ws &&
-      ((Array.isArray(ws.folders) && ws.folders.length > 0) ||
-        (Array.isArray(ws.openFiles) && ws.openFiles.length > 0) ||
-        !!ws.activeFilePath);
-    return hasMessages || hasWorkspace;
-  });
 
   let folders: string[] = [];
   try {
@@ -317,8 +312,8 @@ export function initSessions(): { sessions: ChatSession[]; activeId: string } {
     /* ignore */
   }
 
-  // Si no hay sesiones previas con contenido, iniciar exactamente con 1 sesión limpia
-  if (nonEmptySessions.length === 0) {
+  // Si no hay sesiones guardadas en absoluto, iniciar exactamente con 1 sesión limpia
+  if (loaded.length === 0) {
     const fresh = makeSession("", {
       folders,
       openFiles: [],
@@ -331,12 +326,12 @@ export function initSessions(): { sessions: ChatSession[]; activeId: string } {
     return { sessions: [fresh], activeId: fresh.id };
   }
 
-  // Si hay sesiones con contenido previo, preservar la activa o la más reciente
+  // Preservar todas las sesiones abiertas por el usuario (sin podas destructivas)
   const savedActiveId = getActiveSessionId();
-  const activeExists = savedActiveId && nonEmptySessions.some((s) => s.id === savedActiveId);
-  const activeId = activeExists ? savedActiveId! : nonEmptySessions[0].id;
+  const activeExists = savedActiveId && loaded.some((s) => s.id === savedActiveId);
+  const activeId = activeExists ? savedActiveId! : loaded[0].id;
 
-  saveSessions(nonEmptySessions);
+  saveSessions(loaded);
   setActiveSessionId(activeId);
-  return { sessions: nonEmptySessions, activeId };
+  return { sessions: loaded, activeId };
 }

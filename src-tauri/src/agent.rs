@@ -516,8 +516,15 @@ async fn run_bash(
 
     #[cfg(target_os = "windows")]
     let mut cmd = {
+        // Normalizar rutas tipo Unix (/c/Users/... -> C:/Users/...) que los LLMs suelen enviar por error
+        let mut normalized_cmd = command.to_string();
+        if let Some(caps) = regex::Regex::new(r"/(?i)([a-z])/(.*)").ok().and_then(|re| re.captures(command)) {
+            let drive = &caps[1];
+            let rest = &caps[2];
+            normalized_cmd = format!("{drive}:/{rest}");
+        }
         let mut c = tokio::process::Command::new("cmd.exe");
-        c.args(["/C", command]);
+        c.args(["/C", &normalized_cmd]);
         #[cfg(windows)]
         c.creation_flags(0x08000000); // CREATE_NO_WINDOW: completely silences background popup console windows
         c
@@ -1456,9 +1463,15 @@ async fn run_loop(
             msgs = restored;
         }
     }
+    const MAX_AGENT_TURNS: u32 = 25;
+    const MAX_TURN_TOKENS: u32 = 500_000;
+    const MAX_CONSECUTIVE_READ_ONLY: u32 = 6;
+
     let mut turn: u32 = 0;
     let mut prev_sig: Vec<String> = Vec::new();
     let mut repeats: u32 = 0;
+    let mut consecutive_read_only: u32 = 0;
+    let mut has_mutated: bool = false;
 
     loop {
         if is_chat_cancelled(chat_id) {
@@ -1565,6 +1578,19 @@ async fn run_loop(
             });
         }
 
+        // Control de circuito inteligente y límites duros de seguridad
+        let is_all_read_only = outcome.tool_calls.iter().all(|tc| is_read_only_tool(&tc.name));
+        if is_all_read_only {
+            consecutive_read_only += 1;
+        } else {
+            consecutive_read_only = 0;
+            has_mutated = true;
+        }
+
+        let is_token_exhausted = (total.input_tokens + total.output_tokens) >= MAX_TURN_TOKENS;
+        let is_turn_limit_reached = turn >= MAX_AGENT_TURNS;
+        let is_read_loop = consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY && !has_mutated;
+
         // Detección de bucle degenerado: las mismas llamadas repetidas sin progreso.
         let mut sig: Vec<String> = outcome
             .tool_calls
@@ -1574,51 +1600,59 @@ async fn run_loop(
         sig.sort();
         if sig == prev_sig {
             repeats += 1;
-            if repeats >= 2 {
-                let wire = prepare_wire(&msgs, cfg);
-                let forced = if cfg.kind == "anthropic" {
-                    gateway::anthropic_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
-                } else {
-                    gateway::openai_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
-                };
-                total.input_tokens += forced.usage.input_tokens;
-                total.output_tokens += forced.usage.output_tokens;
-                total.cached_tokens += forced.usage.cached_tokens;
-                history::record_request(
-                    &session_id,
-                    turn,
-                    &cfg.kind,
-                    &cfg.model,
-                    &RequestMeter {
-                        input_tokens: forced.usage.input_tokens,
-                        cached_tokens: forced.usage.cached_tokens,
-                        output_tokens: forced.usage.output_tokens,
-                        cost_usd: 0.0,
-                        latency_ms: 0,
-                    },
-                );
-                msgs.push(ChatMessage {
-                    role: "assistant".into(),
-                    content: format!(
-                        "{}\n\n⚠️ Se detectó un bucle de herramientas repetidas; continúo con la respuesta final.",
-                        forced.text
-                    ),
-                    images: vec![],
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-                history::create_checkpoint(&session_id, turn, &msgs);
-                history::archive_transcript(&session_id, turn, &msgs);
-                return Ok(ChatResult {
-                    input_tokens: total.input_tokens,
-                    output_tokens: total.output_tokens,
-                    cached_tokens: total.cached_tokens,
-                    messages: msgs,
-                });
-            }
         } else {
             repeats = 0;
             prev_sig = sig;
+        }
+
+        if repeats >= 2 || is_turn_limit_reached || is_token_exhausted || is_read_loop {
+            let reason_msg = if is_turn_limit_reached {
+                "⚠️ Límite de seguridad alcanzado (máximo 25 turnos). Sintetizando respuesta final."
+            } else if is_token_exhausted {
+                "⚠️ Presupuesto de tokens por consulta alcanzado. Sintetizando respuesta final."
+            } else if is_read_loop {
+                "⚠️ Fase de inspección completada (6 lecturas consecutivas). Sintetizando respuesta final."
+            } else {
+                "⚠️ Se detectó un bucle de herramientas repetidas; continúo con la respuesta final."
+            };
+
+            let wire = prepare_wire(&msgs, cfg);
+            let forced = if cfg.kind == "anthropic" {
+                gateway::anthropic_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
+            } else {
+                gateway::openai_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
+            };
+            total.input_tokens += forced.usage.input_tokens;
+            total.output_tokens += forced.usage.output_tokens;
+            total.cached_tokens += forced.usage.cached_tokens;
+            history::record_request(
+                &session_id,
+                turn,
+                &cfg.kind,
+                &cfg.model,
+                &RequestMeter {
+                    input_tokens: forced.usage.input_tokens,
+                    cached_tokens: forced.usage.cached_tokens,
+                    output_tokens: forced.usage.output_tokens,
+                    cost_usd: 0.0,
+                    latency_ms: 0,
+                },
+            );
+            msgs.push(ChatMessage {
+                role: "assistant".into(),
+                content: format!("{}\n\n{reason_msg}", forced.text),
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: None,
+            });
+            history::create_checkpoint(&session_id, turn, &msgs);
+            history::archive_transcript(&session_id, turn, &msgs);
+            return Ok(ChatResult {
+                input_tokens: total.input_tokens,
+                output_tokens: total.output_tokens,
+                cached_tokens: total.cached_tokens,
+                messages: msgs,
+            });
         }
 
         msgs.push(ChatMessage {
