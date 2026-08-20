@@ -18,9 +18,22 @@ fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 fn data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
+
+    #[cfg(target_os = "macos")]
+    let base = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join("Library/Application Support"))
+        .unwrap_or_else(|_| std::env::temp_dir());
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|_| std::env::temp_dir());
+
     base.join("MakoraIDE")
 }
 

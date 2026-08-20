@@ -77,11 +77,19 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
     let animId = 0;
     let isVisible = !document.hidden;
 
-    // Visibility change handler to save GPU / battery
+    // Visibility change and window focus handler to save GPU / battery
     const onVisibilityChange = () => {
       isVisible = !document.hidden;
     };
+    const onFocus = () => {
+      isVisible = true;
+    };
+    const onBlur = () => {
+      isVisible = false;
+    };
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
 
     // =========================================================================
     // 1. MATRIX DIGITAL RAIN (Canvas 2D Stream)
@@ -94,6 +102,8 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
         if (container.contains(canvas)) {
           container.removeChild(canvas);
         }
@@ -159,6 +169,8 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
         cancelAnimationFrame(animId);
         window.removeEventListener("resize", resize);
         document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
         if (container.contains(canvas)) {
           container.removeChild(canvas);
         }
@@ -856,6 +868,8 @@ export default function AmbientCanvas3D({ currentTheme }: AmbientCanvasProps) {
       window.removeEventListener("resize", onResize);
       window.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
 
       // Deep Three.js cleanup
       scene.traverse((obj) => {

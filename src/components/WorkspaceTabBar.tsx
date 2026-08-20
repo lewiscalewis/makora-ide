@@ -1,4 +1,5 @@
-import { Plus, X } from "lucide-react";
+import { Plus, X, ExternalLink } from "lucide-react";
+import { openSessionWindow } from "../api";
 import type { ChatSession } from "../types";
 import { useI18n } from "../i18n";
 
@@ -64,6 +65,17 @@ export default function WorkspaceTabBar({
 
               <span className="workspace-tab-title">{title}</span>
 
+                            <button
+                type="button"
+                className="workspace-tab-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openSessionWindow(sess.id, title).catch(console.error);
+                }}
+                title="Desacoplar a ventana independiente"
+              >
+                <ExternalLink size={11} />
+              </button>
               {sessions.length > 1 && (
                 <button
                   type="button"

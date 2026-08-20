@@ -126,6 +126,5 @@ export const getInitialFile = () =>
   invoke<string | null>("get_initial_file");
 export const checkBetaValidity = () =>
   invoke<void>("check_beta_validity");
-
-
-
+export const openSessionWindow = (sessionId: string, title: string) =>
+  invoke<void>("open_session_window", { sessionId, title });

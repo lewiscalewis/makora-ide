@@ -28,6 +28,7 @@ import StatusBar from "./components/StatusBar";
 import CommandPalette from "./components/CommandPalette";
 import UnifiedWorkspace from "./components/UnifiedWorkspace";
 import AmbientCanvas3D from "./components/AmbientCanvas3D";
+import ShortcutsModal from "./components/ShortcutsModal";
 import WorkspaceTabBar from "./components/WorkspaceTabBar";
 import {
   cancelTurn,
@@ -183,6 +184,7 @@ function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGitModal, setShowGitModal] = useState(false);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -313,6 +315,24 @@ function App() {
 
   // Chat history state (persisted in localStorage), workspace incluido por sesión.
   const [sessionState, setSessionState] = useState(initSessions);
+  // Focus on detached session if opened with ?sessionId=...
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const targetSessionId = params.get("sessionId");
+      if (targetSessionId) {
+        setSessionState((prev) => {
+          const exists = prev.sessions.some((s) => s.id === targetSessionId);
+          if (exists) {
+            return { ...prev, activeId: targetSessionId };
+          }
+          return prev;
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const sessions = sessionState.sessions;
   const activeSessionId = sessionState.activeId;
   const [showHistory, setShowHistory] = useState(false);
@@ -1110,18 +1130,8 @@ function App() {
 
   const handleNewSession = useCallback(() => {
     setSessionState((prev) => {
-      const current = prev.sessions.find((s) => s.id === prev.activeId);
-      if (current) {
-        const rt = getSessionRuntime(current.id);
-        const hasMessages =
-          current.messages.length > 0 ||
-          rt.messages.length > 0 ||
-          rt.transcript.length > 0;
-        // If current session is completely idle and has 0 messages, reuse it
-        if (!hasMessages && !rt.busy) {
-          return prev;
-        }
-      }
+      // Siempre se crea una pestaña nueva, incluso si la sesión activa está
+      // vacía, para permitir abrir un proyecto distinto por sesión en paralelo.
       const inheritFolders = [...activeWorkspaceRef.current.folders];
       const fresh = makeSession(settings.model || "", {
         folders: inheritFolders,
@@ -1594,6 +1604,13 @@ function App() {
             costUsd={costUsd}
             onRefreshBalance={refreshBalance}
             onClose={() => setShowAnalyticsModal(false)}
+          />
+        )}
+
+        {showShortcuts && (
+          <ShortcutsModal
+            isOpen={showShortcuts}
+            onClose={() => setShowShortcuts(false)}
           />
         )}
 

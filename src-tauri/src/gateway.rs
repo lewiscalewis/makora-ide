@@ -226,57 +226,7 @@ fn norm_effort_anthropic(e: &str) -> Option<String> {
     }
 }
 
-/// Garantiza una secuencia válida para cualquier API OpenAI-compatible:
-/// - descarta mensajes `tool` sin `tool_call_id` conocido o huérfanos al inicio;
-/// - descarta asistentes vacíos (sin contenido ni tool_calls).
-fn sanitize_openai_wire(msgs: Vec<Value>) -> Vec<Value> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut started = false;
-    let mut out: Vec<Value> = Vec::with_capacity(msgs.len());
-    for m in msgs {
-        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("").to_string();
-        match role.as_str() {
-            "assistant" => {
-                if let Some(tcs) = m.get("tool_calls").and_then(|t| t.as_array()) {
-                    for tc in tcs {
-                        if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
-                            if !id.is_empty() {
-                                seen.insert(id.to_string());
-                            }
-                        }
-                    }
-                }
-                let has_content = m
-                    .get("content")
-                    .map(|c| c.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false))
-                    .unwrap_or(false);
-                let has_tools = m
-                    .get("tool_calls")
-                    .map(|t| t.as_array().map(|a| !a.is_empty()).unwrap_or(false))
-                    .unwrap_or(false);
-                if !has_content && !has_tools {
-                    continue;
-                }
-                started = true;
-                out.push(m);
-            }
-            "tool" => {
-                let id = m.get("tool_call_id").and_then(|i| i.as_str()).unwrap_or("");
-                if !started || id.is_empty() || !seen.contains(id) {
-                    continue;
-                }
-                out.push(m);
-            }
-            _ => {
-                started = true;
-                out.push(m);
-            }
-        }
-    }
-    out
-}
-
-fn format_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
+fn classify_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
     let clean = raw_body.trim();
     let detail = if clean.is_empty() {
         "(sin respuesta adicional del servidor)"
@@ -292,6 +242,92 @@ fn format_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
         500..=599 => format!("Fallo Temporal del Proveedor ({status}): El servidor de IA experimenta sobrecarga o mantenimiento. Intenta de nuevo en unos instantes.\nDetalles: {detail}"),
         _ => format!("HTTP {status}: {detail}"),
     }
+}
+
+
+fn format_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
+    classify_http_error(status, raw_body)
+}
+
+fn sanitize_openai_wire(msgs: Vec<Value>) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::with_capacity(msgs.len());
+    let mut i = 0;
+    let n = msgs.len();
+
+    while i < n {
+        let m = &msgs[i];
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+
+        if role == "assistant" {
+            if let Some(tcs) = m.get("tool_calls").and_then(|t| t.as_array()) {
+                if !tcs.is_empty() {
+                    let required_ids: Vec<String> = tcs
+                        .iter()
+                        .filter_map(|tc| tc.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+                        .collect();
+
+                    let mut tool_responses: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+                    let mut j = i + 1;
+                    while j < n {
+                        let next_role = msgs[j].get("role").and_then(|r| r.as_str()).unwrap_or("");
+                        if next_role == "tool" {
+                            if let Some(tid) = msgs[j].get("tool_call_id").and_then(|id| id.as_str()) {
+                                tool_responses.insert(tid.to_string(), msgs[j].clone());
+                            }
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    out.push(m.clone());
+
+                    for id in &required_ids {
+                        if let Some(resp) = tool_responses.remove(id) {
+                            out.push(resp);
+                        } else {
+                            out.push(json!({
+                                "role": "tool",
+                                "tool_call_id": id,
+                                "content": "[Llamada a herramienta interrumpida o completada previamente]"
+                            }));
+                        }
+                    }
+
+                    i = j;
+                    continue;
+                }
+            }
+        }
+
+        if role == "tool" {
+            i += 1;
+            continue;
+        }
+
+        out.push(m.clone());
+        i += 1;
+    }
+
+    out
+}
+
+struct AntMsg {
+    role: String,
+    blocks: Vec<Value>,
+}
+
+fn sanitize_anthropic_wire(msgs: Vec<AntMsg>) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+        for m in msgs {
+        let role = m.role;
+        let content = json!(m.blocks);
+        out.push(json!({
+            "role": role,
+            "content": content
+        }));
+    }
+    out
 }
 
 pub async fn openai_turn(
@@ -578,7 +614,7 @@ fn sanitize_and_extract_embedded_tool_calls(
                             if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
                                 let arguments = if let Some(args) = item.get("arguments") {
                                     if args.is_string() {
-                                        args.as_str().unwrap().to_string()
+                                        args.as_str().unwrap_or_default().to_string()
                                     } else {
                                         args.to_string()
                                     }
@@ -597,7 +633,7 @@ fn sanitize_and_extract_embedded_tool_calls(
                     } else if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
                         let arguments = if let Some(args) = v.get("arguments") {
                             if args.is_string() {
-                                args.as_str().unwrap().to_string()
+                                args.as_str().unwrap_or_default().to_string()
                             } else {
                                 args.to_string()
                             }
@@ -682,11 +718,6 @@ pub async fn anthropic_turn(
 ) -> Result<TurnOutcome, String> {
     let base = cfg.base_url.trim_end_matches('/');
     let url = format!("{base}/messages");
-
-    struct AntMsg {
-        role: String,
-        blocks: Vec<Value>,
-    }
 
     let mut raw: Vec<AntMsg> = Vec::new();
     let mut known_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -780,27 +811,29 @@ pub async fn anthropic_turn(
         }
     }
 
-    while let Some(first) = raw.first() {
-        if first.role == "user" {
-            break;
-        }
-        raw.remove(0);
-    }
-    let mut merged: Vec<AntMsg> = Vec::new();
-    for m in raw {
-        if let Some(last) = merged.last_mut() {
-            if last.role == m.role {
-                last.blocks.extend(m.blocks);
-                continue;
+    let mut msgs = sanitize_anthropic_wire(raw);
+
+    // Dynamic Prompt Caching (M4): En conversaciones de varios turnos (>= 4 mensajes),
+    // marcamos el penúltimo mensaje de usuario con cache_control efímero para cachear
+    // todo el contexto anterior ahorrando 90% de costes y acelerando el streaming.
+    if msgs.len() >= 4 {
+        let user_indices: Vec<usize> = msgs
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m["role"] == "user")
+            .map(|(i, _)| i)
+            .collect();
+        if user_indices.len() >= 2 {
+            let target_idx = user_indices[user_indices.len() - 2];
+            if let Some(blocks) = msgs[target_idx]["content"].as_array_mut() {
+                if let Some(last_block) = blocks.last_mut() {
+                    if let Some(obj) = last_block.as_object_mut() {
+                        obj.insert("cache_control".to_string(), serde_json::json!({"type": "ephemeral"}));
+                    }
+                }
             }
         }
-        merged.push(m);
     }
-    let msgs: Vec<Value> = merged
-        .into_iter()
-        .map(|m| json!({"role": m.role, "content": m.blocks}))
-        .collect();
-
     let mut body = json!({
         "model": cfg.model,
         "stream": true,

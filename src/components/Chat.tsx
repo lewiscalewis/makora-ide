@@ -7,6 +7,7 @@ import {
   readTextFile,
 } from "../api";
 import Markdown from "./Markdown";
+import DiffReviewModal from "./DiffReviewModal";
 import { isModelReasoningSupported } from "../defaults";
 import {
   Zap,
@@ -242,6 +243,7 @@ function GroupedToolsDropdown({
   onCopyLog: (id: string, log: string) => void;
 }) {
   const { t } = useI18n();
+
   const runningTool = activities.find((a) => a.ok === null);
   const isRunning = Boolean(runningTool);
   const hasFailed = activities.some((a) => a.ok === false);
@@ -290,6 +292,7 @@ function ThinkingDropdown({
   isStreaming?: boolean;
 }) {
   const { t } = useI18n();
+
   const [open, setOpen] = useState(false);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
 
@@ -322,6 +325,7 @@ const ROLE_ICONS: Record<SubagentRole, ReactNode> = {
 
 function MultiAgentPanel({ plan, busy }: { plan: MultiAgentPlanState; busy: boolean }) {
   const { t } = useI18n();
+
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
   const doneCount = plan.steps.filter((s) => s.status === "completed").length;
 
@@ -448,6 +452,25 @@ export default function Chat({
   onClearInjectedPrompt,
 }: ChatProps) {
   const { t } = useI18n();
+  const [diffModalState, setDiffModalState] = useState<{
+    isOpen: boolean;
+    filePath: string;
+    diffContent: string;
+    onApply?: () => void;
+  }>({
+    isOpen: false,
+    filePath: "",
+    diffContent: "",
+  });
+
+  const handleInspectOrApplyArtifact = (path: string, content: string) => {
+    setDiffModalState({
+      isOpen: true,
+      filePath: path,
+      diffContent: content,
+      onApply: () => onApplyArtifact(path, content),
+    });
+  };
   const rt = useSessionRuntime(sessionId);
   const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments } = rt;
   const [input, setInputState] = useState(() => draftInput ?? "");
@@ -895,9 +918,6 @@ export default function Chat({
     });
   };
 
-  const applyArtifact = (path: string, content: string) => {
-    onApplyArtifact(path, content);
-  };
 
   const copyMessage = (id: number, text: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -1168,7 +1188,7 @@ export default function Chat({
                   {/* 3. Assistant Response Markdown Text or Reassuring Working State */}
                   {m.text ? (
                     <div className="msg-content">
-                      <Markdown text={m.text} onApplyArtifact={applyArtifact} />
+                      <Markdown text={m.text} onApplyArtifact={handleInspectOrApplyArtifact} />
                     </div>
                   ) : isBusyCurrent ? (
                     <div className="ai-working-indicator">
@@ -1569,7 +1589,13 @@ export default function Chat({
         </div>
       </form>
 
-
+      <DiffReviewModal
+        isOpen={diffModalState.isOpen}
+        filePath={diffModalState.filePath}
+        diffContent={diffModalState.diffContent}
+        onClose={() => setDiffModalState((prev) => ({ ...prev, isOpen: false }))}
+        onApply={diffModalState.onApply}
+      />
     </section>
   );
 }

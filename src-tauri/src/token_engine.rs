@@ -137,27 +137,68 @@ impl ContextComposer {
         ((self.budget_tokens as f64) * share) as usize
     }
 
-    /// Poda de historia dentro de su cuota respetando el orden estable
-    /// (los mensajes recientes prevalecen; los antiguos se resumen en un
-    /// CompactBoundary cuando se excede la cuota).
+    /// Poda de historia dentro de su cuota respetando el orden estable y la atomicidad de turnos
+    /// (los bloques asistente + respuestas de herramientas nunca se fragmentan a la mitad;
+    /// los mensajes antiguos se resumen en un CompactBoundary cuando se excede la cuota).
     pub fn fit_history<'a>(
         &self,
         counter: &TokenCounter,
         msgs: &'a [ChatMessage],
     ) -> Vec<ChatMessage> {
         let quota = self.quota_tokens(self.quotas.history);
+
+        // Agrupar mensajes en bloques atómicos indivisibles:
+        // - Cada llamada de asistente con sus respuestas de herramientas forma un bloque atómico.
+        // - Mensajes de usuario, sistema o asistente simple forman bloques individuales.
+        let mut atomic_blocks: Vec<Vec<ChatMessage>> = Vec::new();
+        let mut i = 0;
+        let n = msgs.len();
+
+        while i < n {
+            let m = &msgs[i];
+            if m.role == "assistant" && m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false) {
+                let mut block = vec![m.clone()];
+                let mut j = i + 1;
+                while j < n && msgs[j].role == "tool" {
+                    block.push(msgs[j].clone());
+                    j += 1;
+                }
+                atomic_blocks.push(block);
+                i = j;
+            } else {
+                atomic_blocks.push(vec![m.clone()]);
+                i += 1;
+            }
+        }
+
         let mut out: Vec<ChatMessage> = Vec::new();
         let mut used = 0usize;
         let mut skipped = 0usize;
-        for m in msgs.iter().rev() {
-            let size = counter.count(&m.content) + 4;
-            if used + size <= quota || out.is_empty() {
-                out.push(m.clone());
-                used += size;
+
+        for block in atomic_blocks.iter().rev() {
+            let block_tokens: usize = block
+                .iter()
+                .map(|m| {
+                    let mut s = counter.count(&m.content) + 4;
+                    if let Some(tcs) = &m.tool_calls {
+                        for tc in tcs {
+                            s += 12 + counter.count(&tc.name) + counter.count(&tc.arguments);
+                        }
+                    }
+                    s
+                })
+                .sum();
+
+            if used + block_tokens <= quota || out.is_empty() {
+                for m in block.iter().rev() {
+                    out.push(m.clone());
+                }
+                used += block_tokens;
             } else {
-                skipped += 1;
+                skipped += block.len();
             }
         }
+
         out.reverse();
         if skipped > 0 {
             out.insert(
@@ -218,5 +259,42 @@ mod tests {
         assert!(fitted.len() < msgs.len());
         assert!(fitted.first().unwrap().content.contains("CompactBoundary"));
         assert!(fitted.last().unwrap().content.contains("mensaje 199"));
+    }
+
+    #[test]
+    fn history_fit_preserves_atomic_tool_blocks() {
+        let c = TokenCounter::new();
+        let composer = ContextComposer::for_window(300, None);
+        let mut msgs: Vec<ChatMessage> = Vec::new();
+        for i in 0..10 {
+            msgs.push(msg(&format!("peticion usuario {i}")));
+            msgs.push(ChatMessage {
+                role: "assistant".into(),
+                content: format!("voy a consultar {i}"),
+                images: vec![],
+                tool_calls: Some(vec![crate::ToolCall {
+                    id: format!("call_{i}"),
+                    name: "read_file".into(),
+                    arguments: format!("{{\"path\":\"file_{i}.rs\"}}"),
+                    extra_content: None,
+                }]),
+                tool_call_id: None,
+            });
+            msgs.push(ChatMessage {
+                role: "tool".into(),
+                content: format!("contenido del archivo {i}... lineas y mas lineas"),
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: Some(format!("call_{i}")),
+            });
+        }
+        let fitted = composer.fit_history(&c, &msgs);
+        // Ensure no assistant with tool_calls is ever detached from its tool message in fitted history
+        for (idx, m) in fitted.iter().enumerate() {
+            if m.role == "assistant" && m.tool_calls.is_some() {
+                assert!(idx + 1 < fitted.len());
+                assert_eq!(fitted[idx + 1].role, "tool");
+            }
+        }
     }
 }

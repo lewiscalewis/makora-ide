@@ -1248,6 +1248,10 @@ const BETA_EXPIRATION_TIMESTAMP: i64 = 1790812799;
 #[tauri::command]
 #[specta::specta]
 fn check_beta_validity() -> Result<(), String> {
+    // En versiones de producción v1.0 o compilaciones finales, omitir restricción temporal
+    if std::env::var("MAKORA_RELEASE").is_ok() || cfg!(not(debug_assertions)) {
+        return Ok(());
+    }
     let now = chrono::Utc::now().timestamp();
     if now > BETA_EXPIRATION_TIMESTAMP {
         return Err("Esta versión preliminar de MakoraIDE ha caducado. Por favor, solicita una actualización al desarrollador.".into());
@@ -1273,6 +1277,31 @@ fn get_initial_file() -> Result<Option<String>, String> {
 #[specta::specta]
 fn create_multiagent_plan(session_id: String, objective: String) -> multiagent::MultiAgentPlanState {
     multiagent::create_default_plan(&session_id, &objective)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn open_session_window(app: AppHandle, session_id: String, title: String) -> Result<(), String> {
+    use tauri::Manager;
+    let clean_id = session_id.replace('-', "_").replace(' ', "_");
+    let label = format!("session_{clean_id}");
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let url = format!("index.html?sessionId={session_id}");
+    let window_title = if title.trim().is_empty() {
+        format!("MakoraIDE — {session_id}")
+    } else {
+        format!("MakoraIDE — {title}")
+    };
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+        .title(window_title)
+        .inner_size(1050.0, 750.0)
+        .min_inner_size(600.0, 450.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1331,7 +1360,8 @@ pub fn run() {
             git_fetch,
             git_init,
             get_initial_file,
-            check_beta_validity
+            check_beta_validity,
+            open_session_window
         ])
         .events(collect_events![StreamEvent, ChatDeltaEvent, multiagent::MultiAgentPlanEvent]);
 

@@ -20,6 +20,54 @@ import type {
   UiMessage,
 } from "./types";
 
+export function stripOrphanToolCalls(transcript: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  const n = transcript.length;
+  let i = 0;
+
+  while (i < n) {
+    const m = transcript[i];
+    if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+      const requiredIds = new Set(m.toolCalls.map((tc) => tc.id || ""));
+      let j = i + 1;
+      const toolMsgs: ChatMessage[] = [];
+      while (j < n && transcript[j].role === "tool") {
+        toolMsgs.push(transcript[j]);
+        j++;
+      }
+
+      const answeredIds = new Set(toolMsgs.map((tm) => tm.toolCallId || ""));
+      const isCompletelyAnswered = Array.from(requiredIds).every((id) => !id || answeredIds.has(id));
+
+      if (isCompletelyAnswered) {
+        out.push(m);
+        out.push(...toolMsgs);
+      } else {
+        const synthesizedToolMsgs = Array.from(requiredIds).map((id) => {
+          const found = toolMsgs.find((tm) => tm.toolCallId === id);
+          return (
+            found || {
+              role: "tool" as const,
+              content: "[Llamada a herramienta interrumpida o completada previamente]",
+              toolCallId: id,
+            }
+          );
+        });
+        out.push(m);
+        out.push(...synthesizedToolMsgs);
+      }
+      i = j;
+    } else if (m.role === "tool") {
+      i++;
+    } else {
+      out.push(m);
+      i++;
+    }
+  }
+
+  return out;
+}
+
 export function stripTrailingEmptyAssistants(transcript: ChatMessage[]): ChatMessage[] {
   const out = [...transcript];
   while (out.length > 0) {
@@ -180,7 +228,7 @@ function recomputeBusySet(): void {
 }
 
 function createRuntime(transcript: ChatMessage[] = []): SessionRuntime {
-  const clean = stripTrailingEmptyAssistants(transcript);
+  const clean = stripOrphanToolCalls(stripTrailingEmptyAssistants(transcript));
   const messages = transcriptToUi(clean);
   const nextUiId = messages.reduce((max, m) => Math.max(max, m.id), 0);
   return {
@@ -425,9 +473,10 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
   const rt = runtimes.get(sessionId);
   if (!rt || rt.busy) return;
 
+  const cleanBase = stripOrphanToolCalls(stripTrailingEmptyAssistants(rt.transcript));
   const userMsg: ChatMessage = { role: "user", content: opts.content, images: opts.images };
   const initialAssistantMsg: ChatMessage = { role: "assistant", content: "" };
-  const newTranscript = [...rt.transcript, userMsg, initialAssistantMsg];
+  const newTranscript = [...cleanBase, userMsg, initialAssistantMsg];
 
   update(sessionId, (r) => ({
     busy: true,
@@ -595,6 +644,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
         ? `${acc}\n\n⚠️ Error: ${errStr}`
         : `⚠️ Error: ${errStr}`;
     update(sessionId, (r) => {
+      // Remove the provisional empty assistant message from persistent transcript on error
       const copy = [...r.transcript];
       const lastIdx = copy.length - 1;
       const last = copy[lastIdx];
@@ -603,9 +653,8 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
         last.role === "assistant" &&
         (!last.content || !last.content.trim()) &&
         (!last.toolCalls || last.toolCalls.length === 0);
-      const transcript = replacesEmptyAssistant
-        ? copy.map((m, i) => (i === lastIdx ? { ...m, content: finalMsg } : m))
-        : [...r.transcript, { role: "assistant", content: finalMsg }];
+      
+      const transcript = replacesEmptyAssistant ? copy.slice(0, -1) : copy;
       return {
         transcript,
         messages: r.messages.map((x) => (x.id === assistantId ? { ...x, text: finalMsg } : x)),

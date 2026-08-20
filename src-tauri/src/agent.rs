@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 
 use serde_json::{json, Value};
@@ -9,7 +9,9 @@ use crate::history::{self, RequestMeter};
 use crate::mcp::{self, McpRegistry};
 use crate::multiagent;
 use crate::token_engine;
-use crate::{ChatConfig, ChatMessage, ChatResult, ChatUsage};
+use crate::{ChatConfig, ChatMessage, ChatResult, ChatUsage, ToolCall};
+
+const MAX_ACTIVE_TOOL_RESULTS: usize = 3;
 
 static CANCELLED: LazyLock<StdMutex<HashSet<String>>> =
     LazyLock::new(|| StdMutex::new(HashSet::new()));
@@ -412,7 +414,7 @@ fn grep_dir(dir: &str, pattern: &str, out: &mut String, count: &mut u32, max: u3
             return;
         }
         let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || name == "node_modules" || name == "target" {
+        if is_ignored_path(&name) {
             continue;
         }
         let path = e.path();
@@ -465,7 +467,31 @@ fn is_dangerous_command(cmd: &str) -> bool {
     dangerous_patterns.iter().any(|&p| lower.contains(p))
 }
 
-fn is_read_only_tool(name: &str) -> bool {
+pub fn is_ignored_path(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.starts_with('.')
+        || lower == "node_modules"
+        || lower == "target"
+        || lower == "dist"
+        || lower == "build"
+        || lower == "coverage"
+        || lower == ".venv"
+        || lower == "venv"
+        || lower == "__pycache__"
+        || lower == ".next"
+        || lower == ".nuxt"
+        || lower == ".git"
+        || lower == ".idea"
+        || lower == ".vscode"
+        || lower.ends_with(".lock")
+        || lower.ends_with("-lock.json")
+        || lower.ends_with("-lock.yaml")
+        || lower.ends_with(".min.js")
+        || lower.ends_with(".min.css")
+        || lower.ends_with(".map")
+}
+
+pub fn is_read_only_tool(name: &str) -> bool {
     matches!(name, "read_file" | "read_file_range" | "grep" | "list_dir")
 }
 
@@ -841,22 +867,16 @@ fn check_file_syntax(path: &str, content: &str) -> Option<String> {
 }
 
 fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
-    // Si la sesión no es excesivamente larga (<200k chars), preservar 100% de inmutabilidad para Prefix Caching
-    let total_chars: usize = msgs.iter().map(|m| m.content.len()).sum();
-    if total_chars < 200_000 {
-        return msgs.to_vec();
-    }
     let tool_positions: Vec<usize> = msgs
         .iter()
         .enumerate()
         .filter(|(_, m)| m.role == "tool")
         .map(|(i, _)| i)
         .collect();
-    if tool_positions.len() <= 10 {
+    if tool_positions.len() <= MAX_ACTIVE_TOOL_RESULTS {
         return msgs.to_vec();
     }
-    let keep = 8usize;
-    let threshold = tool_positions.len() - keep;
+    let threshold = tool_positions.len().saturating_sub(MAX_ACTIVE_TOOL_RESULTS);
     msgs.iter()
         .enumerate()
         .map(|(i, m)| {
@@ -882,39 +902,80 @@ fn evict_tool_results(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
 }
 
 fn sanitize_history(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut started = false;
     let mut out: Vec<ChatMessage> = Vec::with_capacity(msgs.len());
-    for m in msgs {
+    let mut i = 0;
+    let n = msgs.len();
+
+    while i < n {
+        let m = &msgs[i];
         match m.role.as_str() {
             "assistant" => {
+                let has_content = !m.content.trim().is_empty();
+                let has_tools = m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
+
+                if !has_content && !has_tools {
+                    i += 1;
+                    continue;
+                }
+
                 if let Some(tcs) = &m.tool_calls {
-                    for tc in tcs {
-                        if !tc.id.trim().is_empty() {
-                            seen.insert(tc.id.clone());
+                    if !tcs.is_empty() {
+                        let required_ids: Vec<String> = tcs
+                            .iter()
+                            .map(|tc| {
+                                if tc.id.trim().is_empty() {
+                                    "call_0".to_string()
+                                } else {
+                                    tc.id.clone()
+                                }
+                            })
+                            .collect();
+
+                        let mut tool_responses: HashMap<String, ChatMessage> = HashMap::new();
+                        let mut j = i + 1;
+                        while j < n && msgs[j].role == "tool" {
+                            let tid = msgs[j].tool_call_id.clone().unwrap_or_default();
+                            if !tid.is_empty() {
+                                tool_responses.insert(tid, msgs[j].clone());
+                            }
+                            j += 1;
                         }
+
+                        out.push(m.clone());
+
+                        for id in &required_ids {
+                            if let Some(resp) = tool_responses.remove(id) {
+                                out.push(resp);
+                            } else {
+                                out.push(ChatMessage {
+                                    role: "tool".into(),
+                                    content: "[Llamada a herramienta interrumpida o completada previamente]".into(),
+                                    images: vec![],
+                                    tool_calls: None,
+                                    tool_call_id: Some(id.clone()),
+                                });
+                            }
+                        }
+
+                        i = j;
+                        continue;
                     }
                 }
-                let has_content = !m.content.trim().is_empty();
-                if !has_content && m.tool_calls.is_none() {
-                    continue;
-                }
-                started = true;
+
                 out.push(m.clone());
+                i += 1;
             }
             "tool" => {
-                let id = m.tool_call_id.as_deref().unwrap_or("");
-                if !started || id.is_empty() || !seen.contains(id) {
-                    continue;
-                }
-                out.push(m.clone());
+                // Herramienta huérfana
+                i += 1;
             }
             _ => {
-                started = true;
                 out.push(m.clone());
+                i += 1;
             }
         }
     }
+
     out
 }
 
@@ -983,7 +1044,7 @@ async fn execute_subagent_tool(
                 let bd = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 bd.cmp(&ad).then(a.file_name().cmp(&b.file_name()))
             });
-            for e in entries.iter().take(200) {
+            for e in entries.iter().filter(|e| !is_ignored_path(&e.file_name().to_string_lossy())).take(200) {
                 let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 out.push_str(&format!(
                     "{}{}\n",
@@ -1568,113 +1629,183 @@ async fn run_loop(
             tool_call_id: None,
         });
 
-        // Ejecución optimizada: si todas las herramientas del turno son de solo lectura,
-        // ejecutarlas concurrentemente en paralelo para triplicar la velocidad de respuesta.
-        let all_read_only = outcome.tool_calls.iter().all(|tc| is_read_only_tool(&tc.name));
+        // Ejecución concurrente inteligente por lotes:
+        // Agrupa llamadas consecutivas de solo lectura para ejecutarlas en paralelo (join_all),
+        // y ejecuta las mutaciones (write_file, apply_patch, bash) de forma secuencial y segura.
+        enum ToolBatchItem {
+            Parallel(Vec<ToolCall>),
+            Sequential(ToolCall),
+        }
 
-        if all_read_only && outcome.tool_calls.len() > 1 {
-            for tc in &outcome.tool_calls {
-                let _ = app.emit(
-                    "tool-start",
-                    ToolStart {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                        chat_id: chat_id.to_string(),
-                    },
-                );
+        let mut batches: Vec<ToolBatchItem> = Vec::new();
+        let mut current_parallel: Vec<ToolCall> = Vec::new();
+
+        for tc in &outcome.tool_calls {
+            if is_read_only_tool(&tc.name) {
+                current_parallel.push(tc.clone());
+            } else {
+                if !current_parallel.is_empty() {
+                    batches.push(ToolBatchItem::Parallel(std::mem::take(&mut current_parallel)));
+                }
+                batches.push(ToolBatchItem::Sequential(tc.clone()));
             }
-            let tasks: Vec<_> = outcome.tool_calls.iter().map(|tc| {
-                let app = app.clone();
-                let cfg = cfg.clone();
-                let name = tc.name.clone();
-                let arguments = tc.arguments.clone();
-                let folders = folders.to_vec();
-                let id = tc.id.clone();
-                let chat = chat_id.to_string();
-                async move {
-                    let mut u = ChatUsage::default();
-                    let result =
-                        execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat, &mut u)
-                            .await;
+        }
+        if !current_parallel.is_empty() {
+            batches.push(ToolBatchItem::Parallel(current_parallel));
+        }
+
+        for batch in batches {
+            if is_chat_cancelled(chat_id) {
+                return Err("Cancelado por el usuario".into());
+            }
+            match batch {
+                ToolBatchItem::Parallel(calls) => {
+                    if calls.len() == 1 {
+                        let tc = &calls[0];
+                        let _ = app.emit(
+                            "tool-start",
+                            ToolStart {
+                                id: tc.id.clone(),
+                                name: tc.name.clone(),
+                                arguments: tc.arguments.clone(),
+                                chat_id: chat_id.to_string(),
+                            },
+                        );
+                        let mut tool_usage = ChatUsage::default();
+                        let result = execute_tool(
+                            app,
+                            cfg,
+                            &tc.name,
+                            &tc.arguments,
+                            folders,
+                            registry,
+                            chat_id,
+                            &mut tool_usage,
+                        )
+                        .await;
+                        total += tool_usage;
+                        let (ok, summary) = match &result {
+                            Ok(s) => (true, truncate(s, 400)),
+                            Err(e) => (false, e.clone()),
+                        };
+                        let _ = app.emit(
+                            "tool-end",
+                            ToolEnd { id: tc.id.clone(), ok, summary, chat_id: chat_id.to_string() },
+                        );
+                        let content = match result {
+                            Ok(s) => s,
+                            Err(e) => format!("ERROR: {e}"),
+                        };
+                        msgs.push(ChatMessage {
+                            role: "tool".into(),
+                            content,
+                            images: vec![],
+                            tool_calls: None,
+                            tool_call_id: Some(tc.id.clone()),
+                        });
+                    } else {
+                        for tc in &calls {
+                            let _ = app.emit(
+                                "tool-start",
+                                ToolStart {
+                                    id: tc.id.clone(),
+                                    name: tc.name.clone(),
+                                    arguments: tc.arguments.clone(),
+                                    chat_id: chat_id.to_string(),
+                                },
+                            );
+                        }
+                        let tasks: Vec<_> = calls.iter().map(|tc| {
+                            let app = app.clone();
+                            let cfg = cfg.clone();
+                            let name = tc.name.clone();
+                            let arguments = tc.arguments.clone();
+                            let folders = folders.to_vec();
+                            let id = tc.id.clone();
+                            let chat = chat_id.to_string();
+                            async move {
+                                let mut u = ChatUsage::default();
+                                let result =
+                                    execute_tool(&app, &cfg, &name, &arguments, &folders, registry, &chat, &mut u)
+                                        .await;
+                                let (ok, summary) = match &result {
+                                    Ok(s) => (true, truncate(s, 400)),
+                                    Err(e) => (false, e.clone()),
+                                };
+                                let _ = app.emit(
+                                    "tool-end",
+                                    ToolEnd { id: id.clone(), ok, summary, chat_id: chat.clone() },
+                                );
+                                let content = match result {
+                                    Ok(s) => s,
+                                    Err(e) => format!("ERROR: {e}"),
+                                };
+                                (id, content, u)
+                            }
+                        }).collect();
+
+                        let results = futures_util::future::join_all(tasks).await;
+                        if is_chat_cancelled(chat_id) {
+                            return Err("Cancelado por el usuario".into());
+                        }
+                        for (id, content, u) in results {
+                            total += u;
+                            msgs.push(ChatMessage {
+                                role: "tool".into(),
+                                content,
+                                images: vec![],
+                                tool_calls: None,
+                                tool_call_id: Some(id),
+                            });
+                        }
+                    }
+                }
+                ToolBatchItem::Sequential(tc) => {
+                    let _ = app.emit(
+                        "tool-start",
+                        ToolStart {
+                            id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            arguments: tc.arguments.clone(),
+                            chat_id: chat_id.to_string(),
+                        },
+                    );
+                    let mut tool_usage = ChatUsage::default();
+                    let result = execute_tool(
+                        app,
+                        cfg,
+                        &tc.name,
+                        &tc.arguments,
+                        folders,
+                        registry,
+                        chat_id,
+                        &mut tool_usage,
+                    )
+                    .await;
+                    total += tool_usage;
+                    if is_chat_cancelled(chat_id) {
+                        return Err("Cancelado por el usuario".into());
+                    }
                     let (ok, summary) = match &result {
                         Ok(s) => (true, truncate(s, 400)),
                         Err(e) => (false, e.clone()),
                     };
                     let _ = app.emit(
                         "tool-end",
-                        ToolEnd { id: id.clone(), ok, summary, chat_id: chat.clone() },
+                        ToolEnd { id: tc.id.clone(), ok, summary, chat_id: chat_id.to_string() },
                     );
                     let content = match result {
                         Ok(s) => s,
                         Err(e) => format!("ERROR: {e}"),
                     };
-                    (id, content)
+                    msgs.push(ChatMessage {
+                        role: "tool".into(),
+                        content,
+                        images: vec![],
+                        tool_calls: None,
+                        tool_call_id: Some(tc.id.clone()),
+                    });
                 }
-            }).collect();
-
-            let results = futures_util::future::join_all(tasks).await;
-            if is_chat_cancelled(chat_id) {
-                return Err("Cancelado por el usuario".into());
-            }
-            for (id, content) in results {
-                msgs.push(ChatMessage {
-                    role: "tool".into(),
-                    content,
-                    images: vec![],
-                    tool_calls: None,
-                    tool_call_id: Some(id),
-                });
-            }
-        } else {
-            for tc in &outcome.tool_calls {
-                if is_chat_cancelled(chat_id) {
-                    return Err("Cancelado por el usuario".into());
-                }
-                let _ = app.emit(
-                    "tool-start",
-                    ToolStart {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                        chat_id: chat_id.to_string(),
-                    },
-                );
-                let mut tool_usage = ChatUsage::default();
-                let result = execute_tool(
-                    app,
-                    cfg,
-                    &tc.name,
-                    &tc.arguments,
-                    folders,
-                    registry,
-                    chat_id,
-                    &mut tool_usage,
-                )
-                .await;
-                total += tool_usage;
-                if is_chat_cancelled(chat_id) {
-                    return Err("Cancelado por el usuario".into());
-                }
-                let (ok, summary) = match &result {
-                    Ok(s) => (true, truncate(s, 400)),
-                    Err(e) => (false, e.clone()),
-                };
-                let _ = app.emit(
-                    "tool-end",
-                    ToolEnd { id: tc.id.clone(), ok, summary, chat_id: chat_id.to_string() },
-                );
-                let content = match result {
-                    Ok(s) => s,
-                    Err(e) => format!("ERROR: {e}"),
-                };
-                msgs.push(ChatMessage {
-                    role: "tool".into(),
-                    content,
-                    images: vec![],
-                    tool_calls: None,
-                    tool_call_id: Some(tc.id.clone()),
-                });
             }
         }
 
@@ -1731,6 +1862,7 @@ pub async fn run_multiagent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolCall;
 
     #[test]
     fn test_resolve_path_root_and_dot() {
@@ -1841,15 +1973,84 @@ mod tests {
     }
 
     #[test]
+    fn test_is_ignored_path_matches_build_and_git_artifacts() {
+        assert!(is_ignored_path("node_modules"));
+        assert!(is_ignored_path("target"));
+        assert!(is_ignored_path(".git"));
+        assert!(is_ignored_path(".venv"));
+        assert!(is_ignored_path("package-lock.json"));
+        assert!(!is_ignored_path("main.rs"));
+        assert!(!is_ignored_path("App.tsx"));
+    }
+
+    #[test]
     fn test_is_read_only_tool() {
         assert!(is_read_only_tool("read_file"));
         assert!(is_read_only_tool("read_file_range"));
         assert!(is_read_only_tool("grep"));
         assert!(is_read_only_tool("list_dir"));
-
         assert!(!is_read_only_tool("write_file"));
         assert!(!is_read_only_tool("apply_patch"));
-        assert!(!is_read_only_tool("run_bash"));
+        assert!(!is_read_only_tool("bash"));
+    }
+
+    #[test]
+    fn test_sanitize_history_repairs_unanswered_tool_calls() {
+        let msgs = vec![
+            ChatMessage {
+                role: "user".into(),
+                content: "haz algo".into(),
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "assistant".into(),
+                content: "".into(),
+                images: vec![],
+                tool_calls: Some(vec![
+                    ToolCall {
+                        id: "call_1".into(),
+                        name: "read_file".into(),
+                        arguments: "{\"path\":\"a.txt\"}".into(),
+                        extra_content: None,
+                    },
+                    ToolCall {
+                        id: "call_2".into(),
+                        name: "read_file".into(),
+                        arguments: "{\"path\":\"b.txt\"}".into(),
+                        extra_content: None,
+                    },
+                ]),
+                tool_call_id: None,
+            },
+            // Solo se respondió call_1, call_2 fue interrumpido
+            ChatMessage {
+                role: "tool".into(),
+                content: "contenido de a".into(),
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: Some("call_1".into()),
+            },
+            ChatMessage {
+                role: "user".into(),
+                content: "siguiente petición".into(),
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+
+        let sanitized = sanitize_history(&msgs);
+        assert_eq!(sanitized.len(), 5);
+        assert_eq!(sanitized[0].role, "user");
+        assert_eq!(sanitized[1].role, "assistant");
+        assert_eq!(sanitized[2].role, "tool");
+        assert_eq!(sanitized[2].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(sanitized[3].role, "tool");
+        assert_eq!(sanitized[3].tool_call_id.as_deref(), Some("call_2"));
+        assert!(sanitized[3].content.contains("interrumpida"));
+        assert_eq!(sanitized[4].role, "user");
     }
 }
 

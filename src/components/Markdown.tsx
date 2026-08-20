@@ -78,13 +78,14 @@ interface MarkdownProps {
 
 function cleanLeakedTags(t: string): string {
   if (!t) return "";
-  if (!t.includes("DSML") && !t.includes("<tool_call>") && !t.includes("<|tool_calls|>")) return t;
   return t
     .replace(/<\s*\|\s*DSML\s*\|\s*tool_calls\s*>[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*tool_calls\s*>/gi, "")
     .replace(/<\s*\|\s*DSML\s*\|\s*invoke[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*invoke\s*>/gi, "")
     .replace(/<\s*tool_call\s*>[\s\S]*?<\s*\/\s*tool_call\s*>/gi, "")
     .replace(/<\s*\|?\s*DSML\s*\|?.*?>/gi, "")
     .replace(/<\s*\/\s*\|?\s*DSML\s*\|?.*?>/gi, "")
+    .replace(/<\s*thought\s*>[\s\S]*?<\s*\/\s*thought\s*>/gi, "")
+    .replace(/<\s*thinking\s*>[\s\S]*?<\s*\/\s*thinking\s*>/gi, "")
     .trim();
 }
 

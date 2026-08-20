@@ -68,8 +68,9 @@ Siempre te explica qué cambió y dónde (con la ruta y la línea exactas). Tú 
 - 🖥️ **Interfaz de escritorio completa**: paneles redimensionables, explorador de archivos en árbol y una terminal integrada que tú y el agente compartís.
 - 🧠 **Conecta tu propio modelo de IA** mediante API key. Soporta varios proveedores: **OpenAI, DeepSeek, OpenRouter, Anthropic, Ollama** (modelos locales) y conexiones personalizadas.
 - 🔌 **Extensiones MCP** (Model Context Protocol): conectar herramientas externas adicionales desde la interfaz.
-- 🖼️ **Multimodal**: pegar imágenes o arrastrar archivos al chat para que el agente los tenga en cuenta.
-- @️⃣ **Menciones** (`@`): referenciar archivos o elementos concretos del proyecto directamente en tu mensaje.
+ - 🖼️ **Multimodal**: pegar imágenes o arrastrar archivos al chat para que el agente los tenga en cuenta.
+ - 🗂️ **Múltiples sesiones en paralelo**: abre tantas pestañas de conversación como necesites (el botón **+** siempre está disponible) para trabajar en un proyecto distinto por pestaña, cada una con su propio workspace y chat independientes.
+ - @️⃣ **Menciones** (`@`): referenciar archivos o elementos concretos del proyecto directamente en tu mensaje.
 - 📝 **Respuestas enriquecidas**: markdown, tablas, bloques de código con botón de copiar y **artifacts** que puedes aplicar al proyecto con un clic o descargar.
 - 💰 **Monitor de créditos y tokens**: control en tiempo real del consumo y el coste estimado por modelo, para que no gastes de más.
 
@@ -108,8 +109,11 @@ Como cualquier herramienta, a veces. Por eso te muestra siempre qué hizo y te p
 **¿Mis archivos están seguros?**
 El agente solo trabaja dentro del workspace que tú abres y sus herramientas están restringidas a esa carpeta. Nada se aplica sin que tú lo veas.
 
-**¿Puedo interrumpir una tarea?**
-Sí. Si algo no es lo que esperabas, cancela la tarea o dale nuevas instrucciones en cualquier momento.
+ **¿Puedo interrumpir una tarea?**
+ Sí. Si algo no es lo que esperabas, cancela la tarea o dale nuevas instrucciones en cualquier momento.
+
+ **¿Puedo trabajar en varios proyectos a la vez?**
+ Sí. Pulsa el botón **+** de las pestañas para abrir una sesión nueva (está siempre disponible) y selecciona en cada una la carpeta del proyecto que quieras. Cada pestaña conserva su propio workspace y conversación, así puedes alternar entre ellas y trabajar en paralelo.
 
 ---
 
@@ -117,7 +121,8 @@ Sí. Si algo no es lo que esperabas, cancela la tarea o dale nuevas instruccione
 
 | Término | Significado |
 |---------|-------------|
-| **Workspace** | La carpeta (o conjunto de carpetas) de tu proyecto donde el agente puede trabajar. |
+ | **Workspace** | La carpeta (o conjunto de carpetas) de tu proyecto donde el agente puede trabajar. |
+ | **Sesión / Pestaña** | Conversación independiente con su propio workspace; puedes abrir varias en paralelo con el botón **+**. |
 | **API key** | Clave personal que conecta MakoraIDE con el proveedor de IA que elijas. |
 | **Agente** | La IA que interpreta tus peticiones y ejecuta acciones sobre el proyecto. |
 | **Tool-calling** | La capacidad del agente de usar herramientas (leer, buscar, ejecutar, escribir). |

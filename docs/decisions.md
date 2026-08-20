@@ -112,8 +112,13 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
 ## ADR-021 — Estabilidad: locks poison-safe, MCP no bloqueante y defensas anti-cierre (2026-08-20)
 
 - **Problema:** `panic = "abort"` en release convierte cualquier panic en cierre de la app; todos los `.lock().unwrap()` en `agent/mcp/terminal/token_engine/history` propagaban poisoning; `mcp_configure` (comando síncrono) bloqueaba el hilo principal hasta 20s por servidor; el export de bindings usaba `.expect()` en arranque.
-- **Decisión:** helper `guard()` (lock con `into_inner` en caso de poison) en todos los módulos; `mcp_configure` pasa a `spawn_blocking`; `mcp::call` se ejecuta en `spawn_blocking` desde `execute_tool`; el export de `bindings.ts` registra error sin panic; `run_bash` sube a 600s (alineado con el diseño documentado). En frontend: al cambiar de proveedor se selecciona síncronamente el modelo recomendado del nuevo proveedor (evita 404/400 al chatear antes de cargar modelos) y `reasoningEffort` solo se envía si es válido.
+ - **Decisión:** helper `guard()` (lock con `into_inner` en caso de poison) en todos los módulos; `mcp_configure` pasa a `spawn_blocking`; `mcp::call` se ejecuta en `spawn_blocking` desde `execute_tool`; el export de `bindings.ts` registra error sin panic; `run_bash` sube a 600s (alineado con el diseño documentado). En frontend: al cambiar de proveedor se selecciona síncronamente el modelo recomendado del nuevo proveedor (evita 404/400 al chatear antes de cargar modelos) y `reasoningEffort` solo se envía si es válido.
 
+## ADR-022 — Pestañas de sesión siempre disponibles para trabajo en paralelo (2026-08-21)
+
+- **Problema:** el botón **+** de pestañas reutilizaba la sesión activa cuando esta estaba vacía (sin mensajes, sin transcript y no ocupada), por lo que al arrancar con una sesión limpia el clic era un no-op. Además, `initSessions()` descartaba toda sesión sin mensajes, perdiendo pestañas vacías recién abiertas al recargar.
+- **Decisión:** `handleNewSession` elimina la heurística de reutilización y crea SIEMPRE una pestaña nueva (heredando las carpetas del workspace activo), de modo que el usuario puede abrir desde el inicio un proyecto distinto por sesión y trabajar en paralelo. `initSessions()` conserva las sesiones con `workspace.folders`/`workspace.openFiles`/`workspace.activeFilePath` asignados aunque aún no tengan mensajes, y solo poda las completamente vacías (sin mensajes y sin workspace).
+- **Consecuencias:** el botón **+** permanece renderizado de forma incondicional en `WorkspaceTabBar` (ya lo estaba); cada pestaña mantiene workspace y chat independientes; las pestañas vacías con proyecto abierto sobreviven a la recarga.
 
 
 

@@ -290,8 +290,19 @@ export function makeSession(model: string, workspace?: SessionWorkspaceState): C
 
 export function initSessions(): { sessions: ChatSession[]; activeId: string } {
   const loaded = loadSessions();
-  // Poda de sesiones zombie vacías (sin mensajes) acumuladas previamente
-  const nonEmptySessions = loaded.filter((s) => s.messages && s.messages.length > 0);
+  // Poda de sesiones zombie vacías (sin mensajes y sin proyecto asignado),
+  // preservando aquellas que ya tengan un workspace/proyecto abierto aunque
+  // todavía no hayan enviado mensajes (trabajo en paralelo por pestaña).
+  const nonEmptySessions = loaded.filter((s) => {
+    const hasMessages = Array.isArray(s.messages) && s.messages.length > 0;
+    const ws = s.workspace;
+    const hasWorkspace =
+      !!ws &&
+      ((Array.isArray(ws.folders) && ws.folders.length > 0) ||
+        (Array.isArray(ws.openFiles) && ws.openFiles.length > 0) ||
+        !!ws.activeFilePath);
+    return hasMessages || hasWorkspace;
+  });
 
   let folders: string[] = [];
   try {
