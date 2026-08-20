@@ -95,6 +95,7 @@ export default function OnboardingModal({
         baseUrl: baseUrl || activePreset.baseUrl,
         apiKey: apiKey.trim(),
         model: models[0],
+        maxCostPerTurn: settings.maxCostPerTurn ?? 0,
       });
     } catch (e) {
       setTestResult({ ok: false, msg: `Error: ${String(e)}` });

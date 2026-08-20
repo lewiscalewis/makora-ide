@@ -431,6 +431,7 @@ interface ChatProps {
   onTranscriptChange: (messages: ChatMessage[]) => void;
   injectedPrompt?: string | null;
   onClearInjectedPrompt?: () => void;
+  budgetUsd?: number | null;
 }
 
 export default function Chat({
@@ -460,6 +461,7 @@ export default function Chat({
   onTranscriptChange,
   injectedPrompt,
   onClearInjectedPrompt,
+  budgetUsd,
 }: ChatProps) {
   const { t } = useI18n();
   const [diffModalState, setDiffModalState] = useState<{
@@ -927,6 +929,7 @@ export default function Chat({
       displayText: text,
       useMultiAgent,
       planMode: effectiveMode === "plan",
+      budgetUsd,
       onUsage,
       onTranscriptChange,
     });

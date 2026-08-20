@@ -501,6 +501,27 @@ export default function SettingsModal({
                     </div>
                   </div>
                 )}
+
+                {/* Budget guard: opcional, pregunta al usuario (nunca corta solo) */}
+                <div className="field">
+                  <label>💰 Coste máx. por turno (USD) — 0 = sin límite</label>
+                  <div className="model-selector-row">
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      className="text-input budget-input font-mono"
+                      value={settings.maxCostPerTurn ?? 0}
+                      onChange={(e) => {
+                        const v = Math.max(0, Number(e.target.value) || 0);
+                        onSaveSettings({ ...settings, maxCostPerTurn: v });
+                      }}
+                    />
+                    <span className="small muted">
+                      Al alcanzarlo, el agente te preguntará si continuar sin límite o detener y sintetizar.
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* Key Vault: secure storage for previously used API keys */}

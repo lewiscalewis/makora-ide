@@ -82,6 +82,7 @@ const DEFAULT_SETTINGS: Settings = {
   baseUrl: "https://api.deepseek.com/v1",
   apiKey: "",
   model: "",
+  maxCostPerTurn: 0,
 };
 
 const ZERO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
@@ -1425,6 +1426,7 @@ function App() {
         onTranscriptChange={(m) => persistTranscript(activeSessionId, m, settings.model)}
         injectedPrompt={injectedPrompt}
         onClearInjectedPrompt={() => setInjectedPrompt(null)}
+        budgetUsd={settings.maxCostPerTurn > 0 ? settings.maxCostPerTurn : null}
       />
     );
   }, [

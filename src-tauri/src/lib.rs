@@ -414,6 +414,7 @@ async fn chat(
     folders: Vec<String>,
     chat_id: String,
     plan_mode: bool,
+    budget_usd: Option<f64>,
 ) -> Result<ChatResult, String> {
     let folders = effective_folders(folders);
     agent::run(
@@ -425,6 +426,7 @@ async fn chat(
         &folders,
         &MCP,
         plan_mode,
+        budget_usd,
     )
     .await
 }
@@ -515,6 +517,7 @@ async fn run_multiagent_plan(
     chat_id: String,
     objective: String,
     plan_mode: bool,
+    budget_usd: Option<f64>,
 ) -> Result<ChatResult, String> {
     let folders = effective_folders(folders);
     agent::run_multiagent(
@@ -527,6 +530,7 @@ async fn run_multiagent_plan(
         &objective,
         &MCP,
         plan_mode,
+        budget_usd,
     )
     .await
 }

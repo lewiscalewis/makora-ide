@@ -190,6 +190,20 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   5. **`panic = "unwind"` en release:** los panics de hilos worker desenrollan en vez de tumbar la app (los `guard()` poison-safe de ADR-021 siguen vigentes); habilita dependencias que exigen `panic_unwind` (html2md).
 - **Consecuencias:** deshacer el último turno restaura archivos con un clic; los MCP con resources/prompts quedan completamente expuestos al agente; el árbol de archivos de la UI coincide con lo que el agente ve; instaladores NSIS+MSI generados sin errores. 47 tests unitarios Rust + 33 vitest pasan.
 
+## ADR-030 — Vigilante anti-bucles v2: nudge→forzar en vez de topes duros + presupuesto de coste que pregunta (2026-08-20)
+
+- **Problema:** el vigilante anterior cortaba trabajo legítimo (breaker de 6 lecturas consecutivas, techo de 25 turnos, 500k tokens por turno) — en una sesión real el usuario perdió ~10$ con turnos truncados sin resultados. La filosofía de opencode es la contraria: señales precisas (doom-loop con umbral 3 y PREGUNTA al usuario, `maxSteps` con prompt suave de "responde ya", compactación en overflow) y control del usuario (coste visible + cancelación), sin topes duros.
+- **Decisión (nudge → forzar, sin limitar potencia):**
+  1. **Señales de bucle con alta precisión, respuesta en 2 niveles:**
+     - **Nudge** (mensaje `user` sintético inyectado; el modelo puede corregir el rumbo y seguir) y **Force** (turno final sin tools con motivo explícito, vía `forced_final_turn`).
+     - Repetición exacta del lote de herramientas (misma firma ordenada): nudge en la 1ª, force en la 2ª.
+     - **Estancamiento por novedad nula** (nuevo): FNV-1a de los resultados de cada ronda; si una ronda no aporta NINGÚN resultado nuevo (ya visto), se acumula señal — nudge en 2 rondas, force en 3. Detecta bucles de "llamadas distintas, información repetida".
+     - **Exploración excesiva SOLO en modo plan** (donde el objetivo es el plan, no la tarea): nudge a las 8 rondas de solo lectura, force a las 12. **En modo Act no hay límite de lecturas** (potencia total).
+  2. **Fusibles extremos de último recurso:** 100 turnos / 2M tokens por turno (solo se alcanzan ante anomalías reales).
+  3. **Presupuesto de coste OPCIONAL por turno** (config `maxCostPerTurn` en Ajustes, default 0 = sin límite): al alcanzarlo el agente PREGUNTA al usuario (reutiliza el mecanismo de `question`) si continuar sin límite o detener y sintetizar — nunca corta solo. Extraído `ask_user_question` como helper compartido (tool `question` + presupuesto).
+  4. Subagentes: 8 pasos y 250k tokens (antes 6/150k).
+- **Consecuencias:** en modo Act el agente puede explorar tanto como necesite; el vigilante solo interviene ante bucles reales (repetición exacta o resultados redundantes) y el usuario mantiene el control del gasto con una pregunta en vez de una parada silenciosa. 47 tests Rust + 33 vitest pasan.
+
 
 
 

@@ -505,6 +505,7 @@ export interface SendTurnOptions {
   displayText: string;
   useMultiAgent?: boolean;
   planMode?: boolean;
+  budgetUsd?: number | null;
   onUsage: (u: ChatUsage) => void;
   onTranscriptChange: (m: ChatMessage[]) => void;
 }
@@ -593,6 +594,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
           sessionId,
           objective,
           Boolean(opts.planMode),
+          opts.budgetUsd ?? null,
         )
       : await chat(
           opts.config,
@@ -601,6 +603,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
           opts.folders,
           sessionId,
           Boolean(opts.planMode),
+          opts.budgetUsd ?? null,
         );
     const durationMs = Math.max(50, Date.now() - startTime);
     opts.onUsage(result);

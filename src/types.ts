@@ -19,6 +19,7 @@ export interface Settings {
   baseUrl: string;
   apiKey: string;
   model: string;
+  maxCostPerTurn: number;
 }
 
 export interface VaultKeyEntry {

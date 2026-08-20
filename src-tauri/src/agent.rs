@@ -1700,9 +1700,9 @@ async fn run_subagent(
     let mut ok = true;
     let mut prev_sig: Vec<String> = Vec::new();
     let mut repeats: u32 = 0;
-    const MAX_SUBAGENT_TOKENS: u32 = 150_000;
+    const MAX_SUBAGENT_TOKENS: u32 = 250_000;
 
-    for _step in 0..6 {
+    for _step in 0..8 {
         if is_chat_cancelled(chat_id) {
             return Err("cancelado por el usuario".into());
         }
@@ -2105,6 +2105,54 @@ async fn gate_permission(
     }
 }
 
+async fn ask_user_question(
+    app: &AppHandle,
+    chat_id: &str,
+    question: &str,
+    options: Vec<String>,
+    header: &str,
+) -> Result<String, String> {
+    let qid = now_id();
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+    guard(&PENDING_QUESTIONS).insert(qid.clone(), Some(tx));
+    let _ = app.emit(
+        "question-ask",
+        QuestionAskEvent {
+            chat_id: chat_id.to_string(),
+            id: qid.clone(),
+            question: question.to_string(),
+            options: options.clone(),
+            header: header.to_string(),
+        },
+    );
+    let cancel_fut = async {
+        loop {
+            if is_chat_cancelled(chat_id) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    };
+    let answer = tokio::select! {
+        a = rx => {
+            guard(&PENDING_QUESTIONS).remove(&qid);
+            match a {
+                Ok(v) => v,
+                Err(_) => return Err("la pregunta fue descartada por el usuario".into()),
+            }
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
+            guard(&PENDING_QUESTIONS).remove(&qid);
+            return Err("sin respuesta del usuario (timeout 600s)".into());
+        }
+        _ = cancel_fut => {
+            guard(&PENDING_QUESTIONS).remove(&qid);
+            return Err("cancelado por el usuario".into());
+        }
+    };
+    Ok(answer)
+}
+
 async fn execute_tool(
     app: &AppHandle,
     cfg: &ChatConfig,
@@ -2310,7 +2358,8 @@ async fn execute_tool_inner(
             let question = s("question");
             if question.trim().is_empty() {
                 return Err("question requiere una 'question' no vacía".into());
-            }            let options: Vec<String> = args
+            }
+            let options: Vec<String> = args
                 .get("options")
                 .and_then(|o| o.as_array())
                 .map(|arr| {
@@ -2320,44 +2369,7 @@ async fn execute_tool_inner(
                 })
                 .unwrap_or_default();
             let header = s("header");
-            let qid = now_id();
-            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-            guard(&PENDING_QUESTIONS).insert(qid.clone(), Some(tx));
-            let _ = app.emit(
-                "question-ask",
-                QuestionAskEvent {
-                    chat_id: chat_id.to_string(),
-                    id: qid.clone(),
-                    question: question.clone(),
-                    options: options.clone(),
-                    header,
-                },
-            );
-            let cancel_fut = async {
-                loop {
-                    if is_chat_cancelled(chat_id) {
-                        return true;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                }
-            };
-            let answer = tokio::select! {
-                a = rx => {
-                    guard(&PENDING_QUESTIONS).remove(&qid);
-                    match a {
-                        Ok(v) => v,
-                        Err(_) => return Err("la pregunta fue descartada por el usuario".into()),
-                    }
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
-                    guard(&PENDING_QUESTIONS).remove(&qid);
-                    return Err("sin respuesta del usuario (timeout 600s)".into());
-                }
-                _ = cancel_fut => {
-                    guard(&PENDING_QUESTIONS).remove(&qid);
-                    return Err("cancelado por el usuario".into());
-                }
-            };
+            let answer = ask_user_question(app, chat_id, &question, options, &header).await?;
             Ok(format!("Respuesta del usuario a «{question}»: {answer}"))
         }
         "webfetch" => {
@@ -2653,6 +2665,74 @@ pub fn compute_turn_cost_usd(kind: &str, model: &str, input: u32, cached: u32, o
     (cost * factor).ceil() / factor
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn forced_final_turn(
+    app: &AppHandle,
+    cfg: &ChatConfig,
+    chat_id: &str,
+    full_system: &str,
+    msgs: &[ChatMessage],
+    total: &mut ChatUsage,
+    session_id: &str,
+    turn: u32,
+    reason: &str,
+) -> Result<ChatResult, String> {
+    let wire = prepare_wire(msgs, cfg);
+    let forced = if cfg.kind == "anthropic" {
+        gateway::anthropic_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
+    } else {
+        gateway::openai_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
+    };
+    total.input_tokens += forced.usage.input_tokens;
+    total.output_tokens += forced.usage.output_tokens;
+    total.cached_tokens += forced.usage.cached_tokens;
+    let forced_cost = compute_turn_cost_usd(
+        &cfg.kind,
+        &cfg.model,
+        forced.usage.input_tokens,
+        forced.usage.cached_tokens,
+        forced.usage.output_tokens,
+    );
+    history::record_request(
+        session_id,
+        turn,
+        &cfg.kind,
+        &cfg.model,
+        &RequestMeter {
+            input_tokens: forced.usage.input_tokens,
+            cached_tokens: forced.usage.cached_tokens,
+            output_tokens: forced.usage.output_tokens,
+            cost_usd: forced_cost,
+            latency_ms: 0,
+        },
+    );
+    let mut final_msgs = msgs.to_vec();
+    final_msgs.push(ChatMessage {
+        role: "assistant".into(),
+        content: format!("{}\n\n{reason}", forced.text),
+        images: vec![],
+        tool_calls: None,
+        tool_call_id: None,
+    });
+    history::create_checkpoint(session_id, turn, &final_msgs);
+    history::archive_transcript(session_id, turn, &final_msgs);
+    Ok(ChatResult {
+        input_tokens: total.input_tokens,
+        output_tokens: total.output_tokens,
+        cached_tokens: total.cached_tokens,
+        messages: final_msgs,
+    })
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 async fn run_loop(
     app: &AppHandle,
     cfg: &ChatConfig,
@@ -2663,6 +2743,7 @@ async fn run_loop(
     registry: &'static McpRegistry,
     tools: &[ToolDef],
     plan_mode: bool,
+    budget_usd: Option<f64>,
 ) -> Result<ChatResult, String> {
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
     let mut total = ChatUsage::default();
@@ -2706,15 +2787,25 @@ async fn run_loop(
             msgs = restored;
         }
     }
-    const MAX_AGENT_TURNS: u32 = 25;
-    const MAX_TURN_TOKENS: u32 = 500_000;
-    const MAX_CONSECUTIVE_READ_ONLY: u32 = 6;
+    const MAX_AGENT_TURNS: u32 = 100;
+    const MAX_TURN_TOKENS: u64 = 2_000_000;
+    const PLAN_NUDGE_READS: u32 = 8;
+    const PLAN_FORCE_READS: u32 = 12;
+    const NUDGE_REPEATS: u32 = 1;
+    const FORCE_REPEATS: u32 = 2;
+    const NUDGE_NO_NEW_INFO: u32 = 2;
+    const FORCE_NO_NEW_INFO: u32 = 3;
+    const NUDGE_COOLDOWN: u32 = 4;
 
     let mut turn: u32 = 0;
     let mut prev_sig: Vec<String> = Vec::new();
     let mut repeats: u32 = 0;
-    let mut consecutive_read_only: u32 = 0;
-    let mut has_mutated: bool = false;
+    let mut plan_reads: u32 = 0;
+    let mut no_new_info: u32 = 0;
+    let mut seen_results: HashSet<u64> = HashSet::new();
+    let mut last_nudge_turn: u32 = 0;
+    let mut budget_asked = false;
+    let mut accumulated_cost: f64 = 0.0;
     let mut last_compact_turn: u32 = 0;
     let compact_threshold: usize =
         ((cfg.context_window.unwrap_or(128_000) as usize) * 3 / 5).clamp(16_000, 64_000);
@@ -2809,6 +2900,44 @@ async fn run_loop(
             outcome.usage.input_tokens, outcome.usage.cached_tokens, outcome.usage.output_tokens
         );
 
+        // Presupuesto de coste opcional por turno: NUNCA corta solo; pregunta al
+        // usuario si continuar sin límite o detener y sintetizar (0 = sin límite).
+        accumulated_cost += turn_cost;
+        if let Some(limit) = budget_usd {
+            if !budget_asked && turn >= 2 && accumulated_cost >= limit && limit > 0.0 {
+                budget_asked = true;
+                if let Ok(answer) = ask_user_question(
+                    app,
+                    chat_id,
+                    &format!(
+                        "El coste acumulado de este turno (~${accumulated_cost:.3}) alcanzó el presupuesto configurado de ${limit:.2}. ¿Cómo procedo?",
+                    ),
+                    vec![
+                        "Continuar sin límite en este turno".to_string(),
+                        "Detener ahora y sintetizar la respuesta final".to_string(),
+                    ],
+                    "Presupuesto por turno",
+                )
+                .await
+                {
+                    if answer.to_lowercase().contains("detener") {
+                        return forced_final_turn(
+                            app,
+                            cfg,
+                            chat_id,
+                            full_system,
+                            &msgs,
+                            &mut total,
+                            &session_id,
+                            turn,
+                            "⚠️ Turno detenido por el usuario al alcanzarse el presupuesto configurado; respuesta final sintetizada.",
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+
         if outcome.tool_calls.is_empty() {
             let final_content = if !outcome.text.trim().is_empty() {
                 outcome.text
@@ -2879,92 +3008,65 @@ async fn run_loop(
             });
         }
 
-        // Control de circuito inteligente y límites duros de seguridad.
-        // Clasificación en 3 niveles: Neutral (todowrite/question) no afecta al
-        // contador; ReadOnly incrementa el breaker; Mutating lo reinicia.
+        // ===== Vigilante anti-bucles v2: nudge primero, forzar solo con señales
+        // claras, fusibles extremos como última defensa (sin cortar trabajo legítimo).
         let kinds: Vec<ToolKind> = outcome.tool_calls.iter().map(|tc| tool_kind(&tc.name)).collect();
         let has_mutation = kinds.iter().any(|k| *k == ToolKind::Mutating);
-        let any_read = kinds.iter().any(|k| *k == ToolKind::ReadOnly);
-        if has_mutation {
-            consecutive_read_only = 0;
-            has_mutated = true;
-        } else if any_read {
-            consecutive_read_only += 1;
+        let all_readish = kinds.iter().all(|k| *k != ToolKind::Mutating);
+
+        if plan_mode {
+            if all_readish {
+                plan_reads += 1;
+            } else if has_mutation {
+                plan_reads = 0;
+            }
         }
 
-        let is_token_exhausted = (total.input_tokens + total.output_tokens) >= MAX_TURN_TOKENS;
-        let is_turn_limit_reached = turn >= MAX_AGENT_TURNS;
-        let is_read_loop = consecutive_read_only >= MAX_CONSECUTIVE_READ_ONLY && !has_mutated;
-
-        // Detección de bucle degenerado: las mismas llamadas repetidas sin progreso.
+        // Repetición exacta del lote de herramientas (misma firma ordenada).
         let mut sig: Vec<String> = outcome
             .tool_calls
             .iter()
             .map(|t| format!("{}|{}", t.name, t.arguments))
             .collect();
         sig.sort();
-        if sig == prev_sig {
+        if !sig.is_empty() && sig == prev_sig {
             repeats += 1;
         } else {
             repeats = 0;
             prev_sig = sig;
         }
 
-        if repeats >= 2 || is_turn_limit_reached || is_token_exhausted || is_read_loop {
-            let reason_msg = if is_turn_limit_reached {
-                "⚠️ Límite de seguridad alcanzado (máximo 25 turnos). Sintetizando respuesta final."
-            } else if is_token_exhausted {
-                "⚠️ Presupuesto de tokens por consulta alcanzado. Sintetizando respuesta final."
-            } else if is_read_loop {
-                "⚠️ Fase de inspección completada (6 lecturas consecutivas). Sintetizando respuesta final."
-            } else {
-                "⚠️ Se detectó un bucle de herramientas repetidas; continúo con la respuesta final."
-            };
+        let is_turn_fuse = turn >= MAX_AGENT_TURNS;
+        let is_token_fuse = (total.input_tokens as u64 + total.output_tokens as u64) >= MAX_TURN_TOKENS;
 
-            let wire = prepare_wire(&msgs, cfg);
-            let forced = if cfg.kind == "anthropic" {
-                gateway::anthropic_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
-            } else {
-                gateway::openai_turn(app, cfg, chat_id, full_system, &wire, &[]).await?
-            };
-            total.input_tokens += forced.usage.input_tokens;
-            total.output_tokens += forced.usage.output_tokens;
-            total.cached_tokens += forced.usage.cached_tokens;
-            let forced_cost = compute_turn_cost_usd(
-                &cfg.kind,
-                &cfg.model,
-                forced.usage.input_tokens,
-                forced.usage.cached_tokens,
-                forced.usage.output_tokens,
-            );
-            history::record_request(
+        let force_reason: Option<&str> = if is_turn_fuse {
+            Some("⚠️ Fusible extremo de seguridad (100 turnos) alcanzado; respuesta final sintetizada.")
+        } else if is_token_fuse {
+            Some("⚠️ Fusible extremo de seguridad (2M tokens en el turno) alcanzado; respuesta final sintetizada.")
+        } else if repeats >= FORCE_REPEATS {
+            Some("⚠️ Se detectó un bucle de herramientas idénticas sin progreso; respuesta final sintetizada.")
+        } else if no_new_info >= FORCE_NO_NEW_INFO {
+            Some("⚠️ Las últimas rondas de herramientas no aportaron información nueva; respuesta final sintetizada.")
+        } else if plan_mode && plan_reads >= PLAN_FORCE_READS {
+            Some("⚠️ Modo plan: la exploración del código es suficiente; se redacta el plan final.")
+        } else {
+            None
+        };
+
+        if let Some(reason) = force_reason {
+            println!("[TOKEN_ENGINE] vigilante: forzando síntesis final (motivo: {})", reason.trim_start_matches("⚠️ "));
+            return forced_final_turn(
+                app,
+                cfg,
+                chat_id,
+                full_system,
+                &msgs,
+                &mut total,
                 &session_id,
                 turn,
-                &cfg.kind,
-                &cfg.model,
-                &RequestMeter {
-                    input_tokens: forced.usage.input_tokens,
-                    cached_tokens: forced.usage.cached_tokens,
-                    output_tokens: forced.usage.output_tokens,
-                    cost_usd: forced_cost,
-                    latency_ms: 0,
-                },
-            );
-            msgs.push(ChatMessage {
-                role: "assistant".into(),
-                content: format!("{}\n\n{reason_msg}", forced.text),
-                images: vec![],
-                tool_calls: None,
-                tool_call_id: None,
-            });
-            history::create_checkpoint(&session_id, turn, &msgs);
-            history::archive_transcript(&session_id, turn, &msgs);
-            return Ok(ChatResult {
-                input_tokens: total.input_tokens,
-                output_tokens: total.output_tokens,
-                cached_tokens: total.cached_tokens,
-                messages: msgs,
-            });
+                reason,
+            )
+            .await;
         }
 
         msgs.push(ChatMessage {
@@ -3158,6 +3260,59 @@ async fn run_loop(
             }
         }
 
+        // ===== Novedad de resultados: si una ronda no aporta NINGUNA información
+        // nueva (hashes ya vistos), se acumula señal de estancamiento.
+        let round_results: Vec<String> = msgs
+            .iter()
+            .rev()
+            .take_while(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .collect();
+        let mut novel = false;
+        for c in &round_results {
+            let h = fnv1a(c);
+            if !seen_results.contains(&h) {
+                novel = true;
+                seen_results.insert(h);
+            }
+        }
+        if !round_results.is_empty() && !novel && !has_mutation {
+            no_new_info += 1;
+        } else {
+            no_new_info = 0;
+        }
+
+        // ===== Nudge: aviso suave al modelo sin cortar (una vez cada N turnos).
+        let nudge: Option<String> = if turn.saturating_sub(last_nudge_turn) >= NUDGE_COOLDOWN {
+            if plan_mode && plan_reads >= PLAN_NUDGE_READS {
+                Some(
+                    "⚠️ [Makora] Estás en modo plan y ya has explorado suficiente. Si te falta algo puntual, lee SOLO ese fragmento; en caso contrario redacta ya el plan final completo.".to_string(),
+                )
+            } else if repeats >= NUDGE_REPEATS {
+                Some(
+                    "⚠️ [Makora] Detecto que estás repitiendo exactamente las mismas llamadas a herramientas. Cambia de estrategia, usa otras herramientas o sintetiza tu respuesta final ahora.".to_string(),
+                )
+            } else if no_new_info >= NUDGE_NO_NEW_INFO {
+                Some(
+                    "⚠️ [Makora] Las últimas rondas de herramientas no aportaron información nueva (resultados ya vistos). No repitas lecturas; concluye con la información que tienes.".to_string(),
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(nudge_text) = nudge {
+            last_nudge_turn = turn;
+            msgs.push(ChatMessage {
+                role: "user".into(),
+                content: nudge_text,
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+
         // Persistencia inmediata paso a paso en SQLite:
         // Asegura que sesiones largas (>10min) mantengan su progreso intacto ante cualquier interrupción imprevista.
         history::create_checkpoint(&session_id, turn, &msgs);
@@ -3173,6 +3328,7 @@ pub async fn run(
     folders: &[String],
     registry: &'static McpRegistry,
     plan_mode: bool,
+    budget_usd: Option<f64>,
 ) -> Result<ChatResult, String> {
     clear_cancel(chat_id);
     clear_session_perms(chat_id);
@@ -3195,6 +3351,7 @@ pub async fn run(
         registry,
         &tools,
         plan_mode,
+        budget_usd,
     )
     .await
 }
@@ -3228,6 +3385,7 @@ pub async fn run_multiagent(
     objective: &str,
     registry: &'static McpRegistry,
     plan_mode: bool,
+    budget_usd: Option<f64>,
 ) -> Result<ChatResult, String> {
     clear_cancel(chat_id);
     clear_session_perms(chat_id);
@@ -3253,6 +3411,7 @@ pub async fn run_multiagent(
         registry,
         &tools,
         plan_mode,
+        budget_usd,
     )
     .await
 }

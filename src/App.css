@@ -2828,8 +2828,23 @@ input {
   color: #ffffff;
 }
 
-/* ===== Undo pill (deshacer último turno) ===== */
-.undo-pill {
+.budget-input {
+  max-width: 130px;
+  padding: 7px 10px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: #f0f2f5;
+  outline: none;
+}
+
+.budget-input:focus {
+  border-color: #2979ff;
+  box-shadow: 0 0 0 2px rgba(41, 121, 255, 0.25);
+}
+
+/* ===== Undo pill (deshacer último turno) ===== */.undo-pill {
   color: #ffd700;
 }
 
