@@ -213,6 +213,16 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
   3. **Fix "Confiar sesión":** `gate_permission` acepta `trust_session` como éxito (la llamada actual se ejecuta) y las reglas de permisos YA NO se resetean por turno (persisten por sesión/chatId durante la vida de la app, como la memoria de aprobaciones de opencode).
 - **Consecuencias:** el usuario ve SIEMPRE cuándo interviene el vigilante y decide; el modelo no confunde avisos del sistema con palabras del usuario; "Confiar sesión" funciona como se espera (sin preguntas repetidas entre turnos). 47 tests Rust + 33 vitest pasan.
 
+## ADR-032 — Vigilante invisible: cero ruido para el usuario (2026-08-20)
+
+- **Problema (feedback del usuario):** los avisos del vigilante (banners ámbar y preguntas "Detener/Continuar") interrumpían la experiencia. En opencode real, el doom_loop casi nunca pregunta porque el modelo se autocorrige con las notas de sistema (`maxSteps` inyecta "responde ya" sin preguntar); el comportamiento percibido es "hace lo que tiene que hacer sin fallar". Se busca eso: intervención silenciosa.
+- **Decisión (todo invisible):**
+  1. **Nudge = SOLO nota de sistema silenciosa** (`system_extra` en el system prompt del siguiente turno). Sin banners de UI, sin evento `agent-notice`, sin mensajes user falsos: el usuario no ve nada y el modelo recibe la corrección como instrucción de sistema (se autocorrige como en opencode).
+  2. **Force = síntesis final silenciosa:** cuando una señal de fuerza se confirma, `forced_final_turn` termina el turno con la respuesta sintetizada del modelo SIN prefijos "⚠️" ni avisos (motivo solo en log `[TOKEN_ENGINE] vigilante`). Sin preguntas al usuario.
+  3. **Medida extrema permanece:** fusibles de 100 turnos / 2M tokens (invisibles, última defensa real).
+  4. El presupuesto de coste (`maxCostPerTurn`, off por defecto) es la ÚNICA pregunta posible y solo existe porque el usuario la configuró explícitamente.
+- **Consecuencias:** para el usuario el agente "solo funciona"; ante un bucle real el modelo es corregido en silencio y, si persiste, el turno concluye con una respuesta normal. 47 tests Rust + 33 vitest pasan.
+
 
 
 

@@ -61,13 +61,6 @@ pub struct QuestionAskEvent {
     pub header: String,
 }
 
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentNoticeEvent {
-    pub chat_id: String,
-    pub text: String,
-}
-
 static TODOS: LazyLock<StdMutex<HashMap<String, Vec<TodoItem>>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 
@@ -2682,7 +2675,6 @@ async fn forced_final_turn(
     total: &mut ChatUsage,
     session_id: &str,
     turn: u32,
-    reason: &str,
 ) -> Result<ChatResult, String> {
     let wire = prepare_wire(msgs, cfg);
     let forced = if cfg.kind == "anthropic" {
@@ -2716,7 +2708,7 @@ async fn forced_final_turn(
     let mut final_msgs = msgs.to_vec();
     final_msgs.push(ChatMessage {
         role: "assistant".into(),
-        content: format!("{}\n\n{reason}", forced.text),
+        content: forced.text,
         images: vec![],
         tool_calls: None,
         tool_call_id: None,
@@ -2811,7 +2803,6 @@ async fn run_loop(
     let mut no_new_info: u32 = 0;
     let mut seen_results: HashSet<u64> = HashSet::new();
     let mut last_nudge_turn: u32 = 0;
-    let mut last_force_ask: u32 = 0;
     let mut system_extra: String = String::new();
     let mut budget_asked = false;
     let mut accumulated_cost: f64 = 0.0;
@@ -2940,7 +2931,6 @@ async fn run_loop(
                             &mut total,
                             &session_id,
                             turn,
-                            "⚠️ Turno detenido por el usuario al alcanzarse el presupuesto configurado; respuesta final sintetizada.",
                         )
                         .await;
                     }
@@ -3064,79 +3054,18 @@ async fn run_loop(
         };
 
         if let Some(reason) = force_reason {
-            println!("[TOKEN_ENGINE] vigilante: señal de fuerza detectada (motivo: {reason})");
-            // Fusibles extremos: fuerza directa (no pueden ocurrir en uso normal).
-            if is_turn_fuse || is_token_fuse {
-                return forced_final_turn(
-                    app,
-                    cfg,
-                    chat_id,
-                    &format!("{full_system}{system_extra}"),
-                    &msgs,
-                    &mut total,
-                    &session_id,
-                    turn,
-                    &format!("⚠️ {reason}"),
-                )
-                .await;
-            }
-            // Transparencia estilo opencode: preguntar al usuario en vez de cortar
-            // por nuestra cuenta. Si ya se le preguntó hace poco, se fuerza.
-            if turn.saturating_sub(last_force_ask) >= 6 {
-                last_force_ask = turn;
-                let answer = ask_user_question(
-                    app,
-                    chat_id,
-                    &format!(
-                        "⚠️ Vigilante Makora: {reason} ¿Cómo procedo?",
-                    ),
-                    vec![
-                        "Detener y sintetizar la respuesta final".to_string(),
-                        "Continuar sin límite".to_string(),
-                    ],
-                    "Vigilante anti-bucles",
-                )
-                .await;
-                let should_continue = answer
-                    .map(|a| a.to_lowercase().contains("continuar"))
-                    .unwrap_or(false);
-                if should_continue {
-                    // El usuario da margen: se resetean las señales y se avisa al modelo.
-                    repeats = 0;
-                    prev_sig.clear();
-                    no_new_info = 0;
-                    plan_reads = 0;
-                    system_extra.push_str(
-                        "\n\n[Nota del sistema Makora]: El usuario pidió continuar sin límite; cambia de estrategia o concluye en cuanto puedas.",
-                    );
-                } else {
-                    return forced_final_turn(
-                        app,
-                        cfg,
-                        chat_id,
-                        &format!("{full_system}{system_extra}"),
-                        &msgs,
-                        &mut total,
-                        &session_id,
-                        turn,
-                        &format!("⚠️ {reason}"),
-                    )
-                    .await;
-                }
-            } else {
-                return forced_final_turn(
-                    app,
-                    cfg,
-                    chat_id,
-                    &format!("{full_system}{system_extra}"),
-                    &msgs,
-                    &mut total,
-                    &session_id,
-                    turn,
-                    &format!("⚠️ {reason}"),
-                )
-                .await;
-            }
+            println!("[TOKEN_ENGINE] vigilante: síntesis final silenciosa (motivo: {reason})");
+            return forced_final_turn(
+                app,
+                cfg,
+                chat_id,
+                &format!("{full_system}{system_extra}"),
+                &msgs,
+                &mut total,
+                &session_id,
+                turn,
+            )
+            .await;
         }
 
         msgs.push(ChatMessage {
@@ -3380,13 +3309,6 @@ async fn run_loop(
             system_extra.push_str(&format!(
                 "\n\n[Nota del sistema Makora — vigilante anti-bucles]: {nudge_text}"
             ));
-            let _ = app.emit(
-                "agent-notice",
-                AgentNoticeEvent {
-                    chat_id: chat_id.to_string(),
-                    text: nudge_text,
-                },
-            );
         }
 
         // Persistencia inmediata paso a paso en SQLite:

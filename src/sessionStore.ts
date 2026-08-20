@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { approvalReply, chat, chatCancel, questionReply, runMultiagentPlan } from "./api";
 import { computeCostUsd } from "./defaults";
 import type {
-  AgentNoticeEvent,
   ApprovalRequiredEvent,
   Attachment,
   ChatConfig,
@@ -191,7 +190,6 @@ export interface SessionRuntimeSnapshot {
   todos: TodoItem[];
   pendingQuestion: PendingQuestion | null;
   pendingApproval: PendingApproval | null;
-  notices: string[];
 }
 
 interface SessionRuntime extends SessionRuntimeSnapshot {
@@ -220,7 +218,6 @@ const EMPTY_RUNTIME: SessionRuntime = Object.freeze({
   todos: [],
   pendingQuestion: null,
   pendingApproval: null,
-  notices: [],
   nextUiId: 0,
   abortRequested: false,
   seeded: false,
@@ -261,7 +258,6 @@ function createRuntime(transcript: ChatMessage[] = []): SessionRuntime {
     todos: [],
     pendingQuestion: null,
     pendingApproval: null,
-    notices: [],
     nextUiId,
     abortRequested: false,
     seeded: transcript.length > 0,
@@ -494,11 +490,6 @@ function installEventRouting(): void {
       },
     })),
   );
-  on<AgentNoticeEvent>("agent-notice", (n) =>
-    update(n.chatId, (rt) => ({
-      notices: [...rt.notices.slice(-4), n.text],
-    })),
-  );
 }
 
 installEventRouting();
@@ -537,7 +528,6 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     plan: null,
     draftInput: "",
     draftAttachments: [],
-    notices: [],
     transcript: newTranscript,
     nextUiId: r.nextUiId + 2,
     currentAssistantId: r.nextUiId + 2,

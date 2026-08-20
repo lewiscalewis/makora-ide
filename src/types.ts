@@ -179,11 +179,6 @@ export interface PendingApproval {
   summary: string;
 }
 
-export interface AgentNoticeEvent {
-  chatId: string;
-  text: string;
-}
-
 export interface ToolActivity {
   id: string;
   name: string;
