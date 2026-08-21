@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { approvalReply, chat, chatCancel, chatCleanup, questionReply, runMultiagentPlan } from "./api";
 import { computeCostUsd } from "./defaults";
 import { formatResponse } from "./responseFormat";
+import { playError, playNotify, playSend, playSuccess } from "./sounds";
 import type {
   ApprovalRequiredEvent,
   Attachment,
@@ -556,6 +557,8 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     ],
   }));
 
+  playSend();
+
   const assistantId = rt.nextUiId + 2;
 
   let acc = "";
@@ -721,8 +724,11 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     }));
     opts.onTranscriptChange(messagesWithMetrics);
 
+    playSuccess();
+
     if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
       const wsName = opts.folders[0]?.split(/[\\/]/).pop() || "Workspace";
+      playNotify();
       new Notification("Makora IDE", {
         body: `✅ Tarea completada con éxito en ${wsName}`,
         silent: false,
@@ -763,6 +769,8 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     const snapshot = runtimes.get(sessionId);
     if (snapshot) opts.onTranscriptChange(snapshot.transcript);
 
+    if (!isCancelled) playError();
+
     if (
       typeof Notification !== "undefined" &&
       Notification.permission === "granted" &&
@@ -770,6 +778,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
       !isCancelled
     ) {
       const wsName = opts.folders[0]?.split(/[\\/]/).pop() || "Workspace";
+      playNotify();
       new Notification("Makora IDE", {
         body: `⚠️ Fallo en tarea de ${wsName}`,
         silent: false,
@@ -801,6 +810,7 @@ export function cancelTurn(sessionId: string): void {
   const rt = runtimes.get(sessionId);
   if (!rt || !rt.busy) return;
   update(sessionId, () => ({ abortRequested: true, busy: false }));
+  playError();
   chatCancel(sessionId).catch((e) => console.warn("cancel error:", e));
 }
 

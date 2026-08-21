@@ -8,6 +8,7 @@ import {
 import { THEME_LIST } from "../themes";
 import { PROVIDERS, presetById } from "../providers";
 import { detectOllama, keyringGet, keyringSet, listModels } from "../api";
+import { soundsEnabled, setSoundsEnabled } from "../sounds";
 import { useI18n, LANGUAGE_LIST } from "../i18n";
 import { addVaultEntry, getVaultKey, loadVault, removeVaultEntry, touchVaultEntry } from "../vault";
 import {
@@ -88,6 +89,7 @@ export default function SettingsModal({
   const [showApiKey, setShowApiKey] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
   const [modelFilterProvider, setModelFilterProvider] = useState<string>(settings.providerId || "deepseek");
+  const [soundsOn, setSoundsOn] = useState<boolean>(() => soundsEnabled());
 
   // --- Key Vault state ---
   const [vault, setVault] = useState<VaultKeyEntry[]>(() => loadVault());
@@ -521,6 +523,24 @@ export default function SettingsModal({
                       Al alcanzarlo, el agente te preguntará si continuar sin límite o detener y sintetizar.
                     </span>
                   </div>
+                </div>
+
+                {/* Sonidos de interfaz: notificaciones y eventos suaves */}
+                <div className="field">
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={soundsOn}
+                      onChange={(e) => {
+                        setSoundsOn(e.target.checked);
+                        setSoundsEnabled(e.target.checked);
+                      }}
+                    />
+                    <span>🔔 Sonidos de interfaz (notificaciones y eventos)</span>
+                  </label>
+                  <span className="small muted">
+                    Sonidos suaves generados por síntesis (sin archivos de audio) para completar, fallar, enviar y alternar opciones.
+                  </span>
                 </div>
               </div>
 

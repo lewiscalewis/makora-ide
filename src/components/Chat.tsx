@@ -10,6 +10,7 @@ import {
 import Markdown from "./Markdown";
 import DiffReviewModal from "./DiffReviewModal";
 import { formatResponse } from "../responseFormat";
+import { playClick, playToggle } from "../sounds";
 import { isModelReasoningSupported } from "../defaults";
 import {
   Zap,
@@ -985,7 +986,7 @@ export default function Chat({
           <div className="agent-mode-selector">
             <button
               className={`mode-pill ${agentMode === "act" ? "active" : ""}`}
-              onClick={() => onToggleMode?.("act")}
+              onClick={() => { playToggle(); onToggleMode?.("act"); }}
               title={t.chat.actModeHint}
             >
               <Zap size={10} />
@@ -993,7 +994,7 @@ export default function Chat({
             </button>
             <button
               className={`mode-pill ${agentMode === "plan" ? "active" : ""}`}
-              onClick={() => onToggleMode?.("plan")}
+              onClick={() => { playToggle(); onToggleMode?.("plan"); }}
               title={t.chat.planModeHint}
             >
               <ScrollText size={10} />
@@ -1002,6 +1003,7 @@ export default function Chat({
             <button
               className={`mode-pill ma-pill ${multiAgentMode !== "off" ? "active" : ""} ${multiAgentMode === "auto" ? "ma-auto" : ""}`}
               onClick={() => {
+                playToggle();
                 const next: "auto" | "always" | "off" =
                   multiAgentMode === "auto" ? "always" : multiAgentMode === "always" ? "off" : "auto";
                 setMultiAgentMode(next);
@@ -1035,7 +1037,7 @@ export default function Chat({
             <>
               <button
                 className="chat-header-btn"
-                onClick={copyTranscript}
+                onClick={() => { playClick(); copyTranscript(); }}
                 title={t.chat.copyChat}
               >
                 {copiedTranscript ? <Check size={11} /> : <Copy size={11} />}
@@ -1043,7 +1045,7 @@ export default function Chat({
               </button>
               <button
                 className="chat-header-btn"
-                onClick={exportMarkdown}
+                onClick={() => { playClick(); exportMarkdown(); }}
                 title={t.chat.exportChat}
               >
                 <Download size={11} />
@@ -1051,7 +1053,7 @@ export default function Chat({
               </button>
               <button
                 className="chat-header-btn"
-                onClick={clearChat}
+                onClick={() => { playClick(); clearChat(); }}
                 disabled={busy}
                 title={t.chat.clearChat}
               >
