@@ -1,5 +1,6 @@
 import { MAKORA_THEMES } from "../themes";
 import { useI18n } from "../i18n";
+import { playClick, playToggle } from "../sounds";
 import {
   Folder,
   GitBranch,
@@ -57,7 +58,7 @@ export default function StatusBar({
       <div className="status-left">
         <button
           className="status-item status-clickable"
-          onClick={onOpenPalette}
+          onClick={() => { playClick(); onOpenPalette(); }}
           title={t.statusbar.openPalette}
         >
           <Folder size={12} className="status-icon" />
@@ -70,7 +71,7 @@ export default function StatusBar({
             <div className="status-divider" />
             <button
               className="status-item status-clickable git-status-item"
-              onClick={onOpenGit}
+              onClick={() => { playClick(); onOpenGit?.(); }}
               title={`Git: ${t.statusbar.branch} ${gitInfo.branch} | ${totalGitChanges} ${t.statusbar.changesPending} (${gitInfo.staged} staged, ${gitInfo.modified} modified, ${gitInfo.untracked} untracked)`}
             >
               <GitBranch size={12} className="status-icon" />
@@ -116,7 +117,7 @@ export default function StatusBar({
 
         <button
           className="status-item status-clickable"
-          onClick={onOpenAnalytics}
+          onClick={() => { playClick(); onOpenAnalytics?.(); }}
           title={t.statusbar.openAnalytics}
         >
           <BarChart2 size={11} className="status-icon text-gold" />
@@ -132,7 +133,7 @@ export default function StatusBar({
 
         <button
           className="status-item status-clickable"
-          onClick={onToggleTerminal}
+          onClick={() => { playToggle(); onToggleTerminal(); }}
           title={`${t.statusbar.toggleTerminal} (Ctrl+J)`}
         >
           <Terminal size={11} className="status-icon" />
@@ -144,7 +145,7 @@ export default function StatusBar({
 
         <button
           className="status-item status-clickable"
-          onClick={onCycleTheme}
+          onClick={() => { playClick(); onCycleTheme(); }}
           title={t.statusbar.cycleTheme}
         >
           <Palette size={11} className="status-icon" />
@@ -155,7 +156,7 @@ export default function StatusBar({
 
         <button
           className="status-item status-clickable"
-          onClick={onOpenSettings}
+          onClick={() => { playClick(); onOpenSettings(); }}
           title={t.statusbar.openSettings}
         >
           <Settings size={12} className="status-icon" />

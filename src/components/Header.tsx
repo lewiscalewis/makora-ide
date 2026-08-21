@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { THEME_LIST } from "../themes";
 import { useI18n, LANGUAGE_LIST } from "../i18n";
+import { playClick, playToggle } from "../sounds";
 import {
   FolderPlus,
   Trash2,
@@ -85,7 +86,7 @@ export default function Header({
         {onToggleExplorer && (
           <button
             className={`icon-btn toggle-sidebar-btn ${explorerOpen ? "active" : ""}`}
-            onClick={onToggleExplorer}
+            onClick={() => { playToggle(); onToggleExplorer(); }}
             title={t.header.toggleExplorer}
             aria-label={t.header.toggleExplorer}
           >
@@ -106,7 +107,7 @@ export default function Header({
       <div className="header-center">
         <button
           className="header-search-btn"
-          onClick={onOpenPalette}
+          onClick={() => { playClick(); onOpenPalette(); }}
           title={`${t.header.searchPlaceholder} (${t.header.searchKbd})`}
         >
           <Search size={13} className="search-icon" />
@@ -133,7 +134,7 @@ export default function Header({
 
         <button
           className="btn btn-subtle"
-          onClick={onAddFolder}
+          onClick={() => { playClick(); onAddFolder(); }}
           title={t.header.addFolder}
         >
           <FolderPlus size={13} />
@@ -142,7 +143,7 @@ export default function Header({
 
         <button
           className="btn btn-subtle"
-          onClick={onNewWorkspace}
+          onClick={() => { playClick(); onNewWorkspace(); }}
           title={t.header.cleanWorkspace}
         >
           <Trash2 size={13} />
@@ -154,7 +155,7 @@ export default function Header({
           <button
             type="button"
             className={`theme-picker-trigger ${langDropdownOpen ? "active" : ""}`}
-            onClick={() => setLangDropdownOpen((o) => !o)}
+            onClick={() => { playClick(); setLangDropdownOpen((o) => !o); }}
             title={t.header.selectLanguage}
           >
             <Globe size={13} className="theme-icon-indicator" />
@@ -170,6 +171,7 @@ export default function Header({
                   type="button"
                   className={`theme-dropdown-item ${l.id === language ? "selected" : ""}`}
                   onClick={() => {
+                    playClick();
                     setLanguage(l.id);
                     setLangDropdownOpen(false);
                   }}
@@ -190,7 +192,7 @@ export default function Header({
           <button
             type="button"
             className={`theme-picker-trigger ${themeDropdownOpen ? "active" : ""}`}
-            onClick={() => setThemeDropdownOpen((o) => !o)}
+            onClick={() => { playClick(); setThemeDropdownOpen((o) => !o); }}
             title={t.header.selectTheme}
           >
             <Palette size={13} className="theme-icon-indicator" />
@@ -268,6 +270,7 @@ export default function Header({
                     type="button"
                     className={`theme-dropdown-item ${th.id === currentTheme ? "selected" : ""}`}
                     onClick={() => {
+                      playClick();
                       onSelectTheme(th.id);
                       setThemeDropdownOpen(false);
                     }}
@@ -295,7 +298,7 @@ export default function Header({
             <button
               type="button"
               className={`theme-picker-trigger glass-mode-toggle ${glassMode === "vivid" ? "active" : ""}`}
-              onClick={onToggleGlassMode}
+              onClick={() => { playToggle(); onToggleGlassMode(); }}
               title={
                 glassMode === "vivid"
                   ? "Transparencia 3D: Vívida (Fondo ultra-visible) - Clic para cambiar"
@@ -314,7 +317,7 @@ export default function Header({
         {onTogglePanel && (
           <button
             className={`icon-btn toggle-panel-btn ${panelOpen ? "active" : ""}`}
-            onClick={onTogglePanel}
+            onClick={() => { playToggle(); onTogglePanel(); }}
             title={t.header.togglePanel}
             aria-label={t.header.togglePanel}
           >
@@ -326,7 +329,7 @@ export default function Header({
           className="icon-btn"
           title={t.header.chatHistory}
           aria-label={t.header.chatHistory}
-          onClick={onOpenHistory}
+          onClick={() => { playClick(); onOpenHistory(); }}
         >
           <History size={14} />
         </button>
@@ -335,7 +338,7 @@ export default function Header({
           className="icon-btn"
           title={t.header.settings}
           aria-label={t.header.settings}
-          onClick={onOpenSettings}
+          onClick={() => { playClick(); onOpenSettings(); }}
         >
           <Settings size={14} />
         </button>

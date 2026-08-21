@@ -20,6 +20,7 @@ import {
   gitInit,
 } from "../api";
 import { useI18n } from "../i18n";
+import { playClick } from "../sounds";
 import {
   GitBranch,
   GitCommit,
@@ -142,6 +143,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handleStageAll = async () => {
+    playClick();
     try {
       await gitStageAll(folder);
       await refreshGit();
@@ -164,6 +166,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
 
   const handleCommit = async () => {
     if (!commitMsg.trim()) return;
+    playClick();
     try {
       setLoading(true);
       const out = await gitCommit(folder, commitMsg.trim());
@@ -179,6 +182,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handlePush = async () => {
+    playClick();
     try {
       setPushing(true);
       setError(null);
@@ -193,6 +197,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handlePull = async () => {
+    playClick();
     try {
       setPulling(true);
       setError(null);
@@ -208,6 +213,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handleFetch = async () => {
+    playClick();
     try {
       setFetching(true);
       setError(null);
@@ -222,6 +228,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handleSwitchBranch = async (branchName: string) => {
+    playClick();
     try {
       setLoading(true);
       const cleanBranch = branchName.replace(/^remotes\/[^/]+\//, "");
@@ -239,6 +246,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
 
   const handleCreateBranch = async () => {
     if (!newBranchName.trim()) return;
+    playClick();
     try {
       setLoading(true);
       const out = await gitBranchCreate(folder, newBranchName.trim());
@@ -256,6 +264,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
 
   const handleSaveRemote = async () => {
     if (!remoteUrl.trim()) return;
+    playClick();
     try {
       setLoading(true);
       const out = await gitRemoteSet(folder, remoteName.trim() || "origin", remoteUrl.trim());
@@ -269,6 +278,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
   };
 
   const handleInitRepo = async () => {
+    playClick();
     try {
       setLoading(true);
       const out = await gitInit(folder);
@@ -371,7 +381,7 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
             <button className="icon-btn" onClick={refreshGit} title={t.common.refresh}>
               <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
             </button>
-            <button className="icon-btn" onClick={onClose} title={`${t.common.close} (Esc)`}>
+            <button className="icon-btn" onClick={() => { playClick(); onClose(); }} title={`${t.common.close} (Esc)`}>
               <X size={13} />
             </button>
           </div>
@@ -381,21 +391,21 @@ export default function GitModal({ folder, onClose, onRefreshWorkspace }: Props)
         <div className="modal-tabs git-tabs">
           <button
             className={`tab ${activeTab === "changes" ? "active" : ""}`}
-            onClick={() => setActiveTab("changes")}
+            onClick={() => { playClick(); setActiveTab("changes"); }}
           >
             <FileDiff size={13} />
             <span>{t.git.changes} ({files.length})</span>
           </button>
           <button
             className={`tab ${activeTab === "history" ? "active" : ""}`}
-            onClick={() => setActiveTab("history")}
+            onClick={() => { playClick(); setActiveTab("history"); }}
           >
             <Clock size={13} />
             <span>{t.git.history} ({commits.length})</span>
           </button>
           <button
             className={`tab ${activeTab === "remotes" ? "active" : ""}`}
-            onClick={() => setActiveTab("remotes")}
+            onClick={() => { playClick(); setActiveTab("remotes"); }}
           >
             <Globe size={13} />
             <span>{t.git.remotes} ({remotes.length})</span>

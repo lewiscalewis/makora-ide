@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useI18n } from "../i18n";
+import { playClick } from "../sounds";
 import {
   Clock,
   Cpu,
@@ -205,7 +206,7 @@ export default function HistoryModal({
               <Plus size={13} />
               <span>{t.history.newChat}</span>
             </button>
-            <button className="icon-btn" onClick={onClose} title={t.common.close}>
+            <button className="icon-btn" onClick={() => { playClick(); onClose(); }} title={t.common.close}>
               <X size={14} />
             </button>
           </div>

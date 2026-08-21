@@ -1,6 +1,7 @@
 import { Plus, X } from "lucide-react";
 import type { ChatSession } from "../types";
 import { useI18n } from "../i18n";
+import { playClick, playToggle } from "../sounds";
 
 interface WorkspaceTabBarProps {
   sessions: ChatSession[];
@@ -51,7 +52,7 @@ export default function WorkspaceTabBar({
             <div
               key={sess.id}
               className={`workspace-tab ${isActive ? "active" : ""}`}
-              onClick={() => onSelectSession(sess.id)}
+              onClick={() => { playClick(); onSelectSession(sess.id); }}
               title={title}
             >
               <div className="workspace-tab-status">
@@ -70,6 +71,7 @@ export default function WorkspaceTabBar({
                   className="workspace-tab-close"
                   onClick={(e) => {
                     e.stopPropagation();
+                    playClick();
                     onCloseSession(sess.id);
                   }}
                   title={t.workspace.closeSession}
@@ -85,7 +87,7 @@ export default function WorkspaceTabBar({
       <button
         type="button"
         className="workspace-tab-add"
-        onClick={onNewSession}
+        onClick={() => { playToggle(); onNewSession(); }}
         title={t.workspace.newSessionTooltip}
       >
         <Plus size={14} />

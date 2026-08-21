@@ -8,7 +8,7 @@ import {
 import { THEME_LIST } from "../themes";
 import { PROVIDERS, presetById } from "../providers";
 import { detectOllama, keyringGet, keyringSet, listModels } from "../api";
-import { soundsEnabled, setSoundsEnabled } from "../sounds";
+import { soundsEnabled, setSoundsEnabled, playClick } from "../sounds";
 import { useI18n, LANGUAGE_LIST } from "../i18n";
 import { addVaultEntry, getVaultKey, loadVault, removeVaultEntry, touchVaultEntry } from "../vault";
 import {
@@ -292,7 +292,7 @@ export default function SettingsModal({
               <span className="settings-sub muted small">{t.settings.modalSubtitle}</span>
             </div>
           </div>
-          <button className="icon-btn" title={t.common.close} onClick={onClose}>
+            <button className="icon-btn" title={t.common.close} onClick={() => { playClick(); onClose(); }}>
             <X size={13} />
           </button>
         </div>
