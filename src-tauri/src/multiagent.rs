@@ -18,6 +18,7 @@ pub enum SubagentRole {
 }
 
 impl SubagentRole {
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             SubagentRole::Explorer => "Explorer (Context Condenser)",
@@ -37,13 +38,14 @@ impl SubagentRole {
         }
     }
 
+    #[allow(dead_code)]
     pub fn system_prompt(&self) -> &'static str {
         match self {
             SubagentRole::Explorer => {
                 "Eres el Subagente Explorador de Makora. Tu único objetivo es inspeccionar el workspace, mapear símbolos y extraer el contexto mínimo relevante. NUNCA edites archivos. Descarta ruido de dependencias y genera un Briefing Técnico conciso (<1200 tokens) con rutas y números de línea exactos."
             }
             SubagentRole::Coder => {
-                "Eres el Subagente Programador de Makora. Tu único objetivo es aplicar cambios quirúrgicos y precisos usando EXCLUSIVAMENTE apply_patch con 3-5 líneas de anclaje exactas. No reescribas archivos enteros. Respeta estrictamente los contratos de tipos y las invariantes del briefing."
+                "Eres el Subagente Programador de Makora. Tu único objetivo es aplicar cambios quirúrgicos y precisos usando `edit` (old_string exacto y único → new_string) como forma preferida, o `apply_patch` para parches multi-bloque. No reescribas archivos enteros. Respeta estrictamente los contratos de tipos y las invariantes del briefing."
             }
             SubagentRole::Tester => {
                 "Eres el Subagente Tester de Makora. Tu objetivo es ejecutar suites de pruebas (cargo test, npm test, etc.) o comandos de verificación silenciosos con bash, extrayendo exclusivamente el diagnóstico relevante si hay fallos o confirmando el éxito."

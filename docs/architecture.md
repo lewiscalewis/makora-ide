@@ -78,8 +78,8 @@ Fuera del prototipo (v2+): colaboración multiusuario, plugins de terceros, sand
 
 ### Módulos implementados (estado 2026-08-18)
 
-- `src-tauri/src/gateway.rs` — clientes HTTP multi-proveedor (OpenAI-compat: OpenAI/DeepSeek/OpenRouter/Custom · Anthropic · Ollama), streaming SSE, tool-calls, multimodal (images), razonamiento.
-- `src-tauri/src/agent.rs` — bucle agéntico (LLM → tools → resultado, `max_loops`), tools núcleo (read_file/list_dir/grep/bash/write_file) con restricción al workspace, salida en vivo vía eventos, cancelación.
+- `src-tauri/src/gateway.rs` — capa provider multi-proveedor (OpenAI-compat: OpenAI/DeepSeek/OpenRouter/Groq/Ollama/Custom · Anthropic), streaming SSE, acumulación de `delta.tool_calls`, retry con backoff, multimodal (images), razonamiento/thinking.
+- `src-tauri/src/agent.rs` — bucle agéntico simple (port de opencode): `stream → ejecutar tools → añadir resultados → repetir`. Tools núcleo (`read_file`/`read_file_range`/`edit`/`apply_patch`/`write_file`/`bash`/`grep`/`list_dir`/`webfetch`/`todowrite`/`question`/`skill` + MCP) restringidas al workspace, permisos por sesión, snapshots/revert, fusibles de seguridad (100 turnos / 2M tokens). Confía en el function calling nativo (sin extracción de tool-calls por texto, ADR-056).
 - `src-tauri/src/mcp.rs` — cliente MCP stdio (initialize → notifications/initialized → tools/list, tools/call), naming `mcp__<server>__<tool>`, adapter de schemas a function-calling.
 - `src-tauri/src/terminal.rs` — PTY (portable-pty, ConPTY en Windows), terminales múltiples por id, eventos `term-data-<id>`/`term-exit-<id>`, resize.
 - `src-tauri/src/balance.rs` — saldo de crédito: DeepSeek (`/user/balance`) y OpenRouter (`/api/v1/credits`); el resto usa estimador local por precios del modelo.

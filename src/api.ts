@@ -31,6 +31,8 @@ export const chat = (
 ) => invoke<ChatResult>("chat", { config, system, messages, folders, chatId, planMode, budgetUsd });
 export const chatCancel = (chatId: string) =>
   invoke<void>("chat_cancel", { chatId });
+export const chatCleanup = (chatId: string) =>
+  invoke<void>("chat_cleanup", { chatId });
 export const questionReply = (questionId: string, answer: string) =>
   invoke<void>("question_reply", { questionId, answer });
 export const approvalReply = (approvalId: string, decision: string, feedback: string) =>

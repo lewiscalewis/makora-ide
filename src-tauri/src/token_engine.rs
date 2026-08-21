@@ -38,6 +38,7 @@ impl TokenCounter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn count_messages(&self, system: &str, msgs: &[ChatMessage]) -> usize {
         let mut total = if system.is_empty() {
             0
@@ -166,10 +167,10 @@ impl ContextComposer {
         // Los modelos degradan su calidad con contextos enormes y el tokenizer
         // local (cl100k) infra-cuenta frente al del proveedor (DeepSeek), por
         // lo que una cuota proporcional sin techo dejaba pasar wires de 170k+.
-        let quota = self.quota_tokens(self.quotas.history).min(48_000);
+        let quota = self.quota_tokens(self.quotas.history).min(24_000);
         // Backstop por caracteres (~4 chars/token) como segunda red de
         // seguridad cuando el conteo por tokens local subestime el real.
-        const MAX_HISTORY_CHARS: usize = 160_000;
+        const MAX_HISTORY_CHARS: usize = 80_000;
 
         // Agrupar mensajes en bloques atómicos indivisibles:
         // - Cada llamada de asistente con sus respuestas de herramientas forma un bloque atómico.

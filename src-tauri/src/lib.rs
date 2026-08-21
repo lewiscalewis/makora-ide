@@ -4,7 +4,6 @@ mod gateway;
 mod history;
 mod mcp;
 mod multiagent;
-mod output_sanitizer;
 mod repo_map;
 mod symbol_index;
 mod terminal;
@@ -54,6 +53,14 @@ pub struct ChatConfig {
     pub vision_enabled: bool,
     #[serde(default)]
     pub context_window: Option<u32>,
+    #[serde(default)]
+    pub fallback_kind: String,
+    #[serde(default)]
+    pub fallback_base_url: String,
+    #[serde(default)]
+    pub fallback_model: String,
+    #[serde(default)]
+    pub fallback_api_key: String,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Type)]
@@ -447,6 +454,12 @@ async fn chat(
 #[specta::specta]
 fn chat_cancel(chat_id: String) {
     agent::cancel_chat(&chat_id);
+}
+
+#[tauri::command]
+#[specta::specta]
+fn chat_cleanup(chat_id: String) {
+    agent::cleanup_chat(&chat_id);
 }
 
 #[tauri::command]
@@ -1448,6 +1461,7 @@ pub fn run() {
             list_models,
             chat,
             chat_cancel,
+            chat_cleanup,
             question_reply,
             approval_reply,
             revert_last_turn,

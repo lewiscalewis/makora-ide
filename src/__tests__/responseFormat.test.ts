@@ -54,6 +54,25 @@ describe("formatResponse — sintaxis de tool-calls filtrada", () => {
     expect(out).not.toContain("a.ts");
   });
 
+  it("elimina DSML con DOBLE tubería (||DSML||) — variante real de DeepSeek", () => {
+    const raw = "<||DSML||tool_calls>\n<||DSML||invoke name=\"bash\">\n<||DSML||parameter name=\"command\" string=\"true\">cd /c/x && wc -l a.txt</||DSML||parameter>\n</||DSML||invoke>\n</||DSML||tool_calls>";
+    const out = formatResponse(raw);
+    expect(out).not.toContain("DSML");
+    expect(out).not.toContain("invoke");
+    expect(out).not.toContain("bash");
+    expect(out).not.toContain("wc -l");
+    expect(out).toBe(TOOL_ONLY_NOTE);
+  });
+
+  it("elimina DSML con doble tubería intercalado en prosa", () => {
+    const raw = "Voy a ejecutar:\n<||DSML||tool_calls><||DSML||invoke name=\"bash\"><||DSML||parameter name=\"command\" string=\"true\">ls</||DSML||parameter></||DSML||invoke></||DSML||tool_calls>\nHecho.";
+    const out = formatResponse(raw);
+    expect(out).toContain("Voy a ejecutar:");
+    expect(out).toContain("Hecho.");
+    expect(out).not.toContain("DSML");
+    expect(out).not.toContain("ls");
+  });
+
   it("corta un <function_calls> sin cerrar al final (streaming interrumpido)", () => {
     const raw = "Plan:\n<function_calls>\n<invoke name=\"webfetch\">";
     expect(formatResponse(raw)).toBe("Plan:");

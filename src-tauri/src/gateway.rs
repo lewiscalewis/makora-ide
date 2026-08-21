@@ -25,6 +25,7 @@ pub struct TurnOutcome {
     pub text: String,
     pub tool_calls: Vec<ToolCall>,
     pub reasoning: String,
+    pub finish_reason: Option<String>,
 }
 
 pub static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
@@ -267,7 +268,7 @@ fn is_mistral(cfg: &ChatConfig) -> bool {
 }
 
 fn fix_mistral_wire(msgs: Vec<Value>) -> Vec<Value> {
-    let mut msgs: Vec<Value> = msgs
+    let msgs: Vec<Value> = msgs
         .into_iter()
         .map(|mut m| {
             if m.get("role").and_then(|r| r.as_str()) == Some("assistant") {
@@ -452,6 +453,15 @@ fn is_retryable_status(status: u16, body: &str) -> bool {
         return !exhausted;
     }
     status == 408 || (500..=599).contains(&status)
+}
+
+/// Detecta errores de cuota/saldo agotado (402/429 con "balance/quota/billing/...")
+/// para poder conmutar a un proveedor local de respaldo (MakoraAI).
+pub fn is_quota_or_billing_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    ["cuota", "saldo", "insufficient", "balance", "billing", "quota", "credit", "402", "429"]
+        .iter()
+        .any(|k| lower.contains(k))
 }
 
 async fn sleep_backoff(
@@ -697,12 +707,7 @@ pub async fn openai_turn(
     let mut output_chars = 0usize;
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
     let mut global_extra_content: Option<Value> = None;
-    let mut sanitizer = crate::output_sanitizer::StreamFilter::new();
-    // El thinking/reasoning tambiÃ©n puede traer sintaxis de tool-calls filtrada
-    // (el modelo "piensa" las llamadas antes de emitirlas). Se sanea SOLO la
-    // vista (`thinking-delta`); `reasoning` se conserva crudo para el eco que
-    // exige DeepSeek en turnos siguientes.
-    let mut reasoning_sanitizer = crate::output_sanitizer::StreamFilter::new();
+    let mut finish_reason: Option<String> = None;
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         if data == "[DONE]" {
@@ -713,6 +718,13 @@ pub async fn openai_turn(
             Err(_) => return,
         };
         if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
+            if let Some(first) = choices.first() {
+                if let Some(fr) = first.get("finish_reason").and_then(|f| f.as_str()) {
+                    if !fr.is_empty() {
+                        finish_reason = Some(fr.to_string());
+                    }
+                }
+            }
             if let Some(delta) = choices.first().and_then(|c| c.get("delta")) {
                 if let Some(ec) = delta.get("extra_content") {
                     global_extra_content = Some(ec.clone());
@@ -724,29 +736,23 @@ pub async fn openai_turn(
                 if let Some(rc) = rc_opt {
                     if !rc.is_empty() {
                         reasoning.push_str(rc);
-                        let clean = reasoning_sanitizer.push(rc);
-                        if !clean.is_empty() {
-                            let _ = app.emit(
-                                "thinking-delta",
-                                ThinkingDelta {
-                                    chat_id: chat_id.to_string(),
-                                    text: clean,
-                                },
-                            );
-                        }
+                        let _ = app.emit(
+                            "thinking-delta",
+                            ThinkingDelta {
+                                chat_id: chat_id.to_string(),
+                                text: rc.to_string(),
+                            },
+                        );
                     }
                 }
                 if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                     if !content.is_empty() {
                         text.push_str(content);
-                        let clean = sanitizer.push(content);
-                        if !clean.is_empty() {
-                            let _ = ChatDeltaEvent {
-                                chat_id: chat_id.to_string(),
-                                text: clean,
-                            }
-                            .emit(app);
+                        let _ = ChatDeltaEvent {
+                            chat_id: chat_id.to_string(),
+                            text: content.to_string(),
                         }
+                        .emit(app);
                         output_chars += content.len();
                     }
                 }
@@ -816,7 +822,7 @@ pub async fn openai_turn(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let mut tool_calls: Vec<ToolCall> = tcs
+    let tool_calls: Vec<ToolCall> = tcs
         .into_values()
         .enumerate()
         .map(|(i, (mut id, name, arguments, mut extra_content))| {
@@ -835,23 +841,20 @@ pub async fn openai_turn(
         })
         .collect();
 
-    // Sanitize text and extract embedded DSML / XML tool calls (e.g. DeepSeek V3/R1 text outputs)
-    let cleaned = crate::output_sanitizer::extract_embedded_tool_calls(&text, now_ts);
-    tool_calls.extend(cleaned.tool_calls);
-    let _ = sanitizer.flush();
     if tool_calls.is_empty() {
         let _ = ChatTextFinal {
             chat_id: chat_id.to_string(),
-            text: cleaned.text.clone(),
+            text: text.clone(),
         }
         .emit(app);
     }
 
     Ok(TurnOutcome {
         usage,
-        text: cleaned.text,
+        text,
         tool_calls,
         reasoning,
+        finish_reason,
     })
 }
 
@@ -1104,8 +1107,7 @@ pub async fn anthropic_turn(
     let mut text = String::new();
     let mut output_chars = 0usize;
     let mut tool_blocks: Vec<(String, String, String)> = Vec::new();
-    let mut sanitizer = crate::output_sanitizer::StreamFilter::new();
-    let mut reasoning_sanitizer = crate::output_sanitizer::StreamFilter::new();
+    let mut finish_reason: Option<String> = None;
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         let v: Value = match serde_json::from_str(data) {
@@ -1146,28 +1148,22 @@ pub async fn anthropic_turn(
                     if dt == "text_delta" {
                         if let Some(t) = delta.get("text").and_then(|x| x.as_str()) {
                             text.push_str(t);
-                            let clean = sanitizer.push(t);
-                            if !clean.is_empty() {
-                                let _ = ChatDeltaEvent {
-                                    chat_id: chat_id.to_string(),
-                                    text: clean,
-                                }
-                                .emit(app);
+                            let _ = ChatDeltaEvent {
+                                chat_id: chat_id.to_string(),
+                                text: t.to_string(),
                             }
+                            .emit(app);
                             output_chars += t.len();
                         }
                     } else if dt == "thinking_delta" {
                         if let Some(t) = delta.get("thinking").and_then(|x| x.as_str()) {
-                            let clean = reasoning_sanitizer.push(t);
-                            if !clean.is_empty() {
-                                let _ = app.emit(
-                                    "thinking-delta",
-                                    ThinkingDelta {
-                                        chat_id: chat_id.to_string(),
-                                        text: clean,
-                                    },
-                                );
-                            }
+                            let _ = app.emit(
+                                "thinking-delta",
+                                ThinkingDelta {
+                                    chat_id: chat_id.to_string(),
+                                    text: t.to_string(),
+                                },
+                            );
                         }
                     } else if dt == "input_json_delta" {
                         if let Some(p) = delta.get("partial_json").and_then(|x| x.as_str()) {
@@ -1183,6 +1179,13 @@ pub async fn anthropic_turn(
                     usage.output_tokens =
                         u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
                 }
+                if let Some(delta) = v.get("delta") {
+                    if let Some(sr) = delta.get("stop_reason").and_then(|x| x.as_str()) {
+                        if !sr.is_empty() {
+                            finish_reason = Some(sr.to_string());
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -1192,7 +1195,7 @@ pub async fn anthropic_turn(
     if usage.output_tokens == 0 && output_chars > 0 {
         usage.output_tokens = (output_chars / 4).max(1) as u32;
     }
-    let mut tool_calls: Vec<ToolCall> = tool_blocks
+    let tool_calls: Vec<ToolCall> = tool_blocks
         .into_iter()
         .map(|(id, name, arguments)| ToolCall {
             id,
@@ -1201,25 +1204,19 @@ pub async fn anthropic_turn(
             extra_content: None,
         })
         .collect();
-    let now_ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let cleaned = crate::output_sanitizer::extract_embedded_tool_calls(&text, now_ts);
-    tool_calls.extend(cleaned.tool_calls);
-    let _ = sanitizer.flush();
     if tool_calls.is_empty() {
         let _ = ChatTextFinal {
             chat_id: chat_id.to_string(),
-            text: cleaned.text.clone(),
+            text: text.clone(),
         }
         .emit(app);
     }
     Ok(TurnOutcome {
         usage,
-        text: cleaned.text,
+        text,
         tool_calls,
         reasoning: String::new(),
+        finish_reason,
     })
 }
 
@@ -1327,6 +1324,10 @@ mod tests {
             temperature: None,
             vision_enabled: false,
             context_window: None,
+            fallback_kind: String::new(),
+            fallback_base_url: String::new(),
+            fallback_model: String::new(),
+            fallback_api_key: String::new(),
         };
         let msg = ChatMessage {
             role: "assistant".into(),
@@ -1407,6 +1408,10 @@ mod tests {
             temperature: None,
             vision_enabled: false,
             context_window: None,
+            fallback_kind: String::new(),
+            fallback_base_url: String::new(),
+            fallback_model: String::new(),
+            fallback_api_key: String::new(),
         };
         let with_reasoning = ChatMessage {
             role: "assistant".into(),

@@ -93,6 +93,10 @@ export type ChatConfig = {
 	temperature: number | null,
 	visionEnabled?: boolean,
 	contextWindow?: number | null,
+	fallbackKind?: string,
+	fallbackBaseUrl?: string,
+	fallbackModel?: string,
+	fallbackApiKey?: string,
 };
 
 export type ChatDeltaEvent = {

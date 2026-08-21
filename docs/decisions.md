@@ -345,6 +345,127 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
 - **Decisión:** nuevo módulo `symbol_index.rs` que extrae **símbolos por lenguaje** (Rust: `fn`/`struct`/`enum`/`trait`/`impl`/`mod`/`type`; TS/JS: `function`/`class`/`interface`/`type`/`const`; Python: `def`/`class`) y los indexa para consulta con **BM25** (k1=1.5, b=0.75) + bonus por coincidencia de nombre. La extracción usa **regex por lenguaje** en lugar de gramáticas C de tree-sitter para no añadir dependencias de compilación pesadas al build MSVC de Windows (mismo valor práctico de "find definitions", menor riesgo de build). Se cachea por workspace (TTL 180 s) y se expone como tool **`repo_map_query`** (solo lectura, disponible en modo plan y en el subagente explorer). Devuelve `kind nombre — ruta:línea` ordenados por relevancia.
 - **Consecuencias:** el agente localiza definiciones sin grep ciego (menos tokens, menos lecturas). 75 tests Rust + 64 vitest. Si en el futuro se necesita precisión AST exacta, se puede cambiar la capa de extracción por tree-sitter sin tocar la API (BM25 + caché + tool ya están).
 
+## ADR-048 — Reescritura del saneamiento de salida: normalizar primero, parsear después (2026-08-21)
+
+- **Problema (feedback del usuario: "el sistema de respuestas está completamente roto"):** DeepSeek emite las tool-calls como DSML en TEXTO (no como `tool_calls` nativas), y lo hace con **DOS tuberías** (`<||DSML||tool_calls>`, `<||DSML||invoke name="bash">`, `</||DSML||parameter>`). El saneador anterior (`output_sanitizer.rs`, ADR-039/046) solo casaba `<|DSML|…>` con UNA tubería. Consecuencia doble: (1) el XML crudo se filtraba al contenido visible (streaming y final), y (2) `extract_embedded_tool_calls` no extraía nada → el bucle interpretaba la basura como "respuesta final", no ejecutaba la herramienta y "no terminaba el trabajo". El mismo patrón estaba duplicado en el frontend (`responseFormat.ts::stripToolSyntax`), que también fallaba.
+- **Decisión (normalizar primero, parsear después):** en vez de acumular regex por cada variante, se introduce un paso de **canonicalización** idempotente y barato (`normalize_syntax`) que:
+  1. mapea caracteres de ancho completo a ASCII (`｜＜＞［］＝＂＇；＆＃％`);
+  2. colapsa el namespace DSML a su forma canónica de UNA tubería, para **cualquier número de tuberías**, con o sin espacios, en forma cruda (`<||DSML||` → `<|DSML|`) y HTML-escaped (`&lt;||DSML||` → `&lt;|DSML|`).
+  Después, todos los regex operan SOLO sobre la forma canónica. Se añade una **red de seguridad final** (`RE_RESIDUAL_TAG`) que, solo cuando ya se detectó tool-syntax, elimina cualquier etiqueta cuyo contenido mencione una palabra clave de tool (de cualquier "dialecto"), garantizando que NUNCA llegue XML crudo a la UI aunque aparezca un formato nuevo.
+- **Extracción con tipos correctos:** `RE_PARAM` ahora captura el atributo `string="true"` y lo respeta (fuerza `String`, sin convertir "123" a número); `string="false"`/ausente sigue intentando JSON. Se decodifican entidades HTML en los valores de parámetro (`&lt;`, `&amp;`, …) y se toleran espacios alrededor de `=` en los atributos. Esto evita el fallo histórico de `read_file_range` leyendo la línea 1 por parsear mal `start_line`.
+- **Recuperación del bucle agéntico (estabilidad):** `TurnOutcome` gana el campo `emitted_tool_syntax` (`contains_tool_syntax` en el saneador). Si el modelo emite tool-syntax como texto y NO se parsea ninguna tool-call, `run_loop` corrige UNA sola vez con una nota de sistema ("usa la interfaz nativa de herramientas o responde directamente") y reintenta, en vez de devolver basura o terminar sin trabajo. Acotado (una vez) para no crear un bucle nuevo.
+- **Frontend (doble blindaje):** `responseFormat.ts::stripToolSyntax` aplica la misma canonicalización `normalizeDsmlNamespace` antes de sus regex.
+- **Consecuencias:** la sintaxis de tool-calls jamás llega a la UI (ni en streaming ni en el estado final), con independencia del número de tuberías/ancho/escapado; las tool-calls embebidas se extraen y ejecutan con tipos correctos; y si aparece un formato no reconocido, el bucle corrige al modelo en lugar de fallar. 85 tests Rust (+9) + 66 vitest (+2); `cargo build` y `npm run build` OK. Patrón de referencia: opencode no depende del parseo de texto — usa tool-calls nativas y un bucle limpio con resultado de error por tool; Makora mantiene su soporte DSML (requisito DeepSeek) pero ahora con un parser tolerante a variantes.
+
+## ADR-049 — Vigilante anti-estancamiento en modo Act + fallback honesto (2026-08-21)
+
+- **Problema (feedback del usuario: "se rompe el proceso y no cumple su tarea"):** tras el fix de DSML (ADR-048), DeepSeek ya no escupe XML roto, pero en modo Act encadenaba **~16 rondas seguidas de solo lectura** (`list_dir`/`read_file`/`bash ls`/`todowrite`) sin emitir jamás `write_file`/`apply_patch`. El vigilante existente NO lo detectaba: `no_new_info` se resetea si la ronda trae AL MENOS un resultado nuevo (y el modelo leía archivos nuevos cada vez) y `repeats` exige repetición exacta del lote. Al cortarse el turno (síntesis final sin tools), el modelo seguía emitiendo reasoning/DSML → `forced.text` vacío → la UI mostraba el fallback **"✅ Modificaciones y operaciones completadas con éxito mediante herramientas"** (mentiroso) cuando en realidad no había hecho nada. Forense sobre `makora_history.db` (sesión real, 16 turns, 68 items): cero `write_file`/`apply_patch`.
+- **Decisión:**
+  1. **Vigilante anti-estancamiento en modo Act:** nuevo contador `rounds_since_write` que cuenta rondas consecutivas en las que el modelo NO intentó `write_file`/`apply_patch`. **Nudge a las 8 rondas** (nota de sistema: "deja de explorar, empieza a implementar YA con write_file/apply_patch; no releas lo ya leído") y **force a las 16** (fusión de seguridad). En modo Plan se mantiene el `plan_reads` existente (8/12). El nudge es blando (el modelo puede ignorarlo si de verdad le falta contexto), por lo que no corta trabajo legítimo.
+  2. **Fallback honesto de UI:** los textos por defecto "✅ Operaciones ejecutadas con éxito…" / "✅ Modificaciones y operaciones completadas con éxito…" (en `Chat.tsx` y `sessionStore.ts`) se sustituyen por **"⚠️ El turno finalizó sin una respuesta final del modelo."** — solo aparecen cuando el turno terminó sin texto final, así que nunca debían afirmar éxito.
+- **Consecuencias:** el agente deja de explorar indefinidamente y es empujado a escribir; cuando el turno acaba sin respuesta final, la UI ya no miente sobre un éxito que no ocurrió. 85 tests Rust + 66 vitest.
+
+## ADR-050 — Respuesta final garantizada: adiós al turno final "sin tools" (2026-08-21)
+
+- **Problema (feedback del usuario: "el IDE sencillamente no funciona; ⚠️ El turno finalizó sin una respuesta final"):** el forense reveló que el bucle terminaba con texto vacío porque el cierre se delegaba a `forced_final_turn`: un **turno extra SIN tools** que pedía al modelo "redacta tu resumen final". DeepSeek, en ese turno sin tools, seguía emitiendo `reasoning_content` (pensando) o DSML (`write_file`), que se extraían a `tool_calls` pero `forced_final_turn` los **DESCARTABA** y devolvía `forced.text` vacío. Resultado: el usuario veía un turno en blanco (o el fallback "⚠️ sin respuesta"), y las escrituras de última ronda se perdían.
+- **Decisión (inspirada en opencode — el bucle SIEMPRE entrega tools al modelo y el resultado es el contenido acumulado):** se elimina `forced_final_turn` por completo. El bucle **nunca** hace un turno sin tools:
+  1. `finish_turn(msgs, content, ...)` cierra el turno con un mensaje de asistente **garantizado no vacío**, persiste checkpoint/transcript y devuelve el `ChatResult`.
+  2. `synthesize_summary(msgs)` genera un **resumen no vacío** a partir del transcript (archivos modificados/leídos, comandos ejecutados, errores de herramientas) como red de seguridad cuando el modelo concluye sin texto. El usuario SIEMPRE ve qué se hizo.
+  3. El `force` del vigilante se mueve **después** de ejecutar la ronda de herramientas (antes se descartaba la ronda actual y sus posibles escrituras) y ahora cierra con `finish_turn(synthesize_summary(...))` en lugar de un turno extra sin tools.
+  4. Los otros puntos de cierre (error del proveedor con progreso, detención por presupuesto) también usan `finish_turn` + síntesis.
+- **Consecuencias:** es imposible que una sesión termine con la respuesta en blanco; las escrituras de última ronda se ejecutan antes de cerrar; el bucle es más simple (menos caminos de salida, todos no vacíos). 86 tests Rust (+1 `test_synthesize_summary_never_empty_and_lists_files`) + 66 vitest; `cargo build` y `npm run build` OK.
+
+## ADR-051 — Tool `edit` (old_string→new_string) + números de línea en read_file (2026-08-21)
+
+- **Problema (feedback del usuario: "el foco de problemas está en las tools"):** el forense de sesiones reales mostraba que DeepSeek **exploraba mucho pero nunca escribía**: 7 `bash` + ~18 `read_file` y cero `write_file`/`apply_patch`. La edición en Makora dependía de `apply_patch` con el formato de bloques `<<<<<<< SEARCH / ======= / >>>>>>> REPLACE`, que es **complejo y propenso a error** para los LLM (los marcadores, la indentación exacta y los saltos de línea hacen que el modelo falle el anclaje y prefiera seguir explorando). opencode usa una interfaz mucho más simple y alineada con el comportamiento nativo de los LLM: `edit` con `old_string`/`new_string`.
+- **Decisión (alinear las tools con opencode):**
+  1. **Nueva tool `edit`** (`path` + `old_string` + `new_string`): reemplaza UNA ocurrencia exacta de `old_string` por `new_string`; `old_string` vacío → crea el archivo (error si ya existe); `new_string` vacío → borra contenido; `old==new` → "sin cambios". Errores claros si `old_string` no se encuentra o aparece varias veces (pide más contexto). Es la forma PREFERIDA de modificar archivos existentes.
+  2. **`read_file` ahora devuelve números de línea con ancho fijo** (`     1| contenido`, como `view` de opencode) y **sugiere nombres parecidos** cuando el archivo no se encuentra (reduce la fricción de rutas/ortografía).
+  3. **`grep` gana `include`** (filtro glob de archivo, ej. `*.rs`); **`write_file` detecta no-op** (contenido idéntico → "sin cambios"); **`bash` prohíbe comandos de red** (`curl`/`wget`/`nc`/`telnet`… → "usa `webfetch`"), igual que opencode.
+  4. **Skill base actualizada:** la directiva de "cirugía estricta" pasa de `apply_patch` a **`edit`** (`apply_patch` queda solo para parches multi-bloque; `write_file` solo para archivos 100% nuevos).
+  5. `edit` se integra en el motor de permisos (ask), el clasificador de mutaciones (`attempted_write`/`tool_kind`) y el `synthesize_summary` (como archivo modificado). Queda excluida del modo plan (no está en la allowlist).
+- **Consecuencias:** la edición de archivos es más simple y fiable para el modelo (menos fricción → escribe en vez de explorar indefinidamente); las anclas son precisas gracias a los números de línea; la búsqueda es más dirigida (`include`); y se eliminan no-ops y accesos de red por `bash`. 91 tests Rust (+4: `test_apply_edit_noop_is_error`, `test_glob_to_regex_matching`, `test_banned_network_command`, `test_number_lines_padded`) + 66 vitest.
+
+## ADR-052 — Revisión general: `edit` en subagentes + limpieza de estado por sesión (2026-08-21)
+
+- **Problema (revisión general del tooling/sesiones/skills/estabilidad):** tres huecos detectados al revisar el código:
+  1. `repair_tool_name` (normalización de nombres de tool) NO incluía `edit` en su lista CORE → si el modelo emitía `Edit`/`EDIT`, no se normalizaba.
+  2. El rol **Coder** del subagente y su ejecutor (`execute_subagent_tool`) no tenían `edit` → el subagente coder no podía usar la nueva herramienta de edición.
+  3. **Fuga de memoria:** los mapas estáticos `TODOS`, `SESSION_PERMS` y `SKILLS_BY_CHAT` (keyed por `chat_id`) nunca se limpiaban al cerrar/borrar sesiones → crecimiento sin límite en sesiones largas.
+- **Decisión:**
+  1. Añadir `edit` a `repair_tool_name`, a las tools del rol Coder y al ejecutor del subagente (mismo dispatch de 3 modos que el ejecutor principal).
+  2. Nuevo comando `chat_cleanup(chat_id)` + `agent::cleanup_chat`: libera `TODOS`/`SESSION_PERMS`/`SKILLS_BY_CHAT` de la sesión. El frontend lo llama en `destroySessionRuntime`. **Deliberadamente NO** toca `CANCELLED` (la cancelación de un turno en curso debe sobrevivir) ni `PENDING_*` (se autolimpian por timeout/cancelación y usan otra clave).
+- **Revisado sin cambios:** `sessions.ts` (sanitización + almacenamiento por niveles), descubrimiento de skills (dedup por nombre, carga lazy), `MAKORA_BASE_SKILL` (ya consolidado en ADR-040, prefiere `edit`), y ausencia de panics en el camino caliente (los `.unwrap()`/`.expect()` están solo en tests y en regex `LazyLock` de tiempo de compilación).
+- **Consecuencias:** `edit` funciona también en subagentes y se normaliza; el estado por sesión se libera al cerrar pestañas (sin fugas). 91 tests Rust + 66 vitest.
+
+## ADR-053 — Skills tolerantes a formato + recuperación ante tool que falla (2026-08-21)
+
+- **Problema (feedback del usuario, chat real):** el modelo llamó a `skill(name="data-prep")` **4 veces** y las 4 devolvió "no hay skills disponibles en este workspace", pese a que los `SKILL.md` EXISTÍAN (el propio modelo los había leído con `read_file`). Causa raíz: `parse_skill_frontmatter` solo aceptaba el frontmatter YAML (`--- name/description ---`), pero los skills reales usaban el formato `# Skill: <name>` (encabezado Markdown, sin `---`). Al no parsearse ninguno, `SKILLS_BY_CHAT` quedaba vacío y la tool fallaba; el modelo, sin un camino alternativo claro, reintentaba la misma tool en bucle.
+- **Decisión (tolerancia + recuperación):**
+  1. `parse_skill_frontmatter` ahora acepta **dos formatos**: frontmatter YAML (`--- name/description ---`) y encabezado `# Skill: <name>` (insensible a mayúsculas y BOM). `load_skills` además hace **fallback al nombre del directorio** si el SKILL.md está malformado → una skill nunca se pierde por formato.
+  2. El error de la tool `skill` cuando no hay skills ahora **indica el camino alternativo** ("léelo directamente con read_file en vez de reintentar"), alineado con la directiva 9 del skill base (gestionar errores y adaptar estrategia, nunca atascarse reintentando).
+- **Consecuencias:** los skills del workspace se cargan con independencia de su formato; el modelo recibe una alternativa clara ante un fallo y deja de reintentar en bucle. 92 tests Rust (+1 `test_parse_skill_heading_format`) + 66 vitest.
+
+## ADR-054 — Recuperación de chats: hidratación desde SQLite y no sobrescribir el store (2026-08-21)
+
+- **Problema (feedback del usuario: "no se recuperan bien los chats del historial, se abre pero vacío"):** forense sobre `makora_history.db` mostró que el store durable (`kv` → `sessions.v1`) SÍ tenía los mensajes (p. ej. sesión de 47 mensajes), pero la UI los abría vacíos. Tres fallos combinados en el arranque del frontend:
+  1. `initSessions()`: si `localStorage` estaba vacío, creaba una sesión nueva y llamaba `saveSessions([fresh])`, que **sobrescribe el store durable de SQLite** con una única sesión vacía (el `save_sessions_store` hace UPSERT) → podía destruir el historial real.
+  2. La hidratación (`loadSessionsFromStore`) solo usaba el store si tenía **más sesiones** (`stored.length > prev.length`), no si tenía **más mensajes**: con el mismo nº de sesiones pero `localStorage` truncado, se quedaba con la versión truncada.
+  3. `ensureSessionRuntime` era idempotente estricta (`if runtimes.has(id) return`): un runtime creado con el transcript truncado/vacío **nunca se actualizaba** cuando llegaba el transcript completo de SQLite.
+- **Decisión:**
+  1. `initSessions()` **ya no persiste** la sesión vacía de fallback (no toca el store durable); la hidratación restaurará los chats reales.
+  2. La hidratación usa el store si tiene **más sesiones O más mensajes totales** (`totalMessages(stored) > totalMessages(prev)`).
+  3. `ensureSessionRuntime` **recrea** el runtime cuando llega un transcript **más completo** (`incoming.length > existing.transcript.length`), sin pisar el estado de un turno en curso.
+- **Consecuencias:** al abrir un chat del historial se restaura el transcript completo desde SQLite aunque `localStorage` esté vacío o truncado; el store durable ya no se sobrescribe accidentalmente. 66 vitest; `npm run build` OK.
+
+## ADR-055 — Fallos visibles y nudges corregidos: el bucle "explora pero no escribe" (2026-08-21)
+
+- **Problema (diagnóstico del usuario sobre `agent.rs`/`gateway.rs`/`multiagent.rs`, verificado en código):** el turno "Implementa el plan" leyó 20 archivos, ejecutó 9 `bash` y **nunca llamó** a `edit`/`write_file`/`apply_patch`; se cerró con un `synthesize_summary` opaco. Causas concretas:
+  1. **Los fallos de `bash` eran invisibles**: `run_bash` devolvía siempre `Ok("exit: N\n…")`, nunca `Err` → el vigilante `error_rounds` (que solo ve `starts_with("ERROR:")`) no detectaba comandos fallidos, y el modelo tampoco.
+  2. **Bug literal en los nudges**: `agent.rs` usaba `.to_string()` sobre cadenas con `{plan_reads}`/`{rounds_since_write}` → el modelo recibía el placeholder literal *"Llevas {rounds_since_write} rondas…"*.
+  3. `synthesize_summary` no listaba los comandos ni sus exit codes ni el motivo del cierre.
+  4. **Contradicción en el skill** que saboteaba `edit`: "NUNCA uses read_file >150 líneas" + "edit necesita old_string exacto". El Coder del multiagente aún decía "EXCLUSIVAMENTE apply_patch".
+  5. La recuperación DSML solo se activaba si `text.trim().is_empty()` → un `edit` emitido como DSML junto a prosa se descartaba en silencio.
+  6. El subagente no contaba `edit` como modificación.
+- **Decisión:**
+  1. **`run_bash` devuelve `Err` cuando `exit != 0`** (con el comando y la salida), de modo que el fallo llega al modelo y al vigilante.
+  2. **Nudges interpolados con `format!`** (números reales).
+  3. **`synthesize_summary(msgs, reason)`**: lista comandos reales con su resultado (`ok`/`exit N`/`falló (exit N)`), archivos, errores y el **motivo del cierre** (el `force_reason` del vigilante se pasa como parámetro).
+  4. **Skill reconciliado**: la regla anti-bloat permite leer el fragmento a editar para copiar el `old_string` exacto; el prompt del Coder pasa a preferir `edit`.
+  5. **Recuperación DSML endurecida**: se activa si `emitted_tool_syntax && tool_calls.is_empty()` aunque el texto no esté vacío.
+  6. **Subagente cuenta `edit`** en `modified_files` (los exit codes de `bash` ya se propagan gracias al punto 1).
+  7. Umbrales de estancamiento bajados: `ACT_STALL_NUDGE` 8→5, `ACT_STALL_FORCE` 16→8.
+- **Consecuencias:** los fallos de herramientas son visibles y corregibles; los nudges anti-estancamiento funcionan de verdad; el resumen final es informativo (qué se ejecutó, con qué resultado y por qué cerró). 94 tests Rust (+2 `test_summarize_bash_result_and_exit_codes`, `test_synthesize_summary_lists_bash_and_reason`) + 66 vitest.
+
+## ADR-056 — Reescritura del bucle agéntico siguiendo la arquitectura de opencode (2026-08-21)
+
+- **Problema (feedback del usuario: "el IDE casi nunca realiza las tareas, siempre falla al responder"):** sobre el `agent.rs` (≈5000 líneas) se habían ido acumulando parches defensivos que se pisaban entre sí: vigilante anti-bucles con 8 señales, compactación LLM del historial, extracción de tool-calls por texto (DSML/XML de DeepSeek en `output_sanitizer.rs`), recuperación de tool-syntax, `forced_final_turn`, pipeline multiagente de 5 fases y subagentes por delegación. La causa raíz de la fragilidad era depender de *parsear* llamadas a herramientas dentro del texto del modelo en vez de confiar en el function calling nativo del proveedor.
+
+- **Decisión (port de opencode, no reimplementación):** rehacer la capa de chat/agente/herramientas con el mismo contrato IPC (comandos y eventos del frontend intactos, para no tocar la capa visual):
+  1. **Sin extracción de tool-calls por texto.** `output_sanitizer.rs` se elimina; `gateway.rs` emite los deltas de texto tal cual y acumula `delta.tool_calls` por índice (OpenAI-compat) o `content_block_start`/`input_json_delta` (Anthropic). Confiamos en el function calling nativo, como hace opencode.
+  2. **Bucle simple `stream → ejecutar tools → añadir resultados → repetir`** en `agent.rs`. Eliminados: el vigilante anti-bucles (8 señales + nudge/force), la compactación LLM del historial, la recuperación DSML, el `forced_final_turn` y los subagentes (`delegate_subagent`/`explore_subagent`).
+  3. **`run_multiagent` = mismo bucle** con el objetivo explícito en el system prompt (sin pipeline de 5 fases ni tool de delegación).
+  4. **Fusibles extremos invisibles:** 100 turnos / 2M tokens por turno (solo como última defensa, sin cortar trabajo legítimo).
+  5. **Un único nudge anti-estancamiento** (modo Act): nota de sistema una sola vez tras 8 rondas seguidas sin escribir (`edit`/`write_file`/`apply_patch`).
+  6. **Fallback honesto:** `synthesize_summary` solo cuando el modelo concluye sin emitir texto (nunca respuesta en blanco, pero sin inventar un "✅ éxito").
+  7. **Se conserva** lo que funcionaba: tools (`read_file`/`read_file_range`/`edit`/`apply_patch`/`write_file`/`bash`/`grep`/`list_dir`/`webfetch`/`todowrite`/`question`/`skill`/MCP), permisos por sesión, snapshots/revert por turno, título por LLM, cálculo de coste, SSRF-safe `webfetch`, bash vía `.bat` con kill-tree.
+  8. **Fix de seguridad real detectado por los tests:** `within()` resolvía `..` solo si `canonicalize` funcionaba; para rutas inexistentes un `../fuera.txt` engañaba el chequeo de prefijo. Se añade `lexical_normalize` (resuelve `.`/`..` léxicamente) como fallback.
+
+- **Consecuencias:** el flujo del agente es predecible y fiable (confía en el function calling del proveedor); se eliminan ~2000 líneas de complejidad defensiva; `output_sanitizer.rs` deja de existir; `run_multiagent` colapsa al bucle único. Contrato frontend↔backend intacto (`chat`, `run_multiagent_plan`, eventos `chat-delta-event`/`thinking-delta`/`tool-*`/`todo-update`/`question-ask`/`approval-required`). 55 tests Rust + 66 vitest; `cargo build` y `npm run build` OK.
+
+## ADR-057 — Fiabilidad del agente: entorno en el prompt + `finish_reason` + recuperación de respuesta vacía (2026-08-21)
+
+- **Problema (feedback del usuario tras el ADR-056):** el agente seguía sin terminar la tarea. DeepSeek (v4-pro) exploraba, ejecutaba `ls`/`find`/`cat` en `bash` —que fallan en `cmd.exe` de Windows (exit 9009, "no se reconoce")— y acababa con el fallback *"el modelo concluyó sin emitir texto"* (turno con `content` vacío y sin tool calls).
+
+- **Decisión (inspirado en `opencode`, `getEnvironmentInfo` + prompt):**
+  1. **Info de entorno inyectada en el system prompt** (`environment_info`): plataforma, shell de `bash` (cmd.exe en Windows), workspace y si es repo git. El modelo ahora sabe que NO está en Unix.
+  2. **Skill base reescrito estilo opencode:** "trabaja hasta RESOLVER la tarea, solo termina cuando esté completa; termina SIEMPRE con un resumen de texto, nunca vacío" + prohibición explícita de comandos Unix (`ls`/`find`/`cat`/`grep`/`sed`/`awk`/`head`/`tail`/`rm`) en `bash` → usar las tools dedicadas (`list_dir`/`read_file`/`read_file_range`/`grep`) o comandos Windows (`dir`/`type`/`where`/`powershell`).
+  3. **`TurnOutcome.finish_reason`** capturado (OpenAI `finish_reason` + Anthropic `stop_reason`).
+  4. **Recuperación acotada de respuesta vacía:** si el modelo termina sin texto y sin tools, se distingue el motivo por `finish_reason` —`length`/`max_tokens` (cortado por tokens → "continúa donde te quedaste"), `tool_calls`/`tool_use` (llamadas perdidas → "reemite"), `stop` (→ "responde al usuario")— y se le da UNA oportunidad de continuar vía nota de sistema antes de caer a `synthesize_summary` (sin bucles infinitos: contador `empty_recoveries`).
+  5. **Icono de Windows regenerado** desde el SVG nuevo (`npx tauri icon`): el icono de la app (`.ico`) vivía en `src-tauri/icons/`, no en `public/makora.svg`.
+
+- **Consecuencias:** el modelo deja de gastar turnos en comandos Unix que fallan; un corte por límite de tokens ya no termina el turno en blanco; la app muestra el icono correcto en Windows. 55 tests Rust; `cargo build`, `npm run build` y `npm run tauri build` OK.
+
 
 
 

@@ -138,11 +138,12 @@ export interface ToolDef {
 }
 
 // Núcleo (Rust, agent.rs):
-// read_file {path}, list_dir {path}, grep {pattern, path?},
+// read_file {path}, list_dir {path}, grep {pattern, path?, include?},
 // read_file_range {path, start_line, end_line}, apply_patch {path, patch},
-// explore_subagent {task},
-// bash {command} (timeout 60s, eventos "tool-output" en vivo, cancelable por chat),
-// write_file {path, content}
+// edit {path, old_string, new_string},
+// bash {command} (timeout 600s, eventos "tool-output" en vivo, cancelable por chat),
+// write_file {path, content}, webfetch {url}, todowrite {todos}, question {question, options?},
+// skill {name}, repo_map_query {query, top?}
 // Rutas: restringidas a las carpetas del workspace (resolución relativa + canonicalización).
 
 // Eventos al frontend (no tipados especta) — TODOS scoped por chatId:
@@ -151,9 +152,10 @@ export interface ToolOutputEvent { id: string; stream: "stdout" | "stderr" | "ex
 export interface ToolEnd { id: string; ok: boolean; summary: string; chatId: string; }
 export interface ThinkingDelta { chatId: string; text: string; } // "thinking-delta"
 
-// Bucle: detección de bucle degenerado (4 turnos con las mismas tools/args →
-// turno final sin tools); cancelación POR CHAT vía chat_cancel(chatId)
-// (flag por chat + kill del proceso bash hijo de esa sesión).
+// Bucle: simple (stream → ejecutar tools → añadir resultados → repetir) hasta
+// respuesta final o fusibles de seguridad (100 turnos / 2M tokens); cancelación
+// POR CHAT vía chat_cancel(chatId) (flag por chat + kill del proceso bash hijo
+// de esa sesión).
 ```
 
 ## 4. Cliente MCP

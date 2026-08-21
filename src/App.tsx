@@ -331,7 +331,12 @@ function App() {
       .then((stored) => {
         if (cancelled || !stored || stored.length === 0) return;
         setSessionState((prev) => {
-          const useStore = prev.sessions.length === 0 || stored.length > prev.sessions.length;
+          const totalMessages = (list: ChatSession[]) =>
+            list.reduce((n, s) => n + (s.messages?.length ?? 0), 0);
+          const useStore =
+            prev.sessions.length === 0 ||
+            stored.length > prev.sessions.length ||
+            totalMessages(stored) > totalMessages(prev.sessions);
           if (!useStore) return prev;
           const nextTabs = stored.slice(0, 3).map((s) => s.id);
           const nextActive = nextTabs[0] ?? stored[0]?.id ?? "";

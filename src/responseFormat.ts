@@ -26,6 +26,15 @@ function restoreFences(stash: FenceStash, currentBody: string): string {
   );
 }
 
+function normalizeDsmlNamespace(s: string): string {
+  // Colapsa el namespace DSML a su forma canónica de UNA tubería: DeepSeek emite
+  // `<||DSML||…>` (dos tuberías) y variantes (ancho completo, HTML-escaped,
+  // espacios). Sin esto los regex de abajo no casan y el XML crudo se filtra.
+  return s
+    .replace(/(<\s*\/?\s*)\|+\s*DSML\s*\|+/gi, "$1|DSML|")
+    .replace(/(&lt;\s*\/?\s*)\|+\s*DSML\s*\|+/gi, "$1|DSML|");
+}
+
 const ANSI_RE =
   /[\u001B\u009B](?:\[[0-9;?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\([A-Z0-9]|[@-Z\\_])/g;
 
@@ -155,7 +164,7 @@ function replaceToolBlock(text: string, re: RegExp): string {
 }
 
 export function stripToolSyntax(t: string): string {
-  let s = t;
+  let s = normalizeDsmlNamespace(t);
   for (let i = 0; i < 15; i++) {
     let next = s;
     let changed = false;

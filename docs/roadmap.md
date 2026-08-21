@@ -48,14 +48,14 @@ Estimaciones para 1 desarrollador (o IA + humano revisor). Fechas relativas desd
 ## M3 — Agent runtime v1 (semana 7–9)
 
 - Loop turno = LLM → tools → resultados; `max_turns` + presupuesto en $.
-- Tools núcleo: `apply_patch` (diffs quirúrgicos), `read_file_range`, `list_dir`, `grep`, `bash`, `explore_subagent`.
+- Tools núcleo: `edit`, `apply_patch` (diffs quirúrgicos), `read_file_range`, `list_dir`, `grep`, `bash`, `write_file`, `webfetch`, `todowrite`, `question`.
 - Auto-Router Multi-Agente inteligente con orquestación DAG (*Explorer ➔ Coder ➔ Tester ➔ Reviewer*).
 - SQLite: sesiones, items, checkpoints por turno, resume.
 - Timeline del agente en el frontend (eventos tipados).
 
 **Criterios de aceptación:** el agente completa tareas end-to-end con parches quirúrgicos mínimos; multi-agente automático para tareas complejas.
 
-**Estado:** ✅ Done. Loop autónomo, tools, MCP, auto-router multiagente y persistencia SQLite checkpoints activos.
+**Estado:** ✅ Done. Loop autónomo estilo opencode (ADR-056), tools, MCP y persistencia SQLite checkpoints activos.
 
 ## M4 — Caché de prefijo + compactación (semana 10–11)
 

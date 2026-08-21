@@ -383,7 +383,7 @@ export function initSessions(): InitialSessionState {
     /* ignore */
   }
 
-  // Si no hay sesiones guardadas en absoluto, iniciar exactamente con 1 sesión limpia
+  // Si no hay sesiones guardadas en absoluto, iniciar exactamente con 1 sesión limpia.
   if (loaded.length === 0) {
     const fresh = makeSession("", {
       folders,
@@ -392,7 +392,10 @@ export function initSessions(): InitialSessionState {
       status: "idle",
       diff: null,
     });
-    saveSessions([fresh]);
+    // NO persistir la sesión vacía aquí: `saveSessions` también escribe en SQLite
+    // (fuente de verdad durable) y sobrescribiría el historial real si el
+    // localStorage se perdió/limpió pero SQLite conserva los chats. La
+    // hidratación desde SQLite restaurará los chats reales en cuanto arranque.
     saveOpenTabIds([fresh.id]);
     setActiveSessionId(fresh.id);
     return { sessions: [fresh], openTabIds: [fresh.id], activeId: fresh.id };

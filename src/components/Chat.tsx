@@ -1216,8 +1216,8 @@ export default function Chat({
                     <div className="msg-content">
                       <div className="msg-text">
                         {allActivities.length > 0
-                          ? "✅ Modificaciones y operaciones completadas con éxito mediante herramientas."
-                          : "✅ Operación procesada con éxito."}
+                          ? "⚠️ El turno finalizó sin una respuesta final del modelo."
+                          : "⚠️ El turno finalizó sin una respuesta final del modelo."}
                       </div>
                     </div>
                   )}

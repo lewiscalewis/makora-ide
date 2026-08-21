@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { approvalReply, chat, chatCancel, questionReply, runMultiagentPlan } from "./api";
+import { approvalReply, chat, chatCancel, chatCleanup, questionReply, runMultiagentPlan } from "./api";
 import { computeCostUsd } from "./defaults";
 import { formatResponse } from "./responseFormat";
 import type {
@@ -174,8 +174,8 @@ export function transcriptToUi(
     if (!currentAssistant.text.trim()) {
       const hasActs = currentAssistant.activities && currentAssistant.activities.length > 0;
       currentAssistant.text = hasActs
-        ? "✅ Operaciones ejecutadas con éxito según las directivas del turno."
-        : "✅ Turno procesado.";
+        ? "⚠️ El turno finalizó sin una respuesta final del modelo."
+        : "⚠️ El turno finalizó sin una respuesta final del modelo.";
     }
     out.push(currentAssistant);
   }
@@ -282,8 +282,14 @@ function update(sessionId: string, produce: (rt: SessionRuntime) => Partial<Sess
 
 export function ensureSessionRuntime(sessionId: string, transcript?: ChatMessage[]): void {
   if (!sessionId) return;
-  if (runtimes.has(sessionId)) return;
-  runtimes.set(sessionId, createRuntime(transcript));
+  const incoming = transcript ?? [];
+  const existing = runtimes.get(sessionId);
+  // Si ya existe un runtime, solo lo recreamos cuando llega un transcript MÁS
+  // completo (p. ej. la hidratación desde SQLite aporta más mensajes que el
+  // arranque truncado de localStorage). Así no se pisa el estado en mitad de un
+  // turno en curso ni se pierden mensajes al rehidratar.
+  if (existing && incoming.length <= existing.transcript.length) return;
+  runtimes.set(sessionId, createRuntime(incoming));
   notify(sessionId);
 }
 
@@ -291,6 +297,9 @@ export function destroySessionRuntime(sessionId: string): void {
   if (runtimes.delete(sessionId)) {
     notify(sessionId);
   }
+  // Libera el estado en memoria del backend asociado a la sesión (permisos,
+  // todos, skills, cancelaciones pendientes) para evitar crecimiento sin límite.
+  chatCleanup(sessionId).catch(() => undefined);
 }
 
 export function getSessionRuntime(sessionId: string): SessionRuntimeSnapshot {
@@ -683,8 +692,8 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
       currentUi.text =
         effectiveText ||
         (hasActivities
-          ? "✅ Operaciones ejecutadas con éxito según las directivas del turno."
-          : "✅ Turno completado.");
+          ? "⚠️ El turno finalizó sin una respuesta final del modelo."
+          : "⚠️ El turno finalizó sin una respuesta final del modelo.");
       currentUi.metrics = metrics;
     }
 
