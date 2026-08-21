@@ -2528,6 +2528,30 @@ pub fn compute_turn_cost_usd(kind: &str, model: &str, input: u32, cached: u32, o
     (cost * factor).ceil() / factor
 }
 
+/// Coste del turno usando los precios explícitos del `ChatConfig` (pasados por
+/// el frontend desde el `ModelConfig` configurable), con fallback a la matriz
+/// hardcodeada solo cuando el frontend no los envía. Esto unifica la fuente de
+/// verdad con `defaults.ts::computeCostUsd` y es preciso para cualquier modelo.
+fn turn_cost(cfg: &ChatConfig, input: u32, cached: u32, output: u32) -> f64 {
+    if cfg.input_price_per_1m > 0.0 && cfg.output_price_per_1m > 0.0 {
+        let cached = cached.min(input);
+        let non_cached = input.saturating_sub(cached);
+        let cached_price = if cfg.cached_price_per_1m > 0.0 {
+            cfg.cached_price_per_1m
+        } else {
+            cfg.input_price_per_1m * 0.10
+        };
+        let cost = (non_cached as f64 * cfg.input_price_per_1m
+            + cached as f64 * cached_price
+            + output as f64 * cfg.output_price_per_1m)
+            / 1_000_000.0;
+        let factor = 1_000_000.0;
+        (cost * factor).ceil() / factor
+    } else {
+        compute_turn_cost_usd(&cfg.kind, &cfg.model, input, cached, output)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Final synthesis / finish
 // ---------------------------------------------------------------------------
@@ -2768,6 +2792,9 @@ fn fallback_cfg(cfg: &ChatConfig) -> Option<ChatConfig> {
         fallback_base_url: String::new(),
         fallback_model: String::new(),
         fallback_api_key: String::new(),
+        input_price_per_1m: 0.0,
+        output_price_per_1m: 0.0,
+        cached_price_per_1m: 0.0,
     })
 }
 
@@ -2904,9 +2931,8 @@ async fn run_loop(
             }
         };
         total += outcome.usage.clone();
-        let turn_cost = compute_turn_cost_usd(
-            &cfg.kind,
-            &cfg.model,
+        let turn_cost = turn_cost(
+            cfg,
             outcome.usage.input_tokens,
             outcome.usage.cached_tokens,
             outcome.usage.output_tokens,
@@ -3535,6 +3561,40 @@ mod tests {
         assert_eq!(compute_turn_cost_usd("ollama", "llama3", 1000, 0, 1000), 0.0);
         let c = compute_turn_cost_usd("openai", "gpt-4o", 1_000_000, 0, 0);
         assert!((c - 2.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_turn_cost_uses_cfg_prices() {
+        let cfg = ChatConfig {
+            kind: "openai".into(),
+            base_url: "https://x".into(),
+            model: "modelo-custom".into(),
+            api_key: String::new(),
+            reasoning_effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            vision_enabled: false,
+            context_window: None,
+            fallback_kind: String::new(),
+            fallback_base_url: String::new(),
+            fallback_model: String::new(),
+            fallback_api_key: String::new(),
+            input_price_per_1m: 1.0,
+            output_price_per_1m: 2.0,
+            cached_price_per_1m: 0.0,
+        };
+        // 1M input (0 cached) + 1M output => 1*1.0 + 1*2.0 = $3
+        let c = turn_cost(&cfg, 1_000_000, 0, 1_000_000);
+        assert!((c - 3.0).abs() < 0.01);
+        // cache usa el 10% del input por defecto cuando no hay cached_price
+        let c2 = turn_cost(&cfg, 1_000_000, 1_000_000, 0);
+        assert!((c2 - 0.1).abs() < 0.01);
+        // sin precios => fallback a la matriz hardcodeada
+        let mut no_prices = cfg.clone();
+        no_prices.input_price_per_1m = 0.0;
+        no_prices.output_price_per_1m = 0.0;
+        let c3 = turn_cost(&no_prices, 1_000_000, 0, 0);
+        assert_eq!(c3, compute_turn_cost_usd("openai", "modelo-custom", 1_000_000, 0, 0));
     }
 
     #[test]

@@ -622,9 +622,19 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
       opts.displayText && opts.displayText.trim()
         ? opts.displayText
         : opts.content.slice(0, 600);
+
+    // Pasar los precios del modelo al backend para que el coste persistido en
+    // SQLite use la MISMA fuente de verdad que `computeCostUsd` (configurable).
+    const cfgWithPrices: ChatConfig = {
+      ...opts.config,
+      inputPricePer1m: opts.modelConfig?.inputPrice ?? 0,
+      outputPricePer1m: opts.modelConfig?.outputPrice ?? 0,
+      cachedPricePer1m: 0,
+    };
+
     const result = opts.useMultiAgent
       ? await runMultiagentPlan(
-          opts.config,
+          cfgWithPrices,
           opts.system,
           requestTranscript,
           opts.folders,
@@ -634,7 +644,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
           opts.budgetUsd ?? null,
         )
       : await chat(
-          opts.config,
+          cfgWithPrices,
           opts.system,
           requestTranscript,
           opts.folders,

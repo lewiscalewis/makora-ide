@@ -1328,6 +1328,9 @@ mod tests {
             fallback_base_url: String::new(),
             fallback_model: String::new(),
             fallback_api_key: String::new(),
+            input_price_per_1m: 0.0,
+            output_price_per_1m: 0.0,
+            cached_price_per_1m: 0.0,
         };
         let msg = ChatMessage {
             role: "assistant".into(),
@@ -1412,6 +1415,9 @@ mod tests {
             fallback_base_url: String::new(),
             fallback_model: String::new(),
             fallback_api_key: String::new(),
+            input_price_per_1m: 0.0,
+            output_price_per_1m: 0.0,
+            cached_price_per_1m: 0.0,
         };
         let with_reasoning = ChatMessage {
             role: "assistant".into(),

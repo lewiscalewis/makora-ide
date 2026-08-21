@@ -105,6 +105,9 @@ export type ChatConfig = {
 	fallbackBaseUrl?: string,
 	fallbackModel?: string,
 	fallbackApiKey?: string,
+	inputPricePer1m?: number | null,
+	outputPricePer1m?: number | null,
+	cachedPricePer1m?: number | null,
 };
 
 export type ChatDeltaEvent = {

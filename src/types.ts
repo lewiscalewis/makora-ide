@@ -44,6 +44,9 @@ export interface ChatConfig {
   fallbackBaseUrl?: string;
   fallbackModel?: string;
   fallbackApiKey?: string;
+  inputPricePer1m?: number;
+  outputPricePer1m?: number;
+  cachedPricePer1m?: number;
 }
 
 export interface ToolCall {

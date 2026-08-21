@@ -61,6 +61,12 @@ pub struct ChatConfig {
     pub fallback_model: String,
     #[serde(default)]
     pub fallback_api_key: String,
+    #[serde(default)]
+    pub input_price_per_1m: f64,
+    #[serde(default)]
+    pub output_price_per_1m: f64,
+    #[serde(default)]
+    pub cached_price_per_1m: f64,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Type)]
