@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
-use serde_json::Value;
 
 use crate::ChatMessage;
 
@@ -312,6 +311,19 @@ pub struct RequestMeter {
     pub latency_ms: i64,
 }
 
+/// Resumen de metering de una sesión (devuelto por `get_history_summary`).
+/// Tipado explícito en vez de `serde_json::Value`, que es un tipo recursivo y
+/// rompe el exportador de tipos de specta (stack overflow en `tauri dev`).
+#[derive(Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySummary {
+    pub turns: u32,
+    pub input_tokens: u32,
+    pub cached_tokens: u32,
+    pub output_tokens: u32,
+    pub cost_usd: f64,
+}
+
 pub fn record_request(
     session_id: &str,
     turn: u32,
@@ -376,7 +388,7 @@ pub fn load_session_store() -> Option<String> {
     })
 }
 
-pub fn requests_summary(session_id: &str) -> Value {
+pub fn requests_summary(session_id: &str) -> HistorySummary {
     with_conn(|c| {
         let mut stmt = c.prepare(
             "SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(cached_tokens),0),
@@ -392,15 +404,21 @@ pub fn requests_summary(session_id: &str) -> Value {
                 r.get::<_, f64>(4)?,
             ))
         })?;
-        Ok(serde_json::json!({
-            "turns": row.0,
-            "input_tokens": row.1,
-            "cached_tokens": row.2,
-            "output_tokens": row.3,
-            "cost_usd": row.4
-        }))
+        Ok(HistorySummary {
+            turns: row.0 as u32,
+            input_tokens: row.1 as u32,
+            cached_tokens: row.2 as u32,
+            output_tokens: row.3 as u32,
+            cost_usd: row.4,
+        })
     })
-    .unwrap_or(serde_json::json!({"turns": 0}))
+    .unwrap_or_else(|| HistorySummary {
+        turns: 0,
+        input_tokens: 0,
+        cached_tokens: 0,
+        output_tokens: 0,
+        cost_usd: 0.0,
+    })
 }
 
 #[cfg(test)]

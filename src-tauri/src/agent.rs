@@ -2660,9 +2660,10 @@ fn finish_turn(
     });
     history::create_checkpoint(session_id, turn, msgs);
     history::archive_transcript(session_id, turn, msgs);
+    let summary = history::requests_summary(session_id);
     println!(
-        "[TOKEN_ENGINE] sesión terminada: {}",
-        history::requests_summary(session_id)
+        "[TOKEN_ENGINE] sesión terminada: {} turnos, in={} cached={} out={} cost=${}",
+        summary.turns, summary.input_tokens, summary.cached_tokens, summary.output_tokens, summary.cost_usd
     );
     ChatResult {
         input_tokens: total.input_tokens,

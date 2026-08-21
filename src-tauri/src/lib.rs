@@ -581,7 +581,7 @@ async fn fetch_balance(
 
 #[tauri::command]
 #[specta::specta]
-fn get_history_summary(session_id: String) -> Result<serde_json::Value, String> {
+fn get_history_summary(session_id: String) -> Result<history::HistorySummary, String> {
     Ok(history::requests_summary(&session_id))
 }
 

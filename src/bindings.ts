@@ -20,9 +20,14 @@ export const commands = {
 	countTokens: (text: string) => typedError<number, string>(__TAURI_INVOKE("count_tokens", { text })),
 	spawnStream: (message: string, chunkMs: number) => typedError<null, string>(__TAURI_INVOKE("spawn_stream", { message, chunkMs })),
 	listModels: (config: ChatConfig) => typedError<string[], string>(__TAURI_INVOKE("list_models", { config })),
-	chat: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("chat", { config, system, messages, folders, chatId })),
+	chat: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string, planMode: boolean, budgetUsd: number | null) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("chat", { config, system, messages, folders, chatId, planMode, budgetUsd })),
 	chatCancel: (chatId: string) => __TAURI_INVOKE<void>("chat_cancel", { chatId }),
-	runMultiagentPlan: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string, objective: string) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("run_multiagent_plan", { config, system, messages, folders, chatId, objective })),
+	chatCleanup: (chatId: string) => __TAURI_INVOKE<void>("chat_cleanup", { chatId }),
+	questionReply: (questionId: string, answer: string) => typedError<null, string>(__TAURI_INVOKE("question_reply", { questionId, answer })),
+	approvalReply: (approvalId: string, decision: string, feedback: string) => typedError<null, string>(__TAURI_INVOKE("approval_reply", { approvalId, decision, feedback })),
+	revertLastTurn: (chatId: string) => typedError<string, string>(__TAURI_INVOKE("revert_last_turn", { chatId })),
+	generateTitle: (config: ChatConfig, content: string) => typedError<string, string>(__TAURI_INVOKE("generate_title", { config, content })),
+	runMultiagentPlan: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string, objective: string, planMode: boolean, budgetUsd: number | null) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("run_multiagent_plan", { config, system, messages, folders, chatId, objective, planMode, budgetUsd })),
 	createMultiagentPlan: (sessionId: string, objective: string) => __TAURI_INVOKE<MultiAgentPlanState>("create_multiagent_plan", { sessionId, objective }),
 	mcpConfigure: (specs: McpSpec[]) => typedError<string[], string>(__TAURI_INVOKE("mcp_configure", { specs })),
 	fetchBalance: (provider: string, baseUrl: string, apiKey: string) => typedError<{
@@ -36,6 +41,9 @@ export const commands = {
 	termKill: (id: string) => __TAURI_INVOKE<void>("term_kill", { id }),
 	searchPaths: (folders: string[], query: string) => typedError<string[], string>(__TAURI_INVOKE("search_paths", { folders, query })),
 	workspaceSummary: (folders: string[]) => typedError<string, string>(__TAURI_INVOKE("workspace_summary", { folders })),
+	getHistorySummary: (sessionId: string) => typedError<HistorySummary, string>(__TAURI_INVOKE("get_history_summary", { sessionId })),
+	saveSessionsStore: (json: string) => typedError<null, string>(__TAURI_INVOKE("save_sessions_store", { json })),
+	loadSessionsStore: () => typedError<string | null, string>(__TAURI_INVOKE("load_sessions_store")),
 	keyringGet: (providerId: string) => typedError<string | null, string>(__TAURI_INVOKE("keyring_get", { providerId })),
 	keyringSet: (providerId: string, secret: string) => typedError<null, string>(__TAURI_INVOKE("keyring_set", { providerId, secret })),
 	keyringDelete: (providerId: string) => typedError<null, string>(__TAURI_INVOKE("keyring_delete", { providerId })),
@@ -104,19 +112,15 @@ export type ChatDeltaEvent = {
 	text: string,
 };
 
-export type ChatTextFinal = {
-	chatId: string,
-	text: string,
-};
-
 export type ChatMessage = ChatMessage_Serialize | ChatMessage_Deserialize;
 
 export type ChatMessage_Deserialize = {
 	role: string,
 	content: string,
 	images?: string[],
-	toolCalls?: ToolCall_Deserialize[] | null,
-	toolCallId?: string | null,
+	toolCalls: ToolCall_Deserialize[] | null,
+	toolCallId: string | null,
+	reasoning?: string | null,
 };
 
 export type ChatMessage_Serialize = {
@@ -125,6 +129,7 @@ export type ChatMessage_Serialize = {
 	images: string[],
 	toolCalls: ToolCall_Serialize[] | null,
 	toolCallId: string | null,
+	reasoning?: string | null,
 };
 
 export type ChatResult = ChatResult_Serialize | ChatResult_Deserialize;
@@ -141,6 +146,11 @@ export type ChatResult_Serialize = {
 	outputTokens: number,
 	cachedTokens: number,
 	messages: ChatMessage_Serialize[],
+};
+
+export type ChatTextFinal = {
+	chatId: string,
+	text: string,
 };
 
 export type DirEntry = {
@@ -174,6 +184,19 @@ export type GitStatusInfo = {
 	staged: number,
 	modified: number,
 	untracked: number,
+};
+
+/**
+ *  Resumen de metering de una sesión (devuelto por `get_history_summary`).
+ *  Tipado explícito en vez de `serde_json::Value`, que es un tipo recursivo y
+ *  rompe el exportador de tipos de specta (stack overflow en `tauri dev`).
+ */
+export type HistorySummary = {
+	turns: number,
+	inputTokens: number,
+	cachedTokens: number,
+	outputTokens: number,
+	costUsd: number | null,
 };
 
 export type McpSpec = {
