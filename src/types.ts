@@ -129,6 +129,11 @@ export interface ChatDeltaEvent {
   text: string;
 }
 
+export interface ChatTextFinal {
+  chatId: string;
+  text: string;
+}
+
 export interface ThinkingDeltaEvent {
   chatId: string;
   text: string;

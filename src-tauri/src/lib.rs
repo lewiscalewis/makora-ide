@@ -4,6 +4,8 @@ mod gateway;
 mod history;
 mod mcp;
 mod multiagent;
+mod repo_map;
+mod symbol_index;
 mod terminal;
 mod token_engine;
 
@@ -115,6 +117,13 @@ pub struct ChatResult {
 #[derive(Clone, serde::Serialize, Type, Event)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatDeltaEvent {
+    pub chat_id: String,
+    pub text: String,
+}
+
+#[derive(Clone, serde::Serialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatTextFinal {
     pub chat_id: String,
     pub text: String,
 }
@@ -560,6 +569,18 @@ async fn fetch_balance(
 #[specta::specta]
 fn get_history_summary(session_id: String) -> Result<serde_json::Value, String> {
     Ok(history::requests_summary(&session_id))
+}
+
+#[tauri::command]
+#[specta::specta]
+fn save_sessions_store(json: String) -> Result<(), String> {
+    history::save_session_store(&json)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn load_sessions_store() -> Result<Option<String>, String> {
+    Ok(history::load_session_store())
 }
 
 #[tauri::command]
@@ -1405,31 +1426,6 @@ fn create_multiagent_plan(session_id: String, objective: String) -> multiagent::
     multiagent::create_default_plan(&session_id, &objective)
 }
 
-#[tauri::command]
-#[specta::specta]
-fn open_session_window(app: AppHandle, session_id: String, title: String) -> Result<(), String> {
-    use tauri::Manager;
-    let clean_id = session_id.replace('-', "_").replace(' ', "_");
-    let label = format!("session_{clean_id}");
-    if let Some(win) = app.get_webview_window(&label) {
-        let _ = win.set_focus();
-        return Ok(());
-    }
-    let url = format!("index.html?sessionId={session_id}");
-    let window_title = if title.trim().is_empty() {
-        format!("MakoraIDE — {session_id}")
-    } else {
-        format!("MakoraIDE — {title}")
-    };
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
-        .title(window_title)
-        .inner_size(1050.0, 750.0)
-        .min_inner_size(600.0, 450.0)
-        .build()
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta_builder = Builder::new()
@@ -1466,6 +1462,8 @@ pub fn run() {
             search_paths,
             workspace_summary,
             get_history_summary,
+            save_sessions_store,
+            load_sessions_store,
             keyring_get,
             keyring_set,
             keyring_delete,
@@ -1490,10 +1488,14 @@ pub fn run() {
             git_fetch,
             git_init,
             get_initial_file,
-            check_beta_validity,
-            open_session_window
+            check_beta_validity
         ])
-        .events(collect_events![StreamEvent, ChatDeltaEvent, multiagent::MultiAgentPlanEvent]);
+        .events(collect_events![
+            StreamEvent,
+            ChatDeltaEvent,
+            ChatTextFinal,
+            multiagent::MultiAgentPlanEvent
+        ]);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

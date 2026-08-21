@@ -270,6 +270,7 @@ const MAKORA_BASE_SKILL: &str = "\
 6. Plan de Tareas: Para tareas de 3 o más pasos usa `todowrite` al inicio y actualízala al completar cada paso (una sola tarea in_progress a la vez). Para decisiones realmente bloqueantes (ambigüedad crítica de requisitos, elección de enfoque con consecuencias) usa `question` con opciones sugeridas; nunca para confirmaciones triviales.
 7. Documentación Web: Para consultar documentación externa (APIs, librerías, READMEs online) usa `webfetch` con la URL concreta de la página relevante; una única petición por página es suficiente, no descargues sitios completos.
 8. Skills de Proyecto: Si en el system prompt aparece una skill de proyecto relevante para la tarea, cárgala con la herramienta `skill` (nombre exacto) antes de empezar y sigue sus instrucciones al pie de la letra.
+9. Gestión de errores de herramientas: si una herramienta devuelve ERROR, interpreta el mensaje, corrige los argumentos y reintenta o adapta la estrategia. NUNCA incluyas la sintaxis de llamada a herramientas en tu respuesta al usuario; si un fallo es definitivo, explícalo brevemente en la respuesta final.
 ";
 
 fn now_id() -> String {
@@ -366,7 +367,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "apply_patch".into(),
-            description: "Aplica parches quirúrgicos a un archivo existente con bloques de anclaje. Formato:\n<<<<<<< SEARCH\n[líneas originales]\n=======\n[líneas nuevas]\n>>>>>>> REPLACE\nPuede contener varios bloques. Ahorra tokens frente a reescribir el archivo completo.".into(),
+            description: "Aplica parches quirúrgicos a un archivo existente. Formato de cada bloque:\n<<<<<<< SEARCH\n[líneas originales exactas]\n=======\n[líneas nuevas]\n>>>>>>> REPLACE".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -378,7 +379,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "explore_subagent".into(),
-            description: "Ejecuta una tarea de investigación, búsqueda en logs o análisis multifichero en un contexto efímero aislado. Devuelve únicamente el resumen técnico condensado (100-200 tokens) sin ensuciar el historial principal.".into(),
+            description: "Ejecuta una tarea de investigación/análisis en un contexto efímero aislado; devuelve solo un resumen condensado sin ensuciar el historial principal.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -392,7 +393,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "bash".into(),
-            description: "Ejecuta un comando de terminal/shell en el workspace de forma no interactiva (timeout 600s). Devuelve stdout/stderr y el código de salida. Úsalo ÚNICAMENTE cuando el usuario solicite explícitamente ejecutar un comando o cuando sea estrictamente necesario para compilar, testear o inspeccionar el entorno.".into(),
+            description: "Ejecuta un comando de shell no interactivo en el workspace (timeout 600s). Devuelve stdout/stderr y código de salida.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -415,7 +416,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "todowrite".into(),
-            description: "Crea/actualiza la lista de tareas del turno actual (visible para el usuario). Úsala SIEMPRE que la tarea requiera 3 o más pasos y actualízala en tiempo real al completar cada paso. Estados: pending, in_progress, completed, cancelled. Solo puede haber UNA tarea in_progress a la vez.".into(),
+            description: "Crea/actualiza la lista de tareas del turno (visible al usuario). Úsala para tareas de 3+ pasos. Estados: pending, in_progress, completed, cancelled; una sola in_progress a la vez.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -438,7 +439,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "question".into(),
-            description: "Pregunta al usuario una duda bloqueante durante la ejecución (con opciones opcionales y opción libre). La ejecución espera la respuesta del usuario. Úsala SOLO para decisiones realmente bloqueantes e importantes (ambigüedad crítica de requisitos, elección de enfoque con consecuencias); nunca para confirmaciones triviales.".into(),
+            description: "Pregunta al usuario una decisión bloqueante (espera su respuesta). Solo para ambigüedad crítica de requisitos o de enfoque; nunca para confirmaciones triviales.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -451,7 +452,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "webfetch".into(),
-            description: "Descarga y convierte a Markdown una página web (documentación, docs de APIs, READMEs online). Solo URLs http/https; máximo 5 MB; requiere aprobación del usuario por URL. Úsala para consultar documentación externa actualizada, nunca para contenido que ya tengas en el workspace.".into(),
+            description: "Descarga una página web y la convierte a Markdown. Solo http/https, máx 5 MB; requiere aprobación del usuario por URL.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -462,7 +463,7 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "skill".into(),
-            description: "Carga el contenido completo de una skill del proyecto (SKILL.md descubiertas en .makora/skills, .opencode/skills o ~/.claude/skills) para seguir sus instrucciones. Úsala solo cuando una skill de la lista de skills disponibles sea relevante para la tarea actual.".into(),
+            description: "Carga el contenido de una skill del proyecto (SKILL.md) por su nombre exacto para seguir sus instrucciones.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -471,13 +472,25 @@ fn core_tools() -> Vec<ToolDef> {
                 "required": ["name"]
             }),
         },
+        ToolDef {
+            name: "repo_map_query".into(),
+            description: "Consulta el índice semántico del workspace: busca funciones, clases, structs, traits, interfaces o módulos por nombre (o fragmento) y devuelve las definiciones más relevantes con su ruta y línea. Úsalo para localizar dónde se define algo sin hacer grep ciego.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Nombre (o fragmento) del símbolo a localizar, p. ej. 'calculate_correlations' o 'Regime'" },
+                    "top": { "type": "integer", "description": "Número máximo de resultados (por defecto 20)" }
+                },
+                "required": ["query"]
+            }),
+        },
     ]
 }
 
 fn delegate_tool_def() -> ToolDef {
     ToolDef {
         name: "delegate_subagent".into(),
-        description: "Delega una tarea pesada en un subagente efímero especializado que devuelve únicamente un briefing condensado (ahorra tokens y agiliza la respuesta). Roles: explorer (investigación/análisis, solo lectura), coder (implementa cambios con apply_patch), tester (ejecuta pruebas o verificaciones con bash), reviewer (audita cambios y arquitectura). Usa `context` para pasarle hallazgos previos (rutas, símbolos, líneas) y evitar re-exploración.".into(),
+        description: "Delega una tarea pesada en un subagente efímero que devuelve solo un briefing condensado. Roles: explorer (análisis, solo lectura), coder (implementa con apply_patch), tester (verifica con bash), reviewer (audita cambios). Pasa hallazgos previos en `context` para evitar re-exploración.".into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -511,7 +524,7 @@ fn role_short(role: multiagent::SubagentRole) -> &'static str {
 
 fn role_tools(role: multiagent::SubagentRole) -> Vec<ToolDef> {
     let allowed: &[&str] = match role {
-        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range", "webfetch"],
+        multiagent::SubagentRole::Explorer => &["list_dir", "grep", "read_file_range", "webfetch", "repo_map_query"],
         multiagent::SubagentRole::Coder => &["list_dir", "grep", "read_file_range", "apply_patch", "write_file"],
         multiagent::SubagentRole::Tester => &["bash", "list_dir", "grep", "read_file_range"],
         multiagent::SubagentRole::Reviewer => &["list_dir", "grep", "read_file_range"],
@@ -670,7 +683,10 @@ fn resolve_path(folders: &[String], path: &str, allow_missing: bool) -> Result<S
         }
     }
 
-    Err(format!("la ruta no existe dentro del workspace: {path}"))
+    Err(format!(
+        "la ruta no existe dentro del workspace: {path} (raíces: {})",
+        folders.join(", ")
+    ))
 }
 
 
@@ -887,7 +903,7 @@ pub fn is_ignored_path(name: &str) -> bool {
 pub fn is_read_only_tool(name: &str) -> bool {
     matches!(
         name,
-        "read_file" | "read_file_range" | "grep" | "list_dir" | "skill"
+        "read_file" | "read_file_range" | "grep" | "list_dir" | "skill" | "repo_map_query"
     )
 }
 
@@ -1057,6 +1073,17 @@ fn normalize_bash_command(command: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
+fn write_bat_script(command: &str) -> Result<std::path::PathBuf, String> {
+    let dir = std::env::temp_dir().join("makora_cmds");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("cmd_{}_{}.bat", std::process::id(), now_id()));
+    let normalized = normalize_bash_command(command);
+    let content = format!("@echo off\r\nchcp 65001 >nul\r\n{normalized}\r\nexit /b %errorlevel%\r\n");
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
 async fn kill_process_tree(pid: Option<u32>) {
     let Some(pid) = pid else { return };
     let mut cmd = tokio::process::Command::new("taskkill");
@@ -1086,10 +1113,20 @@ async fn run_bash(
         });
 
     #[cfg(target_os = "windows")]
+    let bat_path: Option<std::path::PathBuf> = Some(write_bat_script(command)?);
+    #[cfg(not(target_os = "windows"))]
+    let bat_path: Option<std::path::PathBuf> = None;
+
+    #[cfg(target_os = "windows")]
     let mut cmd = {
-        let normalized_cmd = normalize_bash_command(command);
         let mut c = tokio::process::Command::new("cmd.exe");
-        c.args(["/C", &normalized_cmd]);
+        c.args([
+            "/C",
+            &bat_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ]);
         #[cfg(windows)]
         c.creation_flags(0x08000000); // CREATE_NO_WINDOW: completely silences background popup console windows
         c
@@ -1179,12 +1216,20 @@ async fn run_bash(
             let _ = child.kill().await;
             #[cfg(target_os = "windows")]
             kill_process_tree(child.id()).await;
+            #[cfg(target_os = "windows")]
+            if let Some(p) = &bat_path {
+                let _ = std::fs::remove_file(p);
+            }
             return Err("cancelado por el usuario".into());
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill().await;
             #[cfg(target_os = "windows")]
             kill_process_tree(child.id()).await;
+            #[cfg(target_os = "windows")]
+            if let Some(p) = &bat_path {
+                let _ = std::fs::remove_file(p);
+            }
             return Err("timeout (600s) ejecutando el comando bash".into());
         }
         match tokio::time::timeout(std::time::Duration::from_millis(300), child.wait()).await {
@@ -1192,9 +1237,19 @@ async fn run_bash(
                 exit_code = status.code().unwrap_or(-1);
                 break;
             }
-            Ok(Err(e)) => return Err(format!("error esperando al proceso: {e}")),
+            Ok(Err(e)) => {
+                #[cfg(target_os = "windows")]
+                if let Some(p) = &bat_path {
+                    let _ = std::fs::remove_file(p);
+                }
+                return Err(format!("error esperando al proceso: {e}"));
+            }
             Err(_) => {}
         }
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(p) = &bat_path {
+        let _ = std::fs::remove_file(p);
     }
     let _ = stdout_handle.await;
     let _ = stderr_handle.await;
@@ -1667,31 +1722,34 @@ fn serialize_head_for_compaction(msgs: &[ChatMessage], max_chars: usize) -> Stri
     out
 }
 
+fn apply_compaction_mapping(wire_prefix_len: usize, wire_tail_start: usize, split: usize) -> usize {
+    wire_tail_start + split.saturating_sub(wire_prefix_len)
+}
+
 const COMPACTION_SYSTEM: &str = "\
-Eres un compactador de historial de conversación. Resume el historial proporcionado en español \
-técnico conciso, preservando TODA la información accionable para continuar la tarea sin perder \
-contexto: (1) decisiones de diseño tomadas y su razón, (2) archivos modificados y cambios \
-aplicados (rutas exactas), (3) errores encontrados y cómo se resolvieron o su estado, \
-(4) verificaciones ejecutadas y resultados, (5) pasos pendientes. No añadas información nueva. \
-Responde SOLO con el resumen (viñetas compactas, máximo 400 palabras).";
+ Eres un compactador de historial de conversación. Resume el historial proporcionado en español \
+ técnico conciso, preservando TODA la información accionable para continuar la tarea sin perder \
+ contexto: (1) decisiones de diseño tomadas y su razón, (2) archivos modificados y cambios \
+ aplicados (rutas exactas), (3) errores encontrados y cómo se resolvieron o su estado, \
+ (4) verificaciones ejecutadas y resultados, (5) pasos pendientes. No añadas información nueva. \
+ Responde SOLO con el resumen (viñetas compactas, máximo 400 palabras).";
 
 async fn compact_history_llm(
     app: &AppHandle,
     cfg: &ChatConfig,
     chat_id: &str,
     msgs: &[ChatMessage],
-) -> Result<(Vec<ChatMessage>, ChatUsage), String> {
+) -> Result<(Vec<ChatMessage>, usize, ChatUsage), String> {
     const MIN_HEAD_MSGS: usize = 4;
     const KEEP_TAIL: usize = 8;
     let split = find_compaction_split(msgs, KEEP_TAIL);
     if split < MIN_HEAD_MSGS {
-        return Ok((msgs.to_vec(), ChatUsage::default()));
+        return Ok((Vec::new(), 0, ChatUsage::default()));
     }
     let head = &msgs[..split];
-    let tail = &msgs[split..];
     let serialized = serialize_head_for_compaction(head, 12_000);
     if serialized.trim().is_empty() {
-        return Ok((msgs.to_vec(), ChatUsage::default()));
+        return Ok((Vec::new(), 0, ChatUsage::default()));
     }
 
     let compact_chat_id = format!("{chat_id}__compact");
@@ -1730,12 +1788,12 @@ async fn compact_history_llm(
     };
     let summary = outcome.text.trim().to_string();
     if summary.is_empty() {
-        return Ok((msgs.to_vec(), outcome.usage));
+        return Ok((Vec::new(), 0, outcome.usage));
     }
-    let mut compacted = vec![
+    let pair = vec![
         ChatMessage {
             role: "user".into(),
-            content: "[Historial compactado para ahorrar contexto: el resumen siguiente sustituye a los mensajes anteriores]".into(),
+            content: "(El historial anterior de esta conversación se resume a continuación de forma automática e interna para ahorrar contexto. Este resumen NO es visible para el usuario: no lo menciones ni lo cites en tu respuesta.)".into(),
             images: vec![],
             tool_calls: None,
             tool_call_id: None,
@@ -1750,8 +1808,7 @@ async fn compact_history_llm(
             reasoning: None,
         },
     ];
-    compacted.extend_from_slice(tail);
-    Ok((compacted, outcome.usage))
+    Ok((pair, split, outcome.usage))
 }
 
 async fn execute_subagent_tool(
@@ -1817,6 +1874,15 @@ async fn execute_subagent_tool(
                 out = "sin coincidencias".into();
             }
             Ok(truncate_tool_output("grep", &out, 3000))
+        }
+        "repo_map_query" => {
+            let q = s("query");
+            if q.trim().is_empty() {
+                return Err("repo_map_query requiere un 'query' no vacío".into());
+            }
+            let top = arg_number(&args, "top").unwrap_or(20) as usize;
+            let out = crate::symbol_index::query(folders, &q, top);
+            Ok(truncate_tool_output("repo_map_query", &out, 4000))
         }
         "webfetch" => {
             let url = s("url");
@@ -2124,6 +2190,14 @@ fn skills_system_section(skills: &[Skill]) -> String {
     out
 }
 
+fn repo_map_section(folders: &[String]) -> String {
+    let map = crate::repo_map::repo_map_for(folders);
+    if map.trim().is_empty() {
+        return String::new();
+    }
+    format!("\n\n## Mapa del workspace (estructura de archivos)\n```\n{map}\n```")
+}
+
 fn repair_tool_name<'a>(name: &'a str, mcp_names: &[String]) -> std::borrow::Cow<'a, str> {    const CORE: &[&str] = &[
         "read_file",
         "read_file_range",
@@ -2138,6 +2212,7 @@ fn repair_tool_name<'a>(name: &'a str, mcp_names: &[String]) -> std::borrow::Cow
         "question",
         "webfetch",
         "skill",
+        "repo_map_query",
     ];
     let collapse = |s: &str| -> String {
         s.trim()
@@ -2513,6 +2588,15 @@ async fn execute_tool_inner(
                 out = "sin coincidencias".into();
             }
             Ok(truncate_tool_output("grep", &out, 3000))
+        }
+        "repo_map_query" => {
+            let q = s("query");
+            if q.trim().is_empty() {
+                return Err("repo_map_query requiere un 'query' no vacío".into());
+            }
+            let top = arg_number(&args, "top").unwrap_or(20) as usize;
+            let out = crate::symbol_index::query(folders, &q, top);
+            Ok(truncate_tool_output("repo_map_query", &out, 4000))
         }
         "bash" => run_bash(app, &s("command"), folders, chat_id).await,
         "write_file" => {
@@ -2940,6 +3024,7 @@ async fn run_loop(
                         | "explore_subagent"
                         | "webfetch"
                         | "skill"
+                        | "repo_map_query"
                 )
             })
             .cloned()
@@ -2970,6 +3055,8 @@ async fn run_loop(
     const FORCE_REPEATS: u32 = 2;
     const NUDGE_NO_NEW_INFO: u32 = 2;
     const FORCE_NO_NEW_INFO: u32 = 3;
+    const NUDGE_ERROR_ROUNDS: u32 = 2;
+    const FORCE_ERROR_ROUNDS: u32 = 3;
     const NUDGE_COOLDOWN: u32 = 4;
 
     let mut turn: u32 = 0;
@@ -2977,12 +3064,21 @@ async fn run_loop(
     let mut repeats: u32 = 0;
     let mut plan_reads: u32 = 0;
     let mut no_new_info: u32 = 0;
+    let mut error_rounds: u32 = 0;
     let mut seen_results: HashSet<u64> = HashSet::new();
     let mut last_nudge_turn: u32 = 0;
     let mut system_extra: String = String::new();
+    // Conservar solo los últimos 3 nudges: evita que `system_extra` crezca sin
+    // límite en loops largos (cada nudge añade tokens al prompt de sistema).
+    let mut recent_nudges: Vec<String> = Vec::new();
     let mut budget_asked = false;
     let mut accumulated_cost: f64 = 0.0;
     let mut last_compact_turn: u32 = 0;
+    // Compactación SOLO para el wire (lo que ve el modelo): `msgs` permanece
+    // completo para la UI, persistencia y checkpoints. El usuario nunca pierde
+    // sus mensajes anteriores.
+    let mut wire_prefix: Vec<ChatMessage> = Vec::new();
+    let mut wire_tail_start: usize = 0;
     let compact_threshold: usize =
         ((cfg.context_window.unwrap_or(128_000) as usize) * 3 / 5).clamp(16_000, 64_000);
 
@@ -2991,18 +3087,24 @@ async fn run_loop(
             return Err("cancelado por el usuario".into());
         }
         // M4: compactación jerárquica con resumen LLM cuando el historial crece
-        // más allá del 60% del contexto (los mensajes antiguos se sustituyen por
-        // un resumen estable que además mantiene el prefijo cacheable).
+        // más allá del 60% del contexto. Solo altera la vista del wire: la UI
+        // conserva todos los mensajes.
         if turn >= 4 && turn.saturating_sub(last_compact_turn) >= 6 {
-            let history_tokens = counter.count_messages(&full_system, &msgs);
+            let wire_view: Vec<ChatMessage> = wire_prefix
+                .iter()
+                .chain(msgs.iter().skip(wire_tail_start))
+                .cloned()
+                .collect();
+            let history_tokens = counter.count_messages(&full_system, &wire_view);
             if history_tokens > compact_threshold {
-                match compact_history_llm(app, cfg, chat_id, &msgs).await {
-                    Ok((compacted, usage)) => {
-                        if compacted.len() < msgs.len() {
+                match compact_history_llm(app, cfg, chat_id, &wire_view).await {
+                    Ok((pair, split, usage)) => {
+                        let compacted_len = pair.len() + wire_view.len().saturating_sub(split);
+                        if compacted_len < wire_view.len() {
                             println!(
                                 "[TOKEN_ENGINE] compactación LLM: {} -> {} mensajes ({} tokens de historial)",
-                                msgs.len(),
-                                compacted.len(),
+                                wire_view.len(),
+                                compacted_len,
                                 history_tokens
                             );
                             total += usage.clone();
@@ -3028,7 +3130,12 @@ async fn run_loop(
                                     },
                                 );
                             }
-                            msgs = compacted;
+                            wire_tail_start = apply_compaction_mapping(
+                                wire_prefix.len(),
+                                wire_tail_start,
+                                split,
+                            );
+                            wire_prefix = pair;
                             last_compact_turn = turn;
                         }
                     }
@@ -3039,15 +3146,47 @@ async fn run_loop(
             }
         }
         // Motor M2 (D2): podado de historia y límite presupuestario por contexto
-        let wire_msgs = prepare_wire(&msgs, cfg);
+        let wire_view: Vec<ChatMessage> = wire_prefix
+            .iter()
+            .chain(msgs.iter().skip(wire_tail_start))
+            .cloned()
+            .collect();
+        let wire_msgs = prepare_wire(&wire_view, cfg);
         turn += 1;
         let started = std::time::Instant::now();
         let local_tokens = counter.count_messages(&full_system, &wire_msgs);
         let effective_system = format!("{full_system}{system_extra}");
-        let outcome = if cfg.kind == "anthropic" {
-            gateway::anthropic_turn(app, cfg, chat_id, &effective_system, &wire_msgs, &tools).await?
+        let raw = if cfg.kind == "anthropic" {
+            gateway::anthropic_turn(app, cfg, chat_id, &effective_system, &wire_msgs, &tools).await
         } else {
-            gateway::openai_turn(app, cfg, chat_id, &effective_system, &wire_msgs, &tools).await?
+            gateway::openai_turn(app, cfg, chat_id, &effective_system, &wire_msgs, &tools).await
+        };
+        let outcome = match raw {
+            Ok(o) => o,
+            Err(e) => {
+                // Degradación controlada: si ya hay progreso (herramientas
+                // ejecutadas), sintetiza una respuesta final con lo hecho en vez
+                // de abortar el turno entero y perder todo el trabajo.
+                let has_progress = msgs.iter().any(|m| {
+                    m.role == "tool"
+                        || m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false)
+                });
+                if has_progress {
+                    println!("[TOKEN_ENGINE] error del proveedor (turno {turn}); sintetizando respuesta final: {e}");
+                    return forced_final_turn(
+                        app,
+                        cfg,
+                        chat_id,
+                        &format!("{full_system}{system_extra}\n\n[Nota: el último intento de llamada al modelo falló; resume el trabajo ya realizado.]"),
+                        &msgs,
+                        &mut total,
+                        &session_id,
+                        turn,
+                    )
+                    .await;
+                }
+                return Err(e);
+            }
         };
         total.input_tokens += outcome.usage.input_tokens;
         total.output_tokens += outcome.usage.output_tokens;
@@ -3115,6 +3254,25 @@ async fn run_loop(
         }
 
         if outcome.tool_calls.is_empty() {
+            // Si el modelo terminó SIN texto y había usado herramientas en el turno,
+            // le pedimos UNA conclusión real en vez de fabricar un resumen vacío.
+            let had_tool_activity = msgs
+                .iter()
+                .any(|m| m.tool_calls.as_ref().map(|t| !t.is_empty()).unwrap_or(false));
+            if outcome.text.trim().is_empty() && had_tool_activity {
+                let directive = "\n\n[Nota del sistema Makora]: Has terminado de usar herramientas. Redacta AHORA tu respuesta final completa al usuario (hallazgos, conclusiones, archivos afectados y estado de verificación). No llames más herramientas.";
+                return forced_final_turn(
+                    app,
+                    cfg,
+                    chat_id,
+                    &format!("{full_system}{system_extra}{directive}"),
+                    &msgs,
+                    &mut total,
+                    &session_id,
+                    turn,
+                )
+                .await;
+            }
             let final_content = if !outcome.text.trim().is_empty() {
                 outcome.text
             } else {
@@ -3228,6 +3386,8 @@ async fn run_loop(
             Some("Se detectó un bucle de herramientas idénticas sin progreso; respuesta final sintetizada.")
         } else if no_new_info >= FORCE_NO_NEW_INFO {
             Some("Las últimas rondas de herramientas no aportaron información nueva; respuesta final sintetizada.")
+        } else if error_rounds >= FORCE_ERROR_ROUNDS {
+            Some("Varias rondas consecutivas de herramientas fallaron; respuesta final sintetizada con lo disponible.")
         } else if plan_mode && plan_reads >= PLAN_FORCE_READS {
             Some("Modo plan: la exploración del código es suficiente; se redacta el plan final.")
         } else {
@@ -3470,6 +3630,14 @@ async fn run_loop(
             no_new_info = 0;
         }
 
+        // ===== Fallos consecutivos: si TODA la ronda de herramientas falló,
+        // acumula señal para forzar una respuesta en vez de quemar tokens.
+        if !round_results.is_empty() && round_results.iter().all(|c| c.starts_with("ERROR:")) {
+            error_rounds += 1;
+        } else if !round_results.is_empty() {
+            error_rounds = 0;
+        }
+
         // ===== Nudge TRANSPARENTE: nota de sistema real (no mensaje user falso)
         // + aviso visible al usuario vía evento. El modelo recibe la guía como
         // parte del system prompt del siguiente turno, no como intervención del
@@ -3487,6 +3655,10 @@ async fn run_loop(
                 Some(
                     "Las últimas rondas de herramientas no aportaron información nueva (resultados ya vistos). No repitas lecturas; concluye con la información que tienes.".to_string(),
                 )
+            } else if error_rounds >= NUDGE_ERROR_ROUNDS {
+                Some(
+                    "Varias herramientas fallaron seguidas (rutas o comandos inexistentes o no permitidos). No reintentes las mismas llamadas: responde con lo que ya sabes o pide al usuario la información que falte.".to_string(),
+                )
             } else {
                 None
             }
@@ -3495,14 +3667,22 @@ async fn run_loop(
         };
         if let Some(nudge_text) = nudge {
             last_nudge_turn = turn;
-            system_extra.push_str(&format!(
-                "\n\n[Nota del sistema Makora — vigilante anti-bucles]: {nudge_text}"
-            ));
+            recent_nudges.push(nudge_text);
+            if recent_nudges.len() > 3 {
+                recent_nudges.remove(0);
+            }
+            system_extra = recent_nudges
+                .iter()
+                .map(|n| format!("\n\n[Nota del sistema Makora — vigilante anti-bucles]: {n}"))
+                .collect::<String>();
         }
 
-        // Persistencia inmediata paso a paso en SQLite:
-        // Asegura que sesiones largas (>10min) mantengan su progreso intacto ante cualquier interrupción imprevista.
-        history::create_checkpoint(&session_id, turn, &msgs);
+        // Persistencia de progreso: solo cada 5 turnos. Serializar el transcript
+        // completo en CADA iteración era O(n²) de CPU (y el origen de la DB de
+        // 1.1 GB). El checkpoint final del turno (al terminar) siempre se guarda.
+        if turn % 5 == 0 {
+            history::create_checkpoint(&session_id, turn, &msgs);
+        }
     }
 }
 
@@ -3521,10 +3701,11 @@ pub async fn run(
     let skills = load_skills(folders);
     guard(&SKILLS_BY_CHAT).insert(chat_id.to_string(), skills.clone());
     let skills_section = skills_system_section(&skills);
+    let repo_section = repo_map_section(folders);
     let full_system = if plan_mode {
-        format!("{MAKORA_BASE_SKILL}\n\n{system}\n\n{PLAN_MODE_DIRECTIVE}{skills_section}")
+        format!("{MAKORA_BASE_SKILL}\n\n{system}\n\n{PLAN_MODE_DIRECTIVE}{skills_section}{repo_section}")
     } else {
-        format!("{MAKORA_BASE_SKILL}\n\n{system}{skills_section}")
+        format!("{MAKORA_BASE_SKILL}\n\n{system}{skills_section}{repo_section}")
     };
     let tools = tools_with_mcp(registry, core_tools());
     run_loop(
@@ -3546,10 +3727,14 @@ const PLAN_MODE_DIRECTIVE: &str = "\
 ## Modo Plan (activo y obligatorio)
 
 - Estás en MODO PLAN: las herramientas de modificación (`write_file`, `apply_patch`, `bash`) y de delegación ejecutora están DESHABILITADAS a nivel de sistema; no las llames.
-- Tu objetivo es producir UN PLAN DE ACCIÓN DETALLADO: archivos concretos a modificar, cambios específicos por archivo, pasos de verificación (tests/compilación) y riesgos.
-- Usa `read_file_range`/`grep`/`list_dir` de forma EFICIENTE para mapear el código, y `todowrite` para estructurar el plan en pasos.
-- NO repitas lecturas ya hechas: si el contexto es suficiente, pasa a redactar el plan final.
-- Cuando el usuario apruebe el plan con el botón «Implementar», recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.";
+- Explora con `read_file_range`/`grep`/`list_dir` y produce un plan de implementación en Markdown con esta estructura:
+  1. `# Implementation Plan: [Título]`
+  2. `## 1. Análisis y Diagnóstico`
+  3. `## 2. Cambios Propuestos` (archivo por archivo, rutas exactas y desglose)
+  4. `## 3. Plan de Verificación y Pruebas`
+  5. Preguntas abiertas o decisiones críticas que requieran validación.
+- Usa `todowrite` para estructurar el plan en pasos. NO repitas lecturas ya hechas: si el contexto es suficiente, redacta ya el plan final.
+- Presenta el plan completo de forma clara y directa para que el usuario lo revise y pulse «Implementar». Cuando lo apruebe, recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.";
 
 const MULTI_DELEGATION_DIRECTIVE: &str = "\
 ## Modo Multi-Agente por Delegación (activo)
@@ -3584,6 +3769,7 @@ pub async fn run_multiagent(
         full_system.push_str(&format!("\n\n{PLAN_MODE_DIRECTIVE}"));
     }
     full_system.push_str(&skills_section);
+    full_system.push_str(&repo_map_section(folders));
     let mut tools = tools_with_mcp(registry, core_tools());
     tools.push(delegate_tool_def());
     run_loop(
@@ -3787,6 +3973,46 @@ mod tests {
         assert!(!is_public_url("file:///etc/passwd"));
         assert!(!is_public_url("ftp://example.com"));
         assert!(!is_public_url("not a url"));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_bat_script_preserves_inner_quotes() {
+        use std::process::Command;
+        let bat = write_bat_script(
+            r#"powershell -NoProfile -Command "Write-Output BASH_QUOTED_OK""#,
+        )
+        .unwrap();
+        let out = Command::new("cmd.exe")
+            .args(["/C", bat.to_string_lossy().as_ref()])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&bat);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code().unwrap_or(-1), 0, "stdout: {stdout}");
+        assert!(stdout.contains("BASH_QUOTED_OK"), "stdout: {stdout}");
+        assert!(!stdout.contains("Microsoft Windows"), "banner inesperado: {stdout}");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_bat_script_propagates_exit_code() {
+        use std::process::Command;
+        let bat = write_bat_script("exit /b 3").unwrap();
+        let out = Command::new("cmd.exe")
+            .args(["/C", bat.to_string_lossy().as_ref()])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&bat);
+        assert_eq!(out.status.code().unwrap_or(-1), 3);
+    }
+
+    #[test]
+    fn test_apply_compaction_mapping() {
+        assert_eq!(apply_compaction_mapping(0, 0, 10), 10);
+        assert_eq!(apply_compaction_mapping(2, 30, 12), 40);
+        assert_eq!(apply_compaction_mapping(2, 30, 1), 30);
+        assert_eq!(apply_compaction_mapping(0, 5, 20), 25);
     }
 
     #[test]

@@ -91,7 +91,7 @@ Veredicto por área:
 > - [ ] P2.17 Fork/branch + timeline
 > - [ ] P2.18 Subagentes con sesión hija + background
 > - [ ] P2.19 Comandos custom
-> - [ ] P2.20 Sesiones a SQLite
+> - [ ] P2.20 Sesiones a SQLite (parcial 2026-08-21: el blob de sesiones ya se persiste en SQLite como fuente de verdad — tabla `kv` — con localStorage como caché de arranque; falta modelar sesiones relacionalmente en las tablas `sessions`/`items`)
 > - [ ] P2.21 @-mentions fuzzy + rangos de línea
 > - [ ] P2.22 LSP tool para el agente
 
@@ -129,6 +129,37 @@ Veredicto por área:
 ### Fuera de alcance (v2, ya decidido)
 
 Plugins JS hot-load, sharing web de sesiones, MCP OAuth, TUI, proveedores OAuth extensivos, ACP. (Si en v2 se retoma: el patrón de opencode a copiar es plugin = módulo JS con hooks sobre el SDK HTTP del server — en Makora sería hook sobre IPC tipado.)
+
+## 5.5 Lecciones de vercel-labs/fx (2026-08-21)
+
+`fx` (Zig, ~7.8 MiB) es un agente de código nativo minimalista. Su tesis central, verificada contra el código de Makora y aplicada en ADR-040: **la estabilidad y la economía de tokens empiezan en el system prompt y en el tamaño del conjunto de tools**, no en añadir más directivas.
+
+| Principio de fx | Estado en Makora |
+|---|---|
+| System prompt mínimo (una sola fuente de verdad, sin directivas duplicadas) | ⚠️ Tenía duplicación (`MAKORA_BASE_SKILL` + `buildSystem`); **corregido en ADR-040** |
+| Conjunto de tools reducido y conciso | ⚠️ 11 tools + descripciones verbosas; aceptable pero revisable |
+| Permisos con "auto" + una sola revisión acotada para acciones sensibles | ✅ motor de permisos ADR/P1.7 |
+| Skills lazy (`SKILL.md`) + subagentes + MCP | ✅ ADR-029/P1.14/ADR-020 |
+| Binario nativo / WASM embebible | N/A (Makora es IDE de escritorio, no embebible) |
+| `fx ask` no-interactivo + JSON parseable | N/A (Makora es GUI-first) |
+
+Conclusión: Makora no necesita copiar la arquitectura de fx (binario nativo), pero sí su disciplina de **minimalismo en el prompt** y de **una única fuente de verdad para las directivas**, que es lo que el ADR-040 consolida.
+
+## 5.6 Revisión de 7 IDEs/agentes (2026-08-21) — ideas accionables para Makora
+
+Fuente: lectura de los README/docs públicos de cada repo. Lo que ya tiene Makora (bucle autónomo, plan/act, terminal, permisos, MCP, diffs, subagentes) se omite; solo se listan las ideas trasladables.
+
+| Repo | Idea extraíble | Estado en Makora |
+|---|---|---|
+| **Void** (deprecated/archivado) | Visualización de diffs en streaming token-a-token; gramáticas propias para `<thinking>`/tags de tools | ⚠️ diffs ya existen (LCS) pero no en streaming; sanitización de tags ya implementada (ADR-039). Referencia solo. |
+| **Roo Code** | Modos customizables (Architect/Code/Debug) + control de diffs | ⚠️ plan/act existen; falta un **modo Debug** (diagnóstico/ejecución de tests iterativa) |
+| **Cline** | Permisos paso-a-paso con revisión humana + feedback correctivo | ✅ motor de permisos (P1.7) con feedback correctivo; UX mejorable |
+| **OpenHands** | Workspace autónomo en **sandbox Docker** | N/A (Makora opera sobre el workspace real); un "bash aislado" sería opcional |
+| **Goose** | **Subagentes paralelos** + recetas YAML (config-as-code) | ⚠️ delegación secuencial; paralelizar exploración ahorra latencia. Recetas = P2.19 comandos custom |
+| **Zed** | Rendimiento nativo Rust + panel agéntico | ✅ Makora ya es Rust/Tauri |
+| **Continue** | Contexto `@codebase` (índice del repo) + ecosistema modular de tools | ✅ repo-map ligero (ADR-044) + índice semántico de símbolos con BM25 (ADR-045) implementados |
+
+**Decisiones tomadas (esta ronda):** se implementó el **repo-map ligero** (árbol de directorios `.gitignore`-aware, cacheado, inyectado en el prompt) y el **índice semántico de símbolos + BM25** (tool `repo_map_query`) — equivale al `@codebase` de Continue/Cline y al componente "repo-map" de opencode, completando M2 con extracción por regex por lenguaje (intercambiable por tree-sitter sin tocar la API). **Pospuesto con justificación:** subagentes paralelos (riesgo de carrera en el SnapshotGuard de revert), modo Debug (se puede cubrir con el prompt en modo Act) y sandbox Docker (fuera del modelo de confianza de Makora).
 
 ## 6. Métricas de éxito (propuesta, medibles en la tabla `requests`)
 

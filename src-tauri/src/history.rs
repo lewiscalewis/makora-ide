@@ -12,6 +12,10 @@ use serde_json::Value;
 use crate::ChatMessage;
 
 static DB_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+// Conexión compartida: abrir SQLite por cada escritura (como antes) era caro y
+// con WAL + sesiones concurrentes podía chocar con el busy_timeout y perder
+// escrituras. Una única conexión protegida por mutex elimina ese riesgo.
+static DB_CONN: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -89,8 +93,41 @@ pub fn init() {
             cache_read_ratio REAL DEFAULT 0.0,
             created_at INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id, created_at);",
+        CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id, created_at);
+        CREATE TABLE IF NOT EXISTS kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );",
     );
+    // Limpieza única al arrancar: poda los checkpoints antiguos (se guardaban
+    // completos en cada turno → O(n²) → DB de >1 GB). Conserva 3 por sesión y
+    // compacta el WAL para liberar espacio en disco.
+    let _ = conn.execute(
+        "DELETE FROM checkpoints WHERE id NOT IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id DESC) AS rn
+                FROM checkpoints
+            ) WHERE rn <= 3
+        )",
+        [],
+    );
+    let _ = conn.pragma_update(None, "wal_checkpoint", "TRUNCATE");
+    drop(conn);
+
+    // Si la DB quedó muy grande por el historial de checkpoints, compacta el
+    // fichero en segundo plano (VACUUM) para devolver el espacio al disco sin
+    // bloquear el arranque de la app.
+    let file_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if file_len > 200 * 1024 * 1024 {
+        let path_clone = path.clone();
+        std::thread::spawn(move || {
+            if let Ok(vconn) = Connection::open(&path_clone) {
+                let _ = vconn.busy_timeout(std::time::Duration::from_secs(30));
+                let _ = vconn.execute_batch("VACUUM;");
+            }
+        });
+    }
 }
 
 fn ensure_db_path() -> Option<PathBuf> {
@@ -105,11 +142,20 @@ fn ensure_db_path() -> Option<PathBuf> {
 }
 
 fn with_conn<T>(f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T> {
-    let path = ensure_db_path()?;
-    let conn = Connection::open(path).ok()?;
-    // Varias sesiones pueden escribir en paralelo: esperar hasta 2s por el lock WAL.
-    let _ = conn.busy_timeout(std::time::Duration::from_secs(2));
-    f(&conn).ok()
+    {
+        let mut g = guard(&DB_CONN);
+        if g.is_none() {
+            if let Some(path) = ensure_db_path() {
+                if let Ok(c) = Connection::open(path) {
+                    let _ = c.busy_timeout(std::time::Duration::from_secs(2));
+                    *g = Some(c);
+                }
+            }
+        }
+    }
+    let g = guard(&DB_CONN);
+    let conn = g.as_ref()?;
+    f(conn).ok()
 }
 
 fn xor_decipher(hex: &str) -> Option<String> {
@@ -174,9 +220,24 @@ pub fn upsert_session(id: &str, workspace: &str, model: &str) {
     });
 }
 
+// Watermark por sesión para que `archive_transcript` sea incremental: antes
+// insertaba el transcript COMPLETO en cada turno final → O(n²) de filas en
+// `items`. Ahora solo inserta los mensajes nuevos desde la última archivación.
+static ARCHIVE_WATERMARK: Mutex<Option<std::collections::HashMap<String, usize>>> = Mutex::new(None);
+
 pub fn archive_transcript(session_id: &str, turn: u32, msgs: &[ChatMessage]) {
+    let start = {
+        let mut wm = guard(&ARCHIVE_WATERMARK);
+        let map = wm.get_or_insert_with(std::collections::HashMap::new);
+        let prev = map.get(session_id).copied().unwrap_or(0).min(msgs.len());
+        map.insert(session_id.to_string(), msgs.len());
+        prev
+    };
+    if start >= msgs.len() {
+        return;
+    }
     let _ = with_conn(|c| {
-        for m in msgs {
+        for m in &msgs[start..] {
             let tcs = m
                 .tool_calls
                 .as_ref()
@@ -206,7 +267,17 @@ pub fn create_checkpoint(session_id: &str, turn: u32, msgs: &[ChatMessage]) {
             "INSERT INTO checkpoints (session_id, turn, transcript, created_at)
              VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![session_id, turn, json, t],
-        )
+        )?;
+        // Evitar crecimiento O(n²): conservar solo los últimos 3 checkpoints
+        // por sesión (el resume solo necesita el más reciente).
+        c.execute(
+            "DELETE FROM checkpoints WHERE session_id = ?1 AND id NOT IN (
+                SELECT id FROM checkpoints WHERE session_id = ?1
+                ORDER BY id DESC LIMIT 3
+             )",
+            rusqlite::params![session_id],
+        )?;
+        Ok(())
     });
 }
 
@@ -274,6 +345,35 @@ pub fn record_request(
             ],
         )
     });
+}
+
+const SESSIONS_KV_KEY: &str = "sessions.v1";
+
+/// Guarda el blob JSON completo de sesiones (fuente de verdad durable).
+/// Sustituye a localStorage como almacenamiento autoritativo; localStorage
+/// queda como caché de arranque rápido.
+pub fn save_session_store(json: &str) -> Result<(), String> {
+    let t = now_ms();
+    match with_conn(|c| {
+        c.execute(
+            "INSERT INTO kv (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3",
+            rusqlite::params![SESSIONS_KV_KEY, json, t],
+        )
+    }) {
+        Some(_) => Ok(()),
+        None => Err("base de datos de sesiones no disponible".into()),
+    }
+}
+
+pub fn load_session_store() -> Option<String> {
+    with_conn(|c| {
+        c.query_row(
+            "SELECT value FROM kv WHERE key = ?1",
+            rusqlite::params![SESSIONS_KV_KEY],
+            |r| r.get::<_, String>(0),
+        )
+    })
 }
 
 pub fn requests_summary(session_id: &str) -> Value {

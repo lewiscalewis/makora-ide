@@ -2,12 +2,14 @@ import { useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { approvalReply, chat, chatCancel, questionReply, runMultiagentPlan } from "./api";
 import { computeCostUsd } from "./defaults";
+import { formatResponse } from "./responseFormat";
 import type {
   ApprovalRequiredEvent,
   Attachment,
   ChatConfig,
   ChatDeltaEvent,
   ChatMessage,
+  ChatTextFinal,
   ChatUsage,
   ModelConfig,
   MultiAgentPlanEvent,
@@ -97,6 +99,10 @@ export function transcriptToUi(
   let id = idOffset - 1;
   let currentAssistant: UiMessage | null = null;
   let assistantCount = 0;
+  const existingUserTexts = (existingUi ?? [])
+    .filter((x) => x.role === "user")
+    .map((x) => x.text);
+  let userIdx = 0;
 
   for (let i = 0; i < transcript.length; i++) {
     const m = transcript[i];
@@ -105,10 +111,12 @@ export function transcriptToUi(
         out.push(currentAssistant);
         currentAssistant = null;
       }
+      const displayText = existingUserTexts[userIdx];
+      userIdx++;
       out.push({
         id: ++id,
         role: "user",
-        text: m.content || "(adjuntos)",
+        text: displayText ?? m.content ?? "(adjuntos)",
       });
     } else if (m.role === "assistant") {
       if (!currentAssistant) {
@@ -528,6 +536,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     plan: null,
     draftInput: "",
     draftAttachments: [],
+    todos: [],
     transcript: newTranscript,
     nextUiId: r.nextUiId + 2,
     currentAssistantId: r.nextUiId + 2,
@@ -546,12 +555,14 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
   let isDisposed = false;
   let done = false;
   let unlistenDelta: (() => void) | null = null;
+  let unlistenTextFinal: (() => void) | null = null;
 
   const flushUi = () => {
     if (isDisposed) return;
     rafPending = false;
+    const clean = formatResponse(acc);
     update(sessionId, (r) => ({
-      messages: r.messages.map((x) => (x.id === assistantId ? { ...x, text: acc } : x)),
+      messages: r.messages.map((x) => (x.id === assistantId ? { ...x, text: clean } : x)),
     }));
   };
 
@@ -572,8 +583,25 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
           const copy = [...snapshot.transcript];
           const lastIdx = copy.length - 1;
           if (copy[lastIdx]?.role === "assistant") {
-            copy[lastIdx] = { ...copy[lastIdx], content: acc };
+            copy[lastIdx] = { ...copy[lastIdx], content: formatResponse(acc) };
           }
+          update(sessionId, () => ({ transcript: copy }));
+          opts.onTranscriptChange(copy);
+        }
+      }
+    });
+    unlistenTextFinal = await listen<ChatTextFinal>("chat-text-final", (e) => {
+      if (e.payload.chatId !== sessionId) return;
+      const final = e.payload.text ?? "";
+      if (final === acc) return;
+      acc = final;
+      flushUi();
+      const snapshot = runtimes.get(sessionId);
+      if (!done && snapshot && snapshot.transcript.length > 0) {
+        const copy = [...snapshot.transcript];
+        const lastIdx = copy.length - 1;
+        if (copy[lastIdx]?.role === "assistant") {
+          copy[lastIdx] = { ...copy[lastIdx], content: acc };
           update(sessionId, () => ({ transcript: copy }));
           opts.onTranscriptChange(copy);
         }
@@ -732,6 +760,7 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     isDisposed = true;
     done = true;
     unlistenDelta?.();
+    unlistenTextFinal?.();
     update(sessionId, () => ({ busy: false, abortRequested: false }));
   }
 }

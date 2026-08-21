@@ -1,4 +1,5 @@
 import type { AgentMode, ChatMessage, ChatSession, OpenFile, SessionWorkspaceState } from "./types";
+import { loadSessionsStore, saveSessionsStore } from "./api";
 
 const STORAGE_KEY = "makora.history.v1";
 const LEGACY_STORAGE_KEY = "makora.sessions.v1";
@@ -190,6 +191,21 @@ export function loadSessions(): ChatSession[] {
   }
 }
 
+export async function loadSessionsFromStore(): Promise<ChatSession[]> {
+  try {
+    const raw = await loadSessionsStore();
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(sanitizeSession)
+      .filter((s): s is ChatSession => s !== null)
+      .slice(0, MAX_SESSIONS);
+  } catch {
+    return [];
+  }
+}
+
 export function loadOpenTabIds(availableSessions: ChatSession[]): string[] {
   try {
     const storage = getStorage();
@@ -263,6 +279,11 @@ function shrinkSessions(sessions: ChatSession[]): string {
 export function saveSessions(sessions: ChatSession[]): void {
   const ordered = sessions.slice(0, MAX_SESSIONS);
   const json = JSON.stringify(ordered);
+  // Fuente de verdad durable: escribir el blob completo en SQLite (sin el
+  // límite de 4.5 MB de localStorage). Es fire-and-forget; localStorage sigue
+  // como caché de arranque rápida.
+  void saveSessionsStore(json).catch(() => undefined);
+
   const storage = getStorage();
   if (!storage) return;
 

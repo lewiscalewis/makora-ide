@@ -71,6 +71,7 @@ export const commands = {
 /** Events */
 export const events = {
 	chatDeltaEvent: makeEvent<ChatDeltaEvent>("chat-delta-event"),
+	chatTextFinal: makeEvent<ChatTextFinal>("chat-text-final"),
 	multiAgentPlanEvent: makeEvent<MultiAgentPlanEvent>("multi-agent-plan-event"),
 	streamEvent: makeEvent<StreamEvent>("stream-event"),
 };
@@ -95,6 +96,11 @@ export type ChatConfig = {
 };
 
 export type ChatDeltaEvent = {
+	chatId: string,
+	text: string,
+};
+
+export type ChatTextFinal = {
 	chatId: string,
 	text: string,
 };

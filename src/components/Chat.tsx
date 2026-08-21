@@ -642,37 +642,13 @@ export default function Chat({
     }
   }, [messages, turnActivities, thinking, scrollToBottom]);
 
-  const buildSystem = async (effectiveMode: AgentMode = agentMode): Promise<string> => {
+  const buildSystem = async (): Promise<string> => {
     let sys =
       "Eres Makora, un asistente de desarrollo agéntico de élite integrado en MakoraIDE.\n" +
-      "Trabajas directamente sobre los archivos del workspace que se te muestran.\n\n" +
-      "### I. Protocolo de Razonamiento Quirúrgico (Thinking Protocol)\n" +
-      "1. Respeta Contratos e Invariantes: Identifica tipos, firmas públicas y no rompas código existente.\n" +
-      "2. Mapeo Preciso: Localiza el archivo y líneas exactas con `grep` o `read_file_range` antes de proponer cambios.\n" +
-      "3. Validación Previa: Verifica imports, tipos y balance de llaves antes de aplicar parches.\n\n" +
-      "### II. Economía Extrema de Tokens (Token Economy Guard)\n" +
-      "1. Anti-Bloat: PROHIBIDO usar `read_file` en archivos de más de 150 líneas. Usa obligatoriamente `read_file_range`.\n" +
-      "2. Cirugía con `apply_patch`: Modifica archivos existentes EXCLUSIVAMENTE con `apply_patch` (3-5 líneas de anclaje). NUNCA reescribas archivos completos con `write_file`.\n" +
-      "3. Batching: Agrupa múltiples lecturas o búsquedas independientes en una única llamada.\n" +
-      "4. Aislamiento Efímero: Usa `explore_subagent` cuando debas examinar múltiples archivos o logs extensos para mantener el historial principal limpio.\n" +
-      "5. Cero Duplicación: No reimprimas el código completo en la respuesta final de texto cuando ya lo aplicaste con `apply_patch`.\n\n" +
-      "### III. Salida Técnica y Regla de Oro de Cierre\n" +
-      "1. Al terminar la tarea técnica, emite SIEMPRE un resumen estructurado y claro: `- ruta/al/archivo:línea — acción realizada` + estado de verificación.\n" +
-      "2. OBLIGACIÓN DE RESPUESTA: NUNCA finalices en silencio ni con texto vacío tras ejecutar herramientas. Confirma siempre las operaciones efectuadas al usuario.\n" +
+      "Trabajas directamente sobre los archivos del workspace. Ejecuta la tarea hasta completarla y, " +
+      "al terminar, emite SIEMPRE un resumen conciso (archivos afectados con `ruta:línea` y estado de verificación); " +
+      "nunca finalices en silencio ni con texto vacío tras usar herramientas.\n" +
       thinkingNudge(thinkingLevel);
-
-    if (effectiveMode === "plan") {
-      sys +=
-        "\n\n## MODO DE PLANIFICACIÓN ACTIVO (PLAN MODE):\n" +
-        "El usuario ha activado el MODO PLAN. En este modo está ESTRICTAMENTE PROHIBIDO crear, editar o borrar archivos directamente con write_file o apply_patch, o ejecutar comandos bash destructivos.\n" +
-        "Tu objetivo es explorar el workspace usando herramientas de solo lectura (`read_file_range`, `grep`, `list_dir`) y generar un Plan de Implementación estructurado en Markdown que contenga:\n" +
-        "1. `# Implementation Plan: [Título]`\n" +
-        "2. `## 1. Análisis y Diagnóstico`\n" +
-        "3. `## 2. Cambios Propuestos (Archivo por Archivo con rutas exactas y desglose)`\n" +
-        "4. `## 3. Plan de Verificación y Pruebas`\n" +
-        "5. Preguntas abiertas o decisiones críticas que requieran validación previa.\n" +
-        "Presenta el plan completo de forma clara y directa en tu respuesta para que el usuario pueda revisarlo y pulsar 'Proceder a Implementar'.";
-    }
 
     if (projectRules) {
       sys += "\n\n" + projectRules;
@@ -909,7 +885,7 @@ export default function Chat({
 
     isAutoScrollEnabled.current = true;
 
-    const system = await buildSystem(effectiveMode);
+    const system = await buildSystem();
     let useMultiAgent = false;
     if (effectiveMode === "act") {
       if (multiAgentMode === "always") {
@@ -987,7 +963,9 @@ export default function Chat({
           {busy ? (
             <span className="chat-badge-busy">
               <span className="pulse-dot" />
-              {runningTool ? `${t.chat.toolsRunning} ${runningTool}` : t.chat.thinkingStreaming}
+              <span className="chat-badge-busy-label">
+                {runningTool ? `${t.chat.toolsRunning} ${runningTool}` : t.chat.thinkingStreaming}
+              </span>
             </span>
           ) : (
             <span className="chat-badge-ready">

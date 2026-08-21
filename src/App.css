@@ -1633,6 +1633,16 @@ svg {
   white-space: nowrap;
 }
 
+.chat-badge-busy-label {
+  display: inline-block;
+  min-width: 158px;
+  max-width: 158px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 .agent-mode-selector {
   display: inline-flex;
   align-items: center;
@@ -6980,26 +6990,6 @@ select:focus {
 .applied-success {
   background: #10b981 !important;
   border-color: #10b981 !important;
-}
-
-.btn-popout-window {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-muted);
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-popout-window:hover {
-  background: rgba(0, 200, 214, 0.15);
-  border-color: rgba(0, 200, 214, 0.35);
-  color: var(--cyan);
 }
 
 /* ==========================================================================

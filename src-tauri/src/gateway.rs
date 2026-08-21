@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use tauri_specta::Event;
 
-use crate::{ChatConfig, ChatDeltaEvent, ChatMessage, ChatUsage, ToolCall};
+use crate::{ChatConfig, ChatDeltaEvent, ChatMessage, ChatTextFinal, ChatUsage, ToolCall};
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -697,6 +697,7 @@ pub async fn openai_turn(
     let mut output_chars = 0usize;
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
     let mut global_extra_content: Option<Value> = None;
+    let mut sanitizer = StreamSanitizer::new();
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         if data == "[DONE]" {
@@ -730,11 +731,14 @@ pub async fn openai_turn(
                 if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                     if !content.is_empty() {
                         text.push_str(content);
-                        let _ = ChatDeltaEvent {
-                            chat_id: chat_id.to_string(),
-                            text: content.to_string(),
+                        let clean = sanitizer.push(content);
+                        if !clean.is_empty() {
+                            let _ = ChatDeltaEvent {
+                                chat_id: chat_id.to_string(),
+                                text: clean,
+                            }
+                            .emit(app);
                         }
-                        .emit(app);
                         output_chars += content.len();
                     }
                 }
@@ -825,6 +829,14 @@ pub async fn openai_turn(
 
     // Sanitize text and extract embedded DSML / XML tool calls (e.g. DeepSeek V3/R1 text outputs)
     sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, now_ts);
+    let _ = sanitizer.finish();
+    if tool_calls.is_empty() {
+        let _ = ChatTextFinal {
+            chat_id: chat_id.to_string(),
+            text: text.clone(),
+        }
+        .emit(app);
+    }
 
     Ok(TurnOutcome {
         usage,
@@ -835,39 +847,134 @@ pub async fn openai_turn(
 }
 
 static RE_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?invoke\s+name=["']([^"']+)["']\s*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
+    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?invoke\s+name=["']([^"']+)["']\s*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
 });
 
 static RE_PARAM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?parameter\s+name=["']([^"']+)["'][^>]*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?parameter\s*>"#).unwrap()
+    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?parameter\s+name=["']([^"']+)["'][^>]*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?parameter\s*>"#).unwrap()
 });
 
 static RE_TAG_JSON: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\s*tool_calls?\s*>(.*?)<\s*/\s*tool_calls?\s*>"#).unwrap()
+    regex::Regex::new(r#"(?is)<\s*tool_calls?\s*>(.*?)<\s*/\s*tool_calls?\s*>"#).unwrap()
 });
 
 static RE_CLEAN_TOOL_CALLS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>"#).unwrap()
+    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>"#).unwrap()
 });
 
 static RE_CLEAN_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\s*(?:\|\s*DSML\s*\|\s*)?invoke.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
+    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?invoke.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
+});
+
+static RE_CLEAN_THINKING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?is)<\s*(?:thought|thinking|reasoning|scratchpad|analysis)\b[^>]*>.*?<\s*/\s*(?:thought|thinking|reasoning|scratchpad|analysis)\s*>"#).unwrap()
 });
 
 static RE_CLEAN_STRAY_TAGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"<\s*/?\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls|invoke|parameter|DSML).*?>"#).unwrap()
+    regex::Regex::new(r#"(?i)<\s*/?\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls|invoke|parameter|DSML|thought|thinking|reasoning|scratchpad|analysis).*?>"#).unwrap()
 });
+
+static RE_OPEN_TOOL_TAG: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?i)<\s*(?:\|\s*DSML\s*\|\s*)?(?:function_calls|tool_calls|tool_call|invoke|parameter|thought|thinking|reasoning)\b|<\|tool_call\|>"#,
+    )
+    .unwrap()
+});
+
+static RE_PARTIAL_TAG_TAIL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"^</?[A-Za-z|_]{0,80}$"#).unwrap()
+});
+
+static RE_PIPE_TOOLCALL_PAIR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?s)<\|tool_call\|>.*?</\|tool_call\|>"#).unwrap()
+});
+
+static RE_STREAM_TOKENS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r#"\[(?:toolu_bdrk_[A-Za-z0-9]+|tool_use|tool_result|tool_call)\]|<\|(?:python_tag|fim_prefix|fim_suffix|fim_middle|endoftext)\|>"#,
+    )
+    .unwrap()
+});
+
+/// Sanea el texto EN STREAMING para que la sintaxis de tool-calls filtrada por
+/// el modelo (XML `<function_calls>/<invoke>/<parameter>`, DSML, `<|tool_call|>`)
+/// NUNCA llegue a la UI: elimina bloques cerrados y retiene los abiertos sin
+/// cerrar hasta que cierren (o se descarten al final del turno).
+struct StreamSanitizer {
+    pending: String,
+}
+
+impl StreamSanitizer {
+    fn new() -> Self {
+        Self { pending: String::new() }
+    }
+
+    fn push(&mut self, chunk: &str) -> String {
+        self.pending.push_str(chunk);
+        if self.pending.contains('<') || self.pending.contains('[') {
+            self.pending = RE_CLEAN_TOOL_CALLS
+                .replace_all(&self.pending, "")
+                .to_string();
+            self.pending = RE_CLEAN_INVOKE.replace_all(&self.pending, "").to_string();
+            self.pending = RE_PIPE_TOOLCALL_PAIR
+                .replace_all(&self.pending, "")
+                .to_string();
+            self.pending = RE_STREAM_TOKENS
+                .replace_all(&self.pending, "")
+                .to_string();
+        }
+        self.drain()
+    }
+
+    fn drain(&mut self) -> String {
+        let mut out = String::new();
+        loop {
+            if let Some(m) = RE_OPEN_TOOL_TAG.find(&self.pending) {
+                if m.start() == 0 {
+                    break;
+                }
+                out.push_str(&self.pending[..m.start()]);
+                self.pending.drain(..m.start());
+                break;
+            }
+            let hold = self.partial_tail_len();
+            let split = self.pending.len().saturating_sub(hold);
+            out.push_str(&self.pending[..split]);
+            self.pending.drain(..split);
+            break;
+        }
+        out
+    }
+
+    fn partial_tail_len(&self) -> usize {
+        if let Some(pos) = self.pending.rfind('<') {
+            let suffix = &self.pending[pos..];
+            if RE_PARTIAL_TAG_TAIL.is_match(suffix) {
+                return self.pending.len() - pos;
+            }
+        }
+        0
+    }
+
+    fn finish(self) -> String {
+        self.pending
+    }
+}
 
 fn sanitize_and_extract_embedded_tool_calls(
     text: &mut String,
     tool_calls: &mut Vec<ToolCall>,
     now_ts: u128,
 ) {
-    if text.contains("DSML")
-        || text.contains("invoke")
-        || text.contains("tool_call")
-        || text.contains("tool_calls")
-        || text.contains("<parameter")
+    let lower = text.to_lowercase();
+    if lower.contains("dsml")
+        || lower.contains("invoke")
+        || lower.contains("tool_call")
+        || lower.contains("function_calls")
+        || lower.contains("<parameter")
+        || lower.contains("thinking")
+        || lower.contains("reasoning")
+        || lower.contains("thought")
     {
         // 1. Extract DSML and standard XML invoke tags (<invoke name="...">...)
         for cap in RE_INVOKE.captures_iter(text) {
@@ -946,7 +1053,9 @@ fn sanitize_and_extract_embedded_tool_calls(
         // 3. Clean all DSML, XML, & tool_call tags from user-facing text
         let mut cleaned = RE_CLEAN_TOOL_CALLS.replace_all(text, "").to_string();
         cleaned = RE_CLEAN_INVOKE.replace_all(&cleaned, "").to_string();
+        cleaned = RE_CLEAN_THINKING.replace_all(&cleaned, "").to_string();
         cleaned = RE_CLEAN_STRAY_TAGS.replace_all(&cleaned, "").to_string();
+        cleaned = RE_STREAM_TOKENS.replace_all(&cleaned, "").to_string();
         *text = cleaned.trim().to_string();
     }
 }
@@ -1200,6 +1309,7 @@ pub async fn anthropic_turn(
     let mut text = String::new();
     let mut output_chars = 0usize;
     let mut tool_blocks: Vec<(String, String, String)> = Vec::new();
+    let mut sanitizer = StreamSanitizer::new();
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         let v: Value = match serde_json::from_str(data) {
@@ -1240,11 +1350,14 @@ pub async fn anthropic_turn(
                     if dt == "text_delta" {
                         if let Some(t) = delta.get("text").and_then(|x| x.as_str()) {
                             text.push_str(t);
-                            let _ = ChatDeltaEvent {
-                                chat_id: chat_id.to_string(),
-                                text: t.to_string(),
+                            let clean = sanitizer.push(t);
+                            if !clean.is_empty() {
+                                let _ = ChatDeltaEvent {
+                                    chat_id: chat_id.to_string(),
+                                    text: clean,
+                                }
+                                .emit(app);
                             }
-                            .emit(app);
                             output_chars += t.len();
                         }
                     } else if dt == "thinking_delta" {
@@ -1280,7 +1393,7 @@ pub async fn anthropic_turn(
     if usage.output_tokens == 0 && output_chars > 0 {
         usage.output_tokens = (output_chars / 4).max(1) as u32;
     }
-    let tool_calls: Vec<ToolCall> = tool_blocks
+    let mut tool_calls: Vec<ToolCall> = tool_blocks
         .into_iter()
         .map(|(id, name, arguments)| ToolCall {
             id,
@@ -1289,6 +1402,19 @@ pub async fn anthropic_turn(
             extra_content: None,
         })
         .collect();
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, now_ts);
+    let _ = sanitizer.finish();
+    if tool_calls.is_empty() {
+        let _ = ChatTextFinal {
+            chat_id: chat_id.to_string(),
+            text: text.clone(),
+        }
+        .emit(app);
+    }
     Ok(TurnOutcome {
         usage,
         text,
@@ -1493,6 +1619,23 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_and_extract_uppercase_and_thinking_and_tokens() {
+        let mut text = "Listo.\n<THINKING>razonamiento interno</THINKING>\n<FUNCTION_CALLS><INVOKE name=\"read_file\"><PARAMETER name=\"path\" string=\"true\">a.txt</PARAMETER></INVOKE></FUNCTION_CALLS>\n[toolu_bdrk_01AbC] Fin.".to_string();
+        let mut tool_calls = Vec::new();
+        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 42);
+
+        assert!(text.contains("Listo."));
+        assert!(text.contains("Fin."));
+        assert!(!text.to_lowercase().contains("function_calls"));
+        assert!(!text.to_lowercase().contains("thinking"));
+        assert!(!text.contains("toolu_bdrk"));
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "read_file");
+        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
+        assert_eq!(args["path"], "a.txt");
+    }
+
+    #[test]
     fn test_find_sse_boundary_lf_and_crlf() {
         let lf_data = b"data: {\"test\": 1}\n\ndata: {\"test\": 2}\n\n";
         assert_eq!(find_sse_boundary(lf_data), Some((17, 2)));
@@ -1502,6 +1645,49 @@ mod tests {
 
         let incomplete = b"data: {\"test\": 1}\r\n";
         assert_eq!(find_sse_boundary(incomplete), None);
+    }
+
+    #[test]
+    fn test_stream_sanitizer_strips_complete_xml_block() {
+        let mut s = StreamSanitizer::new();
+        let out = s.push(
+            "Voy a leer.\n<function_calls><invoke name=\"read_file\"><parameter name=\"path\" string=\"true\">C:\\x\\lib.rs</parameter></invoke></function_calls>\nListo.",
+        );
+        assert_eq!(out, "Voy a leer.\n\nListo.");
+    }
+
+    #[test]
+    fn test_stream_sanitizer_holds_unclosed_block_and_releases_prose() {
+        let mut s = StreamSanitizer::new();
+        assert_eq!(s.push("Antes.\n<function_calls><invoke name=\"read_file\">"), "Antes.\n");
+        assert_eq!(s.push("<parameter name=\"path\">a</parameter></invoke>"), "");
+        assert_eq!(s.push("</function_calls>\nDespués."), "\nDespués.");
+    }
+
+    #[test]
+    fn test_stream_sanitizer_holds_partial_tag_tail() {
+        let mut s = StreamSanitizer::new();
+        assert_eq!(s.push("fin del texto <inv"), "fin del texto ");
+        assert_eq!(s.push("oke name=\"read_file\"><parameter name=\"path\">x"), "");
+        assert_eq!(s.push("</parameter></invoke>"), "");
+    }
+
+    #[test]
+    fn test_stream_sanitizer_strips_tokens_and_pipe_pairs() {
+        let mut s = StreamSanitizer::new();
+        assert_eq!(s.push("a [toolu_bdrk_01AbC] b"), "a  b");
+        assert_eq!(s.push("<|tool_call|>{\"name\":\"x\"}</|tool_call|>c"), "c");
+        assert_eq!(s.push("<|python_tag|>print(1)"), "print(1)");
+    }
+
+    #[test]
+    fn test_stream_sanitizer_strips_two_consecutive_blocks() {
+        let mut s = StreamSanitizer::new();
+        let b1 = "<function_calls> <invoke name=\"read_file\"> <parameter name=\"path\" string=\"true\">README.md</parameter> </invoke> <invoke name=\"read_file\"> <parameter name=\"path\" string=\"true\">docs/02_ARQUITECTURA_TECNICA.md</parameter> </invoke> </function_calls>";
+        let b2 = "<function_calls> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">.</parameter> </invoke> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">core</parameter> </invoke> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">alpha</parameter> </invoke> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">execution</parameter> </invoke> </function_calls>";
+        assert_eq!(s.push(b1), "");
+        assert_eq!(s.push(b2), "");
+        assert_eq!(s.push("Resumen final."), "Resumen final.");
     }
 
     #[test]

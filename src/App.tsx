@@ -56,6 +56,7 @@ import {
   makeSession,
   sanitizeMessages,
   deriveTitle,
+  loadSessionsFromStore,
 } from "./sessions";
 
 import type {
@@ -318,32 +319,30 @@ function App() {
 
   // Chat history state (persisted in localStorage), workspace incluido por sesión.
   const [sessionState, setSessionState] = useState(initSessions);
-  // Focus on detached session if opened with ?sessionId=...
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const targetSessionId = params.get("sessionId");
-      if (targetSessionId) {
-        setSessionState((prev) => {
-          const exists = prev.sessions.some((s) => s.id === targetSessionId);
-          if (exists) {
-            const nextTabs = prev.openTabIds.includes(targetSessionId)
-              ? prev.openTabIds
-              : [targetSessionId, ...prev.openTabIds];
-            saveOpenTabIds(nextTabs);
-            persistActiveSessionId(targetSessionId);
-            return { ...prev, openTabIds: nextTabs, activeId: targetSessionId };
-          }
-          return prev;
-        });
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
   const sessions = sessionState.sessions;
   const openTabIds = sessionState.openTabIds || [sessionState.activeId];
   const activeSessionId = sessionState.activeId;
+
+  // Hidratación desde SQLite (fuente de verdad durable): si localStorage se
+  // perdió/limpió o está truncado, restaura el historial completo del store.
+  useEffect(() => {
+    let cancelled = false;
+    loadSessionsFromStore()
+      .then((stored) => {
+        if (cancelled || !stored || stored.length === 0) return;
+        setSessionState((prev) => {
+          const useStore = prev.sessions.length === 0 || stored.length > prev.sessions.length;
+          if (!useStore) return prev;
+          const nextTabs = stored.slice(0, 3).map((s) => s.id);
+          const nextActive = nextTabs[0] ?? stored[0]?.id ?? "";
+          return { sessions: stored, openTabIds: nextTabs, activeId: nextActive };
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openSessions = useMemo(() => {
     const map = new Map(sessions.map((s) => [s.id, s]));

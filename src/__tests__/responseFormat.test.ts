@@ -35,6 +35,16 @@ describe("formatResponse — sintaxis de tool-calls filtrada", () => {
     expect(out).not.toContain("invoke");
   });
 
+  it("elimina el bloque reportado con read_file/grep y patterns con | (fallos de tools)", () => {
+    const raw = `<function_calls> <invoke name="read_file"> <parameter name="path" string="true">C:\\Users\\lewis\\Projects\\ai_quant_trading\\capital_regime.py</parameter> </invoke> <invoke name="read_file"> <parameter name="path" string="true">C:\\Users\\lewis\\Projects\\ai_quant_trading\\core\\config.py</parameter> </invoke> <invoke name="grep"> <parameter name="pattern" string="true">comisión|comision|commission|fee|currency|FX|fx_rate|eur_usd|EUR_USD|conversion|divisa</parameter> <parameter name="path" string="true">C:\\Users\\lewis\\Projects\\ai_quant_trading</parameter> </invoke> <invoke name="grep"> <parameter name="pattern" string="true">Guerrilla|Guerra|guerrilla|Tier 1|Tier 2|tier_1|tier_2|TIER</parameter> <parameter name="path" string="true">C:\\Users\\lewis\\Projects\\ai_quant_trading</parameter> </invoke> </function_calls>`;
+    const out = formatResponse(raw);
+    expect(out).not.toContain("function_calls");
+    expect(out).not.toContain("invoke");
+    expect(out).not.toContain("read_file");
+    expect(out).not.toContain("capital_regime");
+    expect(out).toBe(TOOL_ONLY_NOTE);
+  });
+
   it("elimina DSML tool_calls e invoke con parámetros", () => {
     const raw = "Voy a leer:\n<|DSML|tool_calls>\n<|DSML|invoke name=\"read_file\"><parameter name=\"path\">a.ts</parameter></|DSML|invoke>\n</|DSML|tool_calls>\nListo.";
     const out = formatResponse(raw);

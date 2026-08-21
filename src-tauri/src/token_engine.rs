@@ -161,7 +161,15 @@ impl ContextComposer {
         counter: &TokenCounter,
         msgs: &'a [ChatMessage],
     ) -> Vec<ChatMessage> {
-        let quota = self.quota_tokens(self.quotas.history);
+        // Cuota de historia con TECHO DURO: aunque la ventana de contexto sea
+        // gigante (p. ej. 1M), nunca se envían más de 48k tokens de historial.
+        // Los modelos degradan su calidad con contextos enormes y el tokenizer
+        // local (cl100k) infra-cuenta frente al del proveedor (DeepSeek), por
+        // lo que una cuota proporcional sin techo dejaba pasar wires de 170k+.
+        let quota = self.quota_tokens(self.quotas.history).min(48_000);
+        // Backstop por caracteres (~4 chars/token) como segunda red de
+        // seguridad cuando el conteo por tokens local subestime el real.
+        const MAX_HISTORY_CHARS: usize = 160_000;
 
         // Agrupar mensajes en bloques atómicos indivisibles:
         // - Cada llamada de asistente con sus respuestas de herramientas forma un bloque atómico.
@@ -189,6 +197,7 @@ impl ContextComposer {
 
         let mut out: Vec<ChatMessage> = Vec::new();
         let mut used = 0usize;
+        let mut used_chars = 0usize;
         let mut skipped = 0usize;
 
         for block in atomic_blocks.iter().rev() {
@@ -204,12 +213,18 @@ impl ContextComposer {
                     s
                 })
                 .sum();
+            let block_chars: usize = block
+                .iter()
+                .map(|m| m.content.chars().count() + 16)
+                .sum();
 
-            if used + block_tokens <= quota || out.is_empty() {
+            let fits = used + block_tokens <= quota && used_chars + block_chars <= MAX_HISTORY_CHARS;
+            if fits || out.is_empty() {
                 for m in block.iter().rev() {
                     out.push(m.clone());
                 }
                 used += block_tokens;
+                used_chars += block_chars;
             } else {
                 skipped += block.len();
             }
@@ -220,7 +235,7 @@ impl ContextComposer {
             out.insert(
                 0,
                 ChatMessage {
-                    role: "system".into(),
+                    role: "user".into(),
                     content: format!(
                         "[CompactBoundary: {skipped} mensajes anteriores omitidos por presupuesto de historia]"
                     ),
@@ -316,6 +331,49 @@ mod tests {
                 assert_eq!(fitted[idx + 1].role, "tool");
             }
         }
+    }
+
+    #[test]
+    fn history_fit_caps_huge_context_window() {
+        let c = TokenCounter::new();
+        // Ventana de 1M tokens: sin el techo duro, la cuota de historia sería
+        // de 225k tokens y dejaría pasar wires gigantes (el bug de 178k de
+        // DeepSeek). Con el techo debe quedarse por debajo de ~50k tokens.
+        let composer = ContextComposer::for_window(1_000_000, None);
+        let mut msgs: Vec<ChatMessage> = Vec::new();
+        for i in 0..60 {
+            msgs.push(ChatMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                images: vec![],
+                tool_calls: Some(vec![crate::ToolCall {
+                    id: format!("call_{i}"),
+                    name: "read_file".into(),
+                    arguments: format!("{{\"path\":\"f{i}.rs\"}}"),
+                    extra_content: None,
+                }]),
+                tool_call_id: None,
+                reasoning: None,
+            });
+            msgs.push(ChatMessage {
+                role: "tool".into(),
+                content: "fn example() {}\n".repeat(400),
+                images: vec![],
+                tool_calls: None,
+                tool_call_id: Some(format!("call_{i}")),
+                reasoning: None,
+            });
+        }
+        let fitted = composer.fit_history(&c, &msgs);
+        let total_tokens = fitted
+            .iter()
+            .map(|m| c.count(&m.content) + 4)
+            .sum::<usize>();
+        assert!(
+            total_tokens <= 55_000,
+            "historia sin acotar: {total_tokens} tokens"
+        );
+        assert!(fitted.last().unwrap().content.contains("fn example"));
     }
 
     #[test]
