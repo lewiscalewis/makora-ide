@@ -761,7 +761,20 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     done = true;
     unlistenDelta?.();
     unlistenTextFinal?.();
-    update(sessionId, () => ({ busy: false, abortRequested: false }));
+    update(sessionId, (r) => ({
+      busy: false,
+      abortRequested: false,
+      runningTool: null,
+      // Cierra cualquier actividad que haya quedado "running" sin tool-end
+      // (p. ej. herramienta interrumpida o evento perdido): evita el indicador
+      // de "herramienta ejecutándose" congelado tras cerrar el turno.
+      turnActivities: {
+        ...r.turnActivities,
+        [assistantId]: (r.turnActivities[assistantId] ?? []).map((a) =>
+          a.ok === null ? { ...a, ok: false } : a,
+        ),
+      },
+    }));
   }
 }
 

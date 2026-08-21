@@ -121,11 +121,32 @@ static RE_TAG_JSON: LazyLock<Regex> = LazyLock::new(|| {
 // Limpieza de bloques cerrados (compartida streaming/final)
 // ======================================================================
 
+/// Normaliza variantes de ancho completo a ASCII. DeepSeek emite a veces DSML
+/// con tuberías de ancho completo `｜` (U+FF5C) en lugar de `|`, y `＜`/`＞` en
+/// lugar de `<`/`>`. Sin esta normalización los regex no casan y el XML crudo
+/// se filtra al contenido (causa raíz de los "petes" recurrentes).
+fn normalize_syntax(text: &str) -> String {
+    if !text.contains(['｜', '＜', '＞', '［', '］']) {
+        return text.to_string();
+    }
+    text.chars()
+        .map(|c| match c {
+            '｜' => '|',
+            '＜' => '<',
+            '＞' => '>',
+            '［' => '[',
+            '］' => ']',
+            _ => c,
+        })
+        .collect()
+}
+
 /// Elimina del texto todos los bloques cerrados de tool-syntax y los tokens
 /// inline. NO toca bloques abiertos sin cerrar (eso lo gestiona el filtro de
 /// streaming reteniéndolos hasta su cierre).
 fn strip_closed_blocks(text: &str) -> String {
-    let mut s = RE_TOOL_CALLS_BLOCK.replace_all(text, "").to_string();
+    let normalized = normalize_syntax(text);
+    let mut s = RE_TOOL_CALLS_BLOCK.replace_all(&normalized, "").to_string();
     s = RE_INVOKE_BLOCK.replace_all(&s, "").to_string();
     s = RE_THINKING_BLOCK.replace_all(&s, "").to_string();
     s = RE_PIPE_BLOCK.replace_all(&s, "").to_string();
@@ -217,6 +238,7 @@ pub struct CleanedText {
 /// Extrae tool-calls embebidas (XML/DSML/JSON) del texto COMPLETO del turno y
 /// devuelve el texto limpio. Se usa solo al cierre del turno.
 pub fn extract_embedded_tool_calls(text: &str, now_ts: u128) -> CleanedText {
+    let text = normalize_syntax(text);
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let lower = text.to_lowercase();
     let has_tool_syntax = lower.contains("dsml")
@@ -230,7 +252,7 @@ pub fn extract_embedded_tool_calls(text: &str, now_ts: u128) -> CleanedText {
 
     if has_tool_syntax {
         // 1. `<invoke name="…">…</invoke>` (XML estándar y DSML)
-        for cap in RE_INVOKE.captures_iter(text) {
+        for cap in RE_INVOKE.captures_iter(&text) {
             let name = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
             let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
             let mut args_map = serde_json::Map::new();
@@ -251,7 +273,7 @@ pub fn extract_embedded_tool_calls(text: &str, now_ts: u128) -> CleanedText {
         }
 
         // 2. `<tool_call>` / `<tool_calls>` con JSON
-        for cap in RE_TAG_JSON.captures_iter(text) {
+        for cap in RE_TAG_JSON.captures_iter(&text) {
             if let Some(body) = cap.get(1) {
                 if let Ok(v) = serde_json::from_str::<Value>(body.as_str().trim()) {
                     let items: Vec<Value> = match v {
@@ -284,7 +306,7 @@ pub fn extract_embedded_tool_calls(text: &str, now_ts: u128) -> CleanedText {
     }
 
     // 3. Limpiar el texto final (bloques + etiquetas sueltas).
-    let mut cleaned = strip_closed_blocks(text);
+    let mut cleaned = strip_closed_blocks(&text);
     if has_tool_syntax {
         cleaned = RE_STRAY_TAG.replace_all(&cleaned, "").to_string();
     }
@@ -369,5 +391,28 @@ mod tests {
         assert!(!out.text.contains("toolu_bdrk"));
         assert_eq!(out.tool_calls.len(), 1);
         assert_eq!(out.tool_calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn extract_fullwidth_dsml_pipes() {
+        // DeepSeek emite DSML con tuberías de ancho completo ｜ (U+FF5C).
+        let text = "<\u{FF5C}DSML\u{FF5C}tool_calls>\n<\u{FF5C}DSML\u{FF5C}invoke name=\"read_file_range\">\n<\u{FF5C}DSML\u{FF5C}parameter name=\"path\" string=\"true\">serve/ollama_modelfile.txt</\u{FF5C}DSML\u{FF5C}parameter>\n<\u{FF5C}DSML\u{FF5C}parameter name=\"start_line\" string=\"false\">1</\u{FF5C}DSML\u{FF5C}parameter>\n<\u{FF5C}DSML\u{FF5C}parameter name=\"end_line\" string=\"false\">30</\u{FF5C}DSML\u{FF5C}parameter>\n</\u{FF5C}DSML\u{FF5C}invoke>\n</\u{FF5C}DSML\u{FF5C}tool_calls>";
+        let out = extract_embedded_tool_calls(text, 42);
+        assert_eq!(out.text, "");
+        assert_eq!(out.tool_calls.len(), 1);
+        assert_eq!(out.tool_calls[0].name, "read_file_range");
+        let args: Value = serde_json::from_str(&out.tool_calls[0].arguments).unwrap();
+        assert_eq!(args["path"], "serve/ollama_modelfile.txt");
+        assert_eq!(args["start_line"], 1);
+        assert_eq!(args["end_line"], 30);
+    }
+
+    #[test]
+    fn stream_filter_normalizes_fullwidth_dsml() {
+        let mut f = StreamFilter::new();
+        let xml = "<\u{FF5C}DSML\u{FF5C}tool_calls><\u{FF5C}DSML\u{FF5C}invoke name=\"read_file_range\"><\u{FF5C}DSML\u{FF5C}parameter name=\"path\">x.txt</\u{FF5C}DSML\u{FF5C}parameter></\u{FF5C}DSML\u{FF5C}invoke></\u{FF5C}DSML\u{FF5C}tool_calls>";
+        let out = f.push(xml);
+        assert!(!out.contains("DSML"), "DSML crudo filtrado: {out}");
+        assert!(!out.contains("read_file_range"), "invoke crudo filtrado: {out}");
     }
 }

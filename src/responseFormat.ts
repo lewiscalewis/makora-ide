@@ -193,6 +193,12 @@ export function stripToolSyntax(t: string): string {
 
 export function cleanUnicode(t: string): string {
   let s = t.replace(/\r\n?/g, "\n");
+  s = s
+    .replace(/[\uFF5C]/g, "|")
+    .replace(/[\uFF1C]/g, "<")
+    .replace(/[\uFF1E]/g, ">")
+    .replace(/[\uFF3B]/g, "[")
+    .replace(/[\uFF3D]/g, "]");
   s = s.replace(ANSI_RE, "");
   s = s
     .replace(CONTROL_CHARS, "")
