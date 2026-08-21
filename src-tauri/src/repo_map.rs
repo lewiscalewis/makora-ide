@@ -13,7 +13,7 @@ static CACHE: Mutex<Option<HashMap<String, (u64, String)>>> = Mutex::new(None);
 const TTL_SECS: u64 = 120;
 const MAX_ENTRIES: u32 = 260;
 const MAX_DEPTH: usize = 3;
-const MAX_CHARS: usize = 6000;
+const MAX_CHARS: usize = 4000;
 
 fn guard<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())

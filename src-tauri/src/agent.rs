@@ -2090,7 +2090,7 @@ async fn execute_tool_inner(
     match name {
         "read_file" => {
             let path = resolve_path(folders, &s("path"), false)?;
-            read_file_guarded(&path, 15000)
+            read_file_guarded(&path, 12000)
         }
         "read_file_range" => {
             let path = resolve_path(folders, &s("path"), false)?;
@@ -2186,7 +2186,7 @@ async fn execute_tool_inner(
             if out.is_empty() {
                 out = "sin coincidencias".into();
             }
-            Ok(truncate_tool_output("grep", &out, 3000))
+            Ok(truncate_tool_output("grep", &out, 2500))
         }
         "repo_map_query" => {
             let q = s("query");
