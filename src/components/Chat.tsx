@@ -321,7 +321,7 @@ function ThinkingDropdown({
         <ChevronDown size={11} className="ag-meta-chevron" />
       </summary>
       <div className="ag-meta-content">
-        <pre className="ag-thinking-pre font-mono">{text}</pre>
+        <pre className="ag-thinking-pre font-mono">{formatResponse(text)}</pre>
       </div>
     </details>
   );

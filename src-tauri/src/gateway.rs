@@ -698,6 +698,11 @@ pub async fn openai_turn(
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
     let mut global_extra_content: Option<Value> = None;
     let mut sanitizer = StreamSanitizer::new();
+    // El thinking/reasoning también puede traer sintaxis de tool-calls filtrada
+    // (el modelo "piensa" las llamadas antes de emitirlas). Se sanea SOLO la
+    // vista (`thinking-delta`); `reasoning` se conserva crudo para el eco que
+    // exige DeepSeek en turnos siguientes.
+    let mut reasoning_sanitizer = StreamSanitizer::new();
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         if data == "[DONE]" {
@@ -719,13 +724,16 @@ pub async fn openai_turn(
                 if let Some(rc) = rc_opt {
                     if !rc.is_empty() {
                         reasoning.push_str(rc);
-                        let _ = app.emit(
-                            "thinking-delta",
-                            ThinkingDelta {
-                                chat_id: chat_id.to_string(),
-                                text: rc.to_string(),
-                            },
-                        );
+                        let clean = reasoning_sanitizer.push(rc);
+                        if !clean.is_empty() {
+                            let _ = app.emit(
+                                "thinking-delta",
+                                ThinkingDelta {
+                                    chat_id: chat_id.to_string(),
+                                    text: clean,
+                                },
+                            );
+                        }
                     }
                 }
                 if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
@@ -1310,6 +1318,7 @@ pub async fn anthropic_turn(
     let mut output_chars = 0usize;
     let mut tool_blocks: Vec<(String, String, String)> = Vec::new();
     let mut sanitizer = StreamSanitizer::new();
+    let mut reasoning_sanitizer = StreamSanitizer::new();
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         let v: Value = match serde_json::from_str(data) {
@@ -1362,13 +1371,16 @@ pub async fn anthropic_turn(
                         }
                     } else if dt == "thinking_delta" {
                         if let Some(t) = delta.get("thinking").and_then(|x| x.as_str()) {
-                            let _ = app.emit(
-                                "thinking-delta",
-                                ThinkingDelta {
-                                    chat_id: chat_id.to_string(),
-                                    text: t.to_string(),
-                                },
-                            );
+                            let clean = reasoning_sanitizer.push(t);
+                            if !clean.is_empty() {
+                                let _ = app.emit(
+                                    "thinking-delta",
+                                    ThinkingDelta {
+                                        chat_id: chat_id.to_string(),
+                                        text: clean,
+                                    },
+                                );
+                            }
                         }
                     } else if dt == "input_json_delta" {
                         if let Some(p) = delta.get("partial_json").and_then(|x| x.as_str()) {
@@ -1688,6 +1700,16 @@ mod tests {
         assert_eq!(s.push(b1), "");
         assert_eq!(s.push(b2), "");
         assert_eq!(s.push("Resumen final."), "Resumen final.");
+    }
+
+    #[test]
+    fn test_stream_sanitizer_strips_read_file_range_xml() {
+        let mut s = StreamSanitizer::new();
+        let xml = "<function_calls>\n<invoke name=\"read_file_range\">\n<parameter name=\"end_line\" string=\"false\">85</parameter>\n<parameter name=\"path\" string=\"true\">scripts/check_env.py</parameter>\n<parameter name=\"start_line\" string=\"false\">50</parameter>\n</invoke>\n<invoke name=\"read_file_range\">\n<parameter name=\"end_line\" string=\"false\">113</parameter>\n<parameter name=\"path\" string=\"true\">scripts/check_env.py</parameter>\n<parameter name=\"start_line\" string=\"false\">85</parameter>\n</invoke>\n</function_calls>";
+        let out = s.push(xml);
+        assert!(!out.contains("function_calls"), "xml crudo filtrado: {out}");
+        assert!(!out.contains("invoke"), "xml crudo filtrado: {out}");
+        assert!(!out.contains("read_file_range"), "xml crudo filtrado: {out}");
     }
 
     #[test]
