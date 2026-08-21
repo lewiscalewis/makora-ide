@@ -4,6 +4,7 @@ mod gateway;
 mod history;
 mod mcp;
 mod multiagent;
+mod output_sanitizer;
 mod repo_map;
 mod symbol_index;
 mod terminal;

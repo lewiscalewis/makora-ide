@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+﻿use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -35,7 +35,7 @@ pub static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLo
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build()
         .unwrap_or_else(|e| {
-            eprintln!("[HTTP_CLIENT] Fallo en configuración avanzada: {e}, usando cliente seguro con timeout");
+            eprintln!("[HTTP_CLIENT] Fallo en configuraciÃ³n avanzada: {e}, usando cliente seguro con timeout");
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(900))
                 .build()
@@ -227,7 +227,7 @@ fn to_wire(m: &ChatMessage, cfg: &ChatConfig) -> Value {
         obj["tool_call_id"] = json!(id);
     }
     // opencode transform.ts: DeepSeek exige reasoning en TODOS los assistant
-    // (se envía vacío si no hay, para evitar el 400 en multi-turno).
+    // (se envÃ­a vacÃ­o si no hay, para evitar el 400 en multi-turno).
     if m.role == "assistant" && requires_reasoning_echo(cfg) {
         obj["reasoning_content"] = json!(m.reasoning.as_deref().unwrap_or(""));
     }
@@ -429,10 +429,10 @@ fn classify_http_error(status: reqwest::StatusCode, raw_body: &str) -> String {
     };
 
     match status.as_u16() {
-        401 => format!("Error de Autenticación (401): API Key no válida o revocada. Revisa la clave en Configuración.\nDetalles: {detail}"),
-        403 => format!("Acceso Denegado (403): Tu API Key no tiene permisos para acceder a este modelo o región.\nDetalles: {detail}"),
+        401 => format!("Error de AutenticaciÃ³n (401): API Key no vÃ¡lida o revocada. Revisa la clave en ConfiguraciÃ³n.\nDetalles: {detail}"),
+        403 => format!("Acceso Denegado (403): Tu API Key no tiene permisos para acceder a este modelo o regiÃ³n.\nDetalles: {detail}"),
         404 => format!("Modelo no encontrado (404): El identificador de modelo o endpoint no existe en este proveedor.\nDetalles: {detail}"),
-        429 => format!("Límite de Cuota o Saldo Agotado (429): Se ha superado el rate limit o tu cuenta no dispone de créditos suficientes.\nDetalles: {detail}"),
+        429 => format!("LÃ­mite de Cuota o Saldo Agotado (429): Se ha superado el rate limit o tu cuenta no dispone de crÃ©ditos suficientes.\nDetalles: {detail}"),
         500..=599 => format!("Fallo Temporal del Proveedor ({status}): El servidor de IA experimenta sobrecarga o mantenimiento. Intenta de nuevo en unos instantes.\nDetalles: {detail}"),
         _ => format!("HTTP {status}: {detail}"),
     }
@@ -697,12 +697,12 @@ pub async fn openai_turn(
     let mut output_chars = 0usize;
     let mut tcs: BTreeMap<u32, (String, String, String, Option<Value>)> = BTreeMap::new();
     let mut global_extra_content: Option<Value> = None;
-    let mut sanitizer = StreamSanitizer::new();
-    // El thinking/reasoning también puede traer sintaxis de tool-calls filtrada
+    let mut sanitizer = crate::output_sanitizer::StreamFilter::new();
+    // El thinking/reasoning tambiÃ©n puede traer sintaxis de tool-calls filtrada
     // (el modelo "piensa" las llamadas antes de emitirlas). Se sanea SOLO la
     // vista (`thinking-delta`); `reasoning` se conserva crudo para el eco que
     // exige DeepSeek en turnos siguientes.
-    let mut reasoning_sanitizer = StreamSanitizer::new();
+    let mut reasoning_sanitizer = crate::output_sanitizer::StreamFilter::new();
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         if data == "[DONE]" {
@@ -836,236 +836,23 @@ pub async fn openai_turn(
         .collect();
 
     // Sanitize text and extract embedded DSML / XML tool calls (e.g. DeepSeek V3/R1 text outputs)
-    sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, now_ts);
-    let _ = sanitizer.finish();
+    let cleaned = crate::output_sanitizer::extract_embedded_tool_calls(&text, now_ts);
+    tool_calls.extend(cleaned.tool_calls);
+    let _ = sanitizer.flush();
     if tool_calls.is_empty() {
         let _ = ChatTextFinal {
             chat_id: chat_id.to_string(),
-            text: text.clone(),
+            text: cleaned.text.clone(),
         }
         .emit(app);
     }
 
     Ok(TurnOutcome {
         usage,
-        text,
+        text: cleaned.text,
         tool_calls,
         reasoning,
     })
-}
-
-static RE_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?invoke\s+name=["']([^"']+)["']\s*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
-});
-
-static RE_PARAM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?parameter\s+name=["']([^"']+)["'][^>]*>(.*?)<\s*/\s*(?:\|\s*DSML\s*\|\s*)?parameter\s*>"#).unwrap()
-});
-
-static RE_TAG_JSON: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?is)<\s*tool_calls?\s*>(.*?)<\s*/\s*tool_calls?\s*>"#).unwrap()
-});
-
-static RE_CLEAN_TOOL_CALLS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls)\s*>"#).unwrap()
-});
-
-static RE_CLEAN_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?is)<\s*(?:\|\s*DSML\s*\|\s*)?invoke.*?<\s*/\s*(?:\|\s*DSML\s*\|\s*)?invoke\s*>"#).unwrap()
-});
-
-static RE_CLEAN_THINKING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?is)<\s*(?:thought|thinking|reasoning|scratchpad|analysis)\b[^>]*>.*?<\s*/\s*(?:thought|thinking|reasoning|scratchpad|analysis)\s*>"#).unwrap()
-});
-
-static RE_CLEAN_STRAY_TAGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?i)<\s*/?\s*(?:\|\s*DSML\s*\|\s*)?(?:tool_calls?|function_calls|invoke|parameter|DSML|thought|thinking|reasoning|scratchpad|analysis).*?>"#).unwrap()
-});
-
-static RE_OPEN_TOOL_TAG: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(
-        r#"(?i)<\s*(?:\|\s*DSML\s*\|\s*)?(?:function_calls|tool_calls|tool_call|invoke|parameter|thought|thinking|reasoning)\b|<\|tool_call\|>"#,
-    )
-    .unwrap()
-});
-
-static RE_PARTIAL_TAG_TAIL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"^</?[A-Za-z|_]{0,80}$"#).unwrap()
-});
-
-static RE_PIPE_TOOLCALL_PAIR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?s)<\|tool_call\|>.*?</\|tool_call\|>"#).unwrap()
-});
-
-static RE_STREAM_TOKENS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(
-        r#"\[(?:toolu_bdrk_[A-Za-z0-9]+|tool_use|tool_result|tool_call)\]|<\|(?:python_tag|fim_prefix|fim_suffix|fim_middle|endoftext)\|>"#,
-    )
-    .unwrap()
-});
-
-/// Sanea el texto EN STREAMING para que la sintaxis de tool-calls filtrada por
-/// el modelo (XML `<function_calls>/<invoke>/<parameter>`, DSML, `<|tool_call|>`)
-/// NUNCA llegue a la UI: elimina bloques cerrados y retiene los abiertos sin
-/// cerrar hasta que cierren (o se descarten al final del turno).
-struct StreamSanitizer {
-    pending: String,
-}
-
-impl StreamSanitizer {
-    fn new() -> Self {
-        Self { pending: String::new() }
-    }
-
-    fn push(&mut self, chunk: &str) -> String {
-        self.pending.push_str(chunk);
-        if self.pending.contains('<') || self.pending.contains('[') {
-            self.pending = RE_CLEAN_TOOL_CALLS
-                .replace_all(&self.pending, "")
-                .to_string();
-            self.pending = RE_CLEAN_INVOKE.replace_all(&self.pending, "").to_string();
-            self.pending = RE_PIPE_TOOLCALL_PAIR
-                .replace_all(&self.pending, "")
-                .to_string();
-            self.pending = RE_STREAM_TOKENS
-                .replace_all(&self.pending, "")
-                .to_string();
-        }
-        self.drain()
-    }
-
-    fn drain(&mut self) -> String {
-        let mut out = String::new();
-        loop {
-            if let Some(m) = RE_OPEN_TOOL_TAG.find(&self.pending) {
-                if m.start() == 0 {
-                    break;
-                }
-                out.push_str(&self.pending[..m.start()]);
-                self.pending.drain(..m.start());
-                break;
-            }
-            let hold = self.partial_tail_len();
-            let split = self.pending.len().saturating_sub(hold);
-            out.push_str(&self.pending[..split]);
-            self.pending.drain(..split);
-            break;
-        }
-        out
-    }
-
-    fn partial_tail_len(&self) -> usize {
-        if let Some(pos) = self.pending.rfind('<') {
-            let suffix = &self.pending[pos..];
-            if RE_PARTIAL_TAG_TAIL.is_match(suffix) {
-                return self.pending.len() - pos;
-            }
-        }
-        0
-    }
-
-    fn finish(self) -> String {
-        self.pending
-    }
-}
-
-fn sanitize_and_extract_embedded_tool_calls(
-    text: &mut String,
-    tool_calls: &mut Vec<ToolCall>,
-    now_ts: u128,
-) {
-    let lower = text.to_lowercase();
-    if lower.contains("dsml")
-        || lower.contains("invoke")
-        || lower.contains("tool_call")
-        || lower.contains("function_calls")
-        || lower.contains("<parameter")
-        || lower.contains("thinking")
-        || lower.contains("reasoning")
-        || lower.contains("thought")
-    {
-        // 1. Extract DSML and standard XML invoke tags (<invoke name="...">...)
-        for cap in RE_INVOKE.captures_iter(text) {
-            let name = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-            let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            let mut args_map = serde_json::Map::new();
-            for p_cap in RE_PARAM.captures_iter(body) {
-                let p_name = p_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-                let p_val = p_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-                let typed = match serde_json::from_str::<Value>(&p_val) {
-                    Ok(v) => v,
-                    Err(_) => Value::String(p_val),
-                };
-                args_map.insert(p_name, typed);
-            }
-            let args_str = Value::Object(args_map).to_string();
-            if !name.is_empty() {
-                let id = format!("call_xml_{}_{now_ts}", tool_calls.len());
-                tool_calls.push(ToolCall {
-                    id,
-                    name,
-                    arguments: args_str,
-                    extra_content: None,
-                });
-            }
-        }
-
-        // 2. Extract <tool_call> / <tool_calls> JSON format
-        for cap in RE_TAG_JSON.captures_iter(text) {
-            if let Some(body) = cap.get(1) {
-                let trimmed = body.as_str().trim();
-                if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-                    if let Some(arr) = v.as_array() {
-                        for item in arr {
-                            if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
-                                let arguments = if let Some(args) = item.get("arguments") {
-                                    if args.is_string() {
-                                        args.as_str().unwrap_or_default().to_string()
-                                    } else {
-                                        args.to_string()
-                                    }
-                                } else {
-                                    "{}".to_string()
-                                };
-                                let id = format!("call_tag_{}_{now_ts}", tool_calls.len());
-                                tool_calls.push(ToolCall {
-                                    id,
-                                    name: name.to_string(),
-                                    arguments,
-                                    extra_content: None,
-                                });
-                            }
-                        }
-                    } else if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
-                        let arguments = if let Some(args) = v.get("arguments") {
-                            if args.is_string() {
-                                args.as_str().unwrap_or_default().to_string()
-                            } else {
-                                args.to_string()
-                            }
-                        } else {
-                            "{}".to_string()
-                        };
-                        let id = format!("call_tag_{}_{now_ts}", tool_calls.len());
-                        tool_calls.push(ToolCall {
-                            id,
-                            name: name.to_string(),
-                            arguments,
-                            extra_content: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        // 3. Clean all DSML, XML, & tool_call tags from user-facing text
-        let mut cleaned = RE_CLEAN_TOOL_CALLS.replace_all(text, "").to_string();
-        cleaned = RE_CLEAN_INVOKE.replace_all(&cleaned, "").to_string();
-        cleaned = RE_CLEAN_THINKING.replace_all(&cleaned, "").to_string();
-        cleaned = RE_CLEAN_STRAY_TAGS.replace_all(&cleaned, "").to_string();
-        cleaned = RE_STREAM_TOKENS.replace_all(&cleaned, "").to_string();
-        *text = cleaned.trim().to_string();
-    }
 }
 
 fn parse_data_url(url: &str) -> Option<(String, String)> {
@@ -1090,7 +877,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
         let v = TABLE
             .iter()
             .position(|&x| x == c)
-            .ok_or("carácter base64 inválido")? as u32;
+            .ok_or("carÃ¡cter base64 invÃ¡lido")? as u32;
         buf = (buf << 6) | v;
         bits += 6;
         if bits >= 8 {
@@ -1104,7 +891,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 static IMG_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn save_image_temp(data_url: &str) -> Result<String, String> {
-    let (media_type, b64) = parse_data_url(data_url).ok_or("data url inválida")?;
+    let (media_type, b64) = parse_data_url(data_url).ok_or("data url invÃ¡lida")?;
     let ext = media_type.split('/').nth(1).unwrap_or("png");
     let dir = std::env::temp_dir().join("makora_attachments");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1227,7 +1014,7 @@ pub async fn anthropic_turn(
     let mut msgs = sanitize_anthropic_wire(raw);
 
     // Dynamic Prompt Caching (M4): En conversaciones de varios turnos (>= 4 mensajes),
-    // marcamos el penúltimo mensaje de usuario con cache_control efímero para cachear
+    // marcamos el penÃºltimo mensaje de usuario con cache_control efÃ­mero para cachear
     // todo el contexto anterior ahorrando 90% de costes y acelerando el streaming.
     if msgs.len() >= 4 {
         let user_indices: Vec<usize> = msgs
@@ -1253,7 +1040,7 @@ pub async fn anthropic_turn(
         "messages": msgs
     });
     if !system.trim().is_empty() {
-        // Prefijo estable + breakpoint de caché explícito (M4):
+        // Prefijo estable + breakpoint de cachÃ© explÃ­cito (M4):
         // el system prompt va siempre primero y con cache_control ephemeral.
         body["system"] = json!([{
             "type": "text",
@@ -1292,7 +1079,7 @@ pub async fn anthropic_turn(
                 })
             })
             .collect();
-        // Breakpoint de caché al final del bloque de herramientas (prefijo estable).
+        // Breakpoint de cachÃ© al final del bloque de herramientas (prefijo estable).
         if let Some(last) = arr.last_mut() {
             last["cache_control"] = json!({"type": "ephemeral"});
         }
@@ -1317,8 +1104,8 @@ pub async fn anthropic_turn(
     let mut text = String::new();
     let mut output_chars = 0usize;
     let mut tool_blocks: Vec<(String, String, String)> = Vec::new();
-    let mut sanitizer = StreamSanitizer::new();
-    let mut reasoning_sanitizer = StreamSanitizer::new();
+    let mut sanitizer = crate::output_sanitizer::StreamFilter::new();
+    let mut reasoning_sanitizer = crate::output_sanitizer::StreamFilter::new();
 
     for_each_sse_event(resp, chat_id, |_event, data| {
         let v: Value = match serde_json::from_str(data) {
@@ -1418,18 +1205,19 @@ pub async fn anthropic_turn(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, now_ts);
-    let _ = sanitizer.finish();
+    let cleaned = crate::output_sanitizer::extract_embedded_tool_calls(&text, now_ts);
+    tool_calls.extend(cleaned.tool_calls);
+    let _ = sanitizer.flush();
     if tool_calls.is_empty() {
         let _ = ChatTextFinal {
             chat_id: chat_id.to_string(),
-            text: text.clone(),
+            text: cleaned.text.clone(),
         }
         .emit(app);
     }
     Ok(TurnOutcome {
         usage,
-        text,
+        text: cleaned.text,
         tool_calls,
         reasoning: String::new(),
     })
@@ -1488,7 +1276,7 @@ pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
                 return Err(format!("HTTP {status}: {text}"));
             }
             let body: Value = serde_json::from_str(&text)
-                .map_err(|_| format!("Respuesta no es JSON válido: {text}"))?;
+                .map_err(|_| format!("Respuesta no es JSON vÃ¡lido: {text}"))?;
             let mut ids = extract_ids(&body);
             if ids.is_empty() {
                 if let Some(arr) = body.get("models").and_then(|m| m.as_array()) {
@@ -1583,71 +1371,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_and_extract_embedded_dsml_tool_calls() {
-        let mut text = "Voy a inspeccionar el estado del repositorio... < | DSML | tool_calls > < | DSML | invoke name=\"bash\" > < | DSML | parameter name=\"command\" string=\"true\">python _deploy_vps.py build 2>&1</ | DSML | parameter > </ | DSML | invoke > </ | DSML | tool_calls >".to_string();
-        let mut tool_calls = Vec::new();
-        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 123456);
-
-        assert_eq!(text, "Voy a inspeccionar el estado del repositorio...");
-        assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].name, "bash");
-        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
-        assert_eq!(args["command"], "python _deploy_vps.py build 2>&1");
-    }
-
-    #[test]
-    fn test_sanitize_and_extract_standard_xml_tool_calls() {
-        let mut text = "<tool_calls> <invoke name=\"bash\"> <parameter name=\"command\" string=\"true\">git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" status --short && git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" diff --stat</parameter> <parameter name=\"description\" string=\"true\">Inspect working tree changes</parameter> </invoke> </tool_calls>".to_string();
-        let mut tool_calls = Vec::new();
-        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 987654);
-
-        assert_eq!(text, "");
-        assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].name, "bash");
-        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
-        assert_eq!(
-            args["command"],
-            "git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" status --short && git -C \"C:\\Users\\lewis\\Projects\\makora-ide\" diff --stat"
-        );
-        assert_eq!(args["description"], "Inspect working tree changes");
-    }
-
-    #[test]
-    fn test_sanitize_and_extract_function_calls_wrapper_with_numeric_params() {
-        let mut text = "Tengo ya el mapa interno.\n\n<function_calls> <invoke name=\"read_file_range\"> <parameter name=\"end_line\" string=\"true\">778</parameter> <parameter name=\"path\" string=\"true\">C:\\Users\\lewis\\Projects\\makora-ide\\src-tauri\\src\\lib.rs</parameter> <parameter name=\"start_line\" string=\"true\">764</parameter> </invoke> <invoke name=\"read_file_range\"> <parameter name=\"end_line\" string=\"true\">790</parameter> <parameter name=\"path\" string=\"true\">C:\\Users\\lewis\\Projects\\makora-ide\\src-tauri\\src\\lib.rs</parameter> <parameter name=\"start_line\" string=\"true\">778</parameter> </invoke> </function_calls>".to_string();
-        let mut tool_calls = Vec::new();
-        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 111222);
-
-        assert_eq!(text, "Tengo ya el mapa interno.");
-        assert_eq!(tool_calls.len(), 2);
-        assert_eq!(tool_calls[0].name, "read_file_range");
-        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
-        assert_eq!(args["start_line"], 764);
-        assert_eq!(args["end_line"], 778);
-        assert!(args["path"].as_str().unwrap_or("").contains("lib.rs"));
-        let args2: Value = serde_json::from_str(&tool_calls[1].arguments).unwrap();
-        assert_eq!(args2["start_line"], 778);
-        assert_eq!(args2["end_line"], 790);
-    }
-
-    #[test]
-    fn test_sanitize_and_extract_uppercase_and_thinking_and_tokens() {
-        let mut text = "Listo.\n<THINKING>razonamiento interno</THINKING>\n<FUNCTION_CALLS><INVOKE name=\"read_file\"><PARAMETER name=\"path\" string=\"true\">a.txt</PARAMETER></INVOKE></FUNCTION_CALLS>\n[toolu_bdrk_01AbC] Fin.".to_string();
-        let mut tool_calls = Vec::new();
-        sanitize_and_extract_embedded_tool_calls(&mut text, &mut tool_calls, 42);
-
-        assert!(text.contains("Listo."));
-        assert!(text.contains("Fin."));
-        assert!(!text.to_lowercase().contains("function_calls"));
-        assert!(!text.to_lowercase().contains("thinking"));
-        assert!(!text.contains("toolu_bdrk"));
-        assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].name, "read_file");
-        let args: Value = serde_json::from_str(&tool_calls[0].arguments).unwrap();
-        assert_eq!(args["path"], "a.txt");
-    }
-
-    #[test]
     fn test_find_sse_boundary_lf_and_crlf() {
         let lf_data = b"data: {\"test\": 1}\n\ndata: {\"test\": 2}\n\n";
         assert_eq!(find_sse_boundary(lf_data), Some((17, 2)));
@@ -1657,59 +1380,6 @@ mod tests {
 
         let incomplete = b"data: {\"test\": 1}\r\n";
         assert_eq!(find_sse_boundary(incomplete), None);
-    }
-
-    #[test]
-    fn test_stream_sanitizer_strips_complete_xml_block() {
-        let mut s = StreamSanitizer::new();
-        let out = s.push(
-            "Voy a leer.\n<function_calls><invoke name=\"read_file\"><parameter name=\"path\" string=\"true\">C:\\x\\lib.rs</parameter></invoke></function_calls>\nListo.",
-        );
-        assert_eq!(out, "Voy a leer.\n\nListo.");
-    }
-
-    #[test]
-    fn test_stream_sanitizer_holds_unclosed_block_and_releases_prose() {
-        let mut s = StreamSanitizer::new();
-        assert_eq!(s.push("Antes.\n<function_calls><invoke name=\"read_file\">"), "Antes.\n");
-        assert_eq!(s.push("<parameter name=\"path\">a</parameter></invoke>"), "");
-        assert_eq!(s.push("</function_calls>\nDespués."), "\nDespués.");
-    }
-
-    #[test]
-    fn test_stream_sanitizer_holds_partial_tag_tail() {
-        let mut s = StreamSanitizer::new();
-        assert_eq!(s.push("fin del texto <inv"), "fin del texto ");
-        assert_eq!(s.push("oke name=\"read_file\"><parameter name=\"path\">x"), "");
-        assert_eq!(s.push("</parameter></invoke>"), "");
-    }
-
-    #[test]
-    fn test_stream_sanitizer_strips_tokens_and_pipe_pairs() {
-        let mut s = StreamSanitizer::new();
-        assert_eq!(s.push("a [toolu_bdrk_01AbC] b"), "a  b");
-        assert_eq!(s.push("<|tool_call|>{\"name\":\"x\"}</|tool_call|>c"), "c");
-        assert_eq!(s.push("<|python_tag|>print(1)"), "print(1)");
-    }
-
-    #[test]
-    fn test_stream_sanitizer_strips_two_consecutive_blocks() {
-        let mut s = StreamSanitizer::new();
-        let b1 = "<function_calls> <invoke name=\"read_file\"> <parameter name=\"path\" string=\"true\">README.md</parameter> </invoke> <invoke name=\"read_file\"> <parameter name=\"path\" string=\"true\">docs/02_ARQUITECTURA_TECNICA.md</parameter> </invoke> </function_calls>";
-        let b2 = "<function_calls> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">.</parameter> </invoke> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">core</parameter> </invoke> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">alpha</parameter> </invoke> <invoke name=\"list_dir\"> <parameter name=\"path\" string=\"true\">execution</parameter> </invoke> </function_calls>";
-        assert_eq!(s.push(b1), "");
-        assert_eq!(s.push(b2), "");
-        assert_eq!(s.push("Resumen final."), "Resumen final.");
-    }
-
-    #[test]
-    fn test_stream_sanitizer_strips_read_file_range_xml() {
-        let mut s = StreamSanitizer::new();
-        let xml = "<function_calls>\n<invoke name=\"read_file_range\">\n<parameter name=\"end_line\" string=\"false\">85</parameter>\n<parameter name=\"path\" string=\"true\">scripts/check_env.py</parameter>\n<parameter name=\"start_line\" string=\"false\">50</parameter>\n</invoke>\n<invoke name=\"read_file_range\">\n<parameter name=\"end_line\" string=\"false\">113</parameter>\n<parameter name=\"path\" string=\"true\">scripts/check_env.py</parameter>\n<parameter name=\"start_line\" string=\"false\">85</parameter>\n</invoke>\n</function_calls>";
-        let out = s.push(xml);
-        assert!(!out.contains("function_calls"), "xml crudo filtrado: {out}");
-        assert!(!out.contains("invoke"), "xml crudo filtrado: {out}");
-        assert!(!out.contains("read_file_range"), "xml crudo filtrado: {out}");
     }
 
     #[test]
