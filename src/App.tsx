@@ -1223,6 +1223,10 @@ function App() {
       setSessionState((prev) => {
         const target = prev.sessions.find((s) => s.id === id);
         if (!target) return prev;
+        // Re-sembrar el runtime de streaming: al cerrar la pestaña se destruyó
+        // (destroySessionRuntime), así que hay que volver a inyectar los
+        // mensajes para que el chat no aparezca vacío.
+        ensureSessionRuntime(id, target.messages);
         const nextOpenTabs = prev.openTabIds.includes(id)
           ? prev.openTabIds
           : [id, ...prev.openTabIds];
