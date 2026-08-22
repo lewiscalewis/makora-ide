@@ -452,12 +452,6 @@ export default function Chat({
     }
   }, [injectedPrompt, onClearInjectedPrompt, setInput]);
 
-  useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, []);
-
   const [mention, setMention] = useState<{
     query: string;
     start: number;

@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import type { ChatSession } from "../types";
 import { useI18n } from "../i18n";
 import { playClick, playToggle } from "../sounds";
+import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 
 interface WorkspaceTabBarProps {
   sessions: ChatSession[];
@@ -9,6 +11,7 @@ interface WorkspaceTabBarProps {
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onCloseSession: (id: string) => void;
+  onRenameSession: (id: string, title: string) => void;
   runningSessionIds?: Set<string>;
 }
 
@@ -35,9 +38,19 @@ export default function WorkspaceTabBar({
   onSelectSession,
   onNewSession,
   onCloseSession,
+  onRenameSession,
   runningSessionIds = new Set(),
 }: WorkspaceTabBarProps) {
   const { t } = useI18n();
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  const commitRename = () => {
+    const next = editValue.trim();
+    if (editingId && next) onRenameSession(editingId, next);
+    setEditingId(null);
+  };
 
   return (
     <div className="workspace-tab-bar">
@@ -52,8 +65,35 @@ export default function WorkspaceTabBar({
             <div
               key={sess.id}
               className={`workspace-tab ${isActive ? "active" : ""}`}
-              onClick={() => { playClick(); onSelectSession(sess.id); }}
-              title={title}
+              onClick={() => {
+                if (editingId !== sess.id) {
+                  playClick();
+                  onSelectSession(sess.id);
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setEditingId(null);
+                setMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  items: [
+                    {
+                      label: t.common.rename,
+                      onSelect: () => {
+                        setEditValue(sess.title || "");
+                        setEditingId(sess.id);
+                      },
+                    },
+                    {
+                      label: t.common.close,
+                      danger: true,
+                      onSelect: () => onCloseSession(sess.id),
+                    },
+                  ],
+                });
+              }}
+              title={editingId === sess.id ? undefined : title}
             >
               <div className="workspace-tab-status">
                 {isRunning ? (
@@ -63,7 +103,22 @@ export default function WorkspaceTabBar({
                 )}
               </div>
 
-              <span className="workspace-tab-title">{title}</span>
+              {editingId === sess.id ? (
+                <input
+                  autoFocus
+                  className="workspace-tab-rename-input"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="workspace-tab-title">{title}</span>
+              )}
 
               {sessions.length > 1 && (
                 <button
@@ -92,6 +147,8 @@ export default function WorkspaceTabBar({
       >
         <Plus size={14} />
       </button>
+
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { approvalReply, chat, chatCancel, chatCleanup, questionReply } from "./api";
 import { computeCostUsd } from "./defaults";
 import { formatResponse } from "./responseFormat";
@@ -694,14 +695,12 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
 
     playSuccess();
 
-    if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
-      const wsName = opts.folders[0]?.split(/[\\/]/).pop() || "Workspace";
-      playNotify();
-      new Notification("Makora IDE", {
-        body: `✅ Tarea completada con éxito en ${wsName}`,
-        silent: false,
-      });
-    }
+    const wsName = opts.folders[0]?.split(/[\\/]/).pop() || "Workspace";
+    playNotify();
+    sendNotification({
+      title: "Makora IDE",
+      body: `✅ Tarea completada con éxito en ${wsName}`,
+    });
   } catch (err) {
     const current = runtimes.get(sessionId);
     const errStr = String(err);
@@ -739,17 +738,12 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
 
     if (!isCancelled) playError();
 
-    if (
-      typeof Notification !== "undefined" &&
-      Notification.permission === "granted" &&
-      document.hidden &&
-      !isCancelled
-    ) {
+    if (!isCancelled) {
       const wsName = opts.folders[0]?.split(/[\\/]/).pop() || "Workspace";
       playNotify();
-      new Notification("Makora IDE", {
+      sendNotification({
+        title: "Makora IDE",
         body: `⚠️ Fallo en tarea de ${wsName}`,
-        silent: false,
       });
     }
   } finally {

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { playClick } from "../sounds";
+import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 import {
   Clock,
   Cpu,
@@ -44,6 +45,7 @@ function HistoryRow({
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
   const commit = () => {
     const next = draft.trim();
@@ -67,6 +69,27 @@ function HistoryRow({
     <div
       className={`history-card ${active ? "active" : ""}`}
       onClick={() => !editing && onOpen(session.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({
+          x: e.clientX,
+          y: e.clientY,
+          items: [
+            {
+              label: t.common.rename,
+              onSelect: () => {
+                setDraft(session.title);
+                setEditing(true);
+              },
+            },
+            {
+              label: t.common.delete,
+              danger: true,
+              onSelect: () => onDelete(session.id),
+            },
+          ],
+        });
+      }}
     >
       <div className="history-card-left">
         <div className={`history-card-icon ${active ? "active" : ""}`}>
@@ -150,6 +173,8 @@ function HistoryRow({
           <Trash2 size={12} />
         </button>
       </div>
+
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
