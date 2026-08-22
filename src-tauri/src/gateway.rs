@@ -304,6 +304,16 @@ fn fix_mistral_wire(msgs: Vec<Value>) -> Vec<Value> {
 }
 
 fn ensure_schema_types(value: &mut Value) {
+    ensure_schema_types_depth(value, 0);
+}
+
+// Recorre el JSON Schema de forma recursiva. El límite de profundidad evita un
+// desbordamiento de pila con schemas patológicamente anidados o autorreferenciales
+// (p. ej. provenientes de un servidor MCP): por encima de 32 niveles se abandona.
+fn ensure_schema_types_depth(value: &mut Value, depth: usize) {
+    if depth > 32 {
+        return;
+    }
     match value {
         Value::Bool(_) => {
             *value = json!({"type": "string"});
@@ -348,24 +358,24 @@ fn ensure_schema_types(value: &mut Value) {
                     let keys: Vec<String> = pm.keys().cloned().collect();
                     for k in keys {
                         if let Some(child) = pm.get_mut(&k) {
-                            ensure_schema_types(child);
+                            ensure_schema_types_depth(child, depth + 1);
                         }
                     }
                 }
             }
             if let Some(ap) = map.get_mut("additionalProperties") {
                 if ap.is_object() {
-                    ensure_schema_types(ap);
+                    ensure_schema_types_depth(ap, depth + 1);
                 }
             }
             if let Some(it) = map.get_mut("items") {
-                ensure_schema_types(it);
+                ensure_schema_types_depth(it, depth + 1);
             }
             for comb in ["anyOf", "oneOf", "allOf"] {
                 if let Some(arr) = map.get_mut(comb) {
                     if let Value::Array(a) = arr {
                         for item in a.iter_mut() {
-                            ensure_schema_types(item);
+                            ensure_schema_types_depth(item, depth + 1);
                         }
                     }
                 }
@@ -376,7 +386,7 @@ fn ensure_schema_types(value: &mut Value) {
                         let keys: Vec<String> = dm.keys().cloned().collect();
                         for k in keys {
                             if let Some(child) = dm.get_mut(&k) {
-                                ensure_schema_types(child);
+                                ensure_schema_types_depth(child, depth + 1);
                             }
                         }
                     }
@@ -385,7 +395,7 @@ fn ensure_schema_types(value: &mut Value) {
         }
         Value::Array(arr) => {
             for item in arr.iter_mut() {
-                ensure_schema_types(item);
+                ensure_schema_types_depth(item, depth + 1);
             }
         }
         _ => {}
