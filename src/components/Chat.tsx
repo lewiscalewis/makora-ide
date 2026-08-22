@@ -66,33 +66,6 @@ function formatPathDisplay(fullPath: string) {
   return { fileName, dir, ext, fullPath: normalized };
 }
 
-// Detecta si el mensaje del usuario pide IMPLEMENTAR/ejecutar (intención de pasar
-// de modo Plan a modo Act). Es conservador: ignora preguntas y análisis.
-const ACT_INTENT_PATTERNS = [
-  /implementa(lo|r|ci[oó]n)?/i,
-  /ejec[uú]ta(lo|r)?/i,
-  /hazlo\s*(ya)?/i,
-  /apl[ií]ca(lo|r)?/i,
-  /adelante\b/i,
-  /\bdale\b/i,
-  /\bprocede\b/i,
-  /modo\s+acc[iió]on/i,
-  /pasa(te)?\s+a\s+acc[iió]on/i,
-  /act\s*mode/i,
-  /en\s+modo\s+act\b/i,
-  /\bcode\s*it\b/i,
-  /\bdo\s*it\b/i,
-  /\bgo\s*ahead\b/i,
-];
-
-function detectActIntent(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return false;
-  if (t.includes("?")) return false;
-  if (/^(c[oó]mo|como|explica|expl[ií]came|qu[eé]\s|que\s|dime|por\s*qu[eé]|porque|c[uú]al|analiza|qu[eé]\s+har[ií]as|mu[eé]strame)/.test(t)) return false;
-  return ACT_INTENT_PATTERNS.some((re) => re.test(t));
-}
-
 function getMentionIcon(ext: string) {
   switch (ext) {
     case "ts":
@@ -786,14 +759,9 @@ export default function Chat({
       return;
     }
 
-    let effectiveMode: AgentMode = targetMode || agentMode;
+    const effectiveMode = targetMode || agentMode;
     if (targetMode && targetMode !== agentMode) {
       onToggleMode?.(targetMode);
-    } else if (!targetMode && agentMode === "plan" && detectActIntent(text)) {
-      // El usuario pide implementar desde modo Plan: cambiar a modo Act de forma
-      // fluida (sin que tenga que pulsar el botón manualmente).
-      effectiveMode = "act";
-      onToggleMode?.("act");
     }
 
     let content = text;
