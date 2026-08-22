@@ -1568,6 +1568,7 @@ function App() {
         onSelectSession={handleSelectSessionTab}
         onNewSession={handleNewSession}
         onCloseSession={handleCloseSessionTab}
+        onRenameSession={handleRenameHistorySession}
         runningSessionIds={busySessionIds}
       />
 
