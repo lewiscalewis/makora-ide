@@ -3359,8 +3359,9 @@ const PLAN_MODE_DIRECTIVE: &str = "\
   3. `## 2. Cambios Propuestos` (archivo por archivo, rutas exactas y desglose)
   4. `## 3. Plan de Verificación y Pruebas`
   5. Preguntas abiertas o decisiones críticas que requieran validación.
-- Usa `todowrite` para estructurar el plan en pasos. NO repitas lecturas ya hechas: si el contexto es suficiente, redacta ya el plan final.
- - Presenta el plan completo de forma clara y directa para que el usuario lo revise y pulse «Implementar». Cuando lo apruebe, recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.";
+ - Usa `todowrite` para estructurar el plan en pasos. NO repitas lecturas ya hechas: si el contexto es suficiente, redacta ya el plan final.
+  - Presenta el plan completo de forma clara y directa para que el usuario lo revise y pulse «Implementar». Cuando lo apruebe, recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.
+  - Si el usuario te pide explícitamente que implementes/ejecutes los cambios (o te da una aclaración del plan y te pide hacerlo) y sigues en modo Plan, recuérdale de forma breve que estás en MODO PLAN y que debe pasar a modo Act (botón «Implementar» o selector de modo) para que puedas ejecutarlo.";
 
 // ---------------------------------------------------------------------------
 // Tests
