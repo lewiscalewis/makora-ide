@@ -3360,37 +3360,7 @@ const PLAN_MODE_DIRECTIVE: &str = "\
   4. `## 3. Plan de Verificación y Pruebas`
   5. Preguntas abiertas o decisiones críticas que requieran validación.
 - Usa `todowrite` para estructurar el plan en pasos. NO repitas lecturas ya hechas: si el contexto es suficiente, redacta ya el plan final.
-- Presenta el plan completo de forma clara y directa para que el usuario lo revise y pulse «Implementar». Cuando lo apruebe, recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.";
-
-pub async fn run_multiagent(
-    app: &AppHandle,
-    cfg: &ChatConfig,
-    chat_id: &str,
-    system: &str,
-    messages: &[ChatMessage],
-    folders: &[String],
-    objective: &str,
-    registry: &'static McpRegistry,
-    plan_mode: bool,
-    budget_usd: Option<f64>,
-) -> Result<ChatResult, String> {
-    // El modo "multiagente" se reduce al mismo bucle de agente con el objetivo
-    // explícito en el system prompt: la delegación se gestiona en un único hilo
-    // de herramientas, sin pipeline de fases frágil.
-    let system_with_objective = format!("{system}\n\n## Objetivo del usuario\n{objective}");
-    run(
-        app,
-        cfg,
-        chat_id,
-        &system_with_objective,
-        messages,
-        folders,
-        registry,
-        plan_mode,
-        budget_usd,
-    )
-    .await
-}
+ - Presenta el plan completo de forma clara y directa para que el usuario lo revise y pulse «Implementar». Cuando lo apruebe, recibirás un nuevo mensaje en modo Act con las herramientas habilitadas; ejecuta entonces el plan al pie de la letra.";
 
 // ---------------------------------------------------------------------------
 // Tests

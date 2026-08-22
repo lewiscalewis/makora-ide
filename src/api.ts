@@ -41,26 +41,6 @@ export const revertLastTurn = (chatId: string) =>
   invoke<string>("revert_last_turn", { chatId });
 export const generateTitle = (config: ChatConfig, content: string) =>
   invoke<string>("generate_title", { config, content });
-export const runMultiagentPlan = (
-  config: ChatConfig,
-  system: string,
-  messages: ChatMessage[],
-  folders: string[],
-  chatId: string,
-  objective: string,
-  planMode: boolean,
-  budgetUsd: number | null,
-) =>
-  invoke<ChatResult>("run_multiagent_plan", {
-    config,
-    system,
-    messages,
-    folders,
-    chatId,
-    objective,
-    planMode,
-    budgetUsd,
-  });
 export const workspaceSummary = (folders: string[]) =>
   invoke<string>("workspace_summary", { folders });
 export const searchPaths = (folders: string[], query: string) =>

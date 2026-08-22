@@ -27,8 +27,6 @@ export const commands = {
 	approvalReply: (approvalId: string, decision: string, feedback: string) => typedError<null, string>(__TAURI_INVOKE("approval_reply", { approvalId, decision, feedback })),
 	revertLastTurn: (chatId: string) => typedError<string, string>(__TAURI_INVOKE("revert_last_turn", { chatId })),
 	generateTitle: (config: ChatConfig, content: string) => typedError<string, string>(__TAURI_INVOKE("generate_title", { config, content })),
-	runMultiagentPlan: (config: ChatConfig, system: string, messages: ChatMessage_Deserialize[], folders: string[], chatId: string, objective: string, planMode: boolean, budgetUsd: number | null) => typedError<ChatResult_Serialize, string>(__TAURI_INVOKE("run_multiagent_plan", { config, system, messages, folders, chatId, objective, planMode, budgetUsd })),
-	createMultiagentPlan: (sessionId: string, objective: string) => __TAURI_INVOKE<MultiAgentPlanState>("create_multiagent_plan", { sessionId, objective }),
 	mcpConfigure: (specs: McpSpec[]) => typedError<string[], string>(__TAURI_INVOKE("mcp_configure", { specs })),
 	fetchBalance: (provider: string, baseUrl: string, apiKey: string) => typedError<{
 	provider: string,
@@ -80,7 +78,6 @@ export const commands = {
 export const events = {
 	chatDeltaEvent: makeEvent<ChatDeltaEvent>("chat-delta-event"),
 	chatTextFinal: makeEvent<ChatTextFinal>("chat-text-final"),
-	multiAgentPlanEvent: makeEvent<MultiAgentPlanEvent>("multi-agent-plan-event"),
 	streamEvent: makeEvent<StreamEvent>("stream-event"),
 };
 
@@ -209,38 +206,12 @@ export type McpSpec = {
 	enabled: boolean,
 };
 
-export type MultiAgentPlanEvent = {
-	chatId: string,
-	plan: MultiAgentPlanState,
-};
-
-export type MultiAgentPlanState = {
-	planId: string,
-	sessionId: string,
-	objective: string,
-	steps: MultiAgentPlanStep[],
-	activeStepIndex: number | null,
-	isCompleted: boolean,
-	totalTokens: number,
-	totalCostUsd: number | null,
-};
-
-export type MultiAgentPlanStep = {
-	stepIndex: number,
-	title: string,
-	role: SubagentRole,
-	status: string,
-	resultSummary: string | null,
-};
-
 export type StreamChunk = {
 	seq: number,
 	text: string,
 };
 
 export type StreamEvent = StreamChunk;
-
-export type SubagentRole = "explorer" | "coder" | "tester" | "reviewer";
 
 export type ToolCall = ToolCall_Serialize | ToolCall_Deserialize;
 

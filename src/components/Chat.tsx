@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import {
   detectProjectRules,
   searchPaths,
@@ -37,7 +36,6 @@ import {
   Coins,
   Clock,
   Rocket,
-  Workflow,
   HelpCircle,
   ListTodo,
   ShieldAlert,
@@ -47,7 +45,6 @@ import {
   Undo2,
 } from "lucide-react";
 import { useI18n } from "../i18n";
-import { shouldAutoUseMultiAgent } from "../autoRouter";
 import {
   answerApproval,
   answerQuestion,
@@ -110,8 +107,6 @@ import type {
   ChatMessage,
   ChatUsage,
   ModelConfig,
-  MultiAgentPlanState,
-  SubagentRole,
   ThinkingLevel,
   ToolActivity,
 } from "../types";
@@ -328,84 +323,6 @@ function ThinkingDropdown({
   );
 }
 
-const ROLE_ICONS: Record<SubagentRole, ReactNode> = {
-  explorer: <Search size={11} className="text-cyan" />,
-  coder: <FileCode size={11} className="text-purple" />,
-  tester: <FlaskConical size={11} className="text-gold" />,
-  reviewer: <ScrollText size={11} className="text-blue" />,
-};
-
-function MultiAgentPanel({ plan, busy }: { plan: MultiAgentPlanState; busy: boolean }) {
-  const { t } = useI18n();
-
-  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
-  const doneCount = plan.steps.filter((s) => s.status === "completed").length;
-
-  const toggleStep = (idx: number) => {
-    setExpandedSteps((prev) => ({ ...prev, [idx]: !prev[idx] }));
-  };
-
-  return (
-    <div className={`ma-plan-card ${busy ? "running" : ""}`}>
-      <div className="ma-plan-header">
-        <Workflow size={13} className="text-cyan" />
-        <span className="ma-plan-title">{t.multiagent.planTitle}</span>
-        <span className="ma-plan-progress">
-          {doneCount}/{plan.steps.length}
-        </span>
-      </div>
-      <div className="ma-plan-objective font-mono">{plan.objective}</div>
-      <div className="ma-plan-steps">
-        {plan.steps.map((step) => {
-          const isExpanded = Boolean(expandedSteps[step.stepIndex]);
-          const hasDetails = Boolean(step.resultSummary && step.resultSummary.trim().length > 0);
-
-          return (
-            <div
-              key={step.stepIndex}
-              className={`ma-plan-step ${step.status} ${hasDetails ? "clickable" : ""}`}
-              onClick={() => hasDetails && toggleStep(step.stepIndex)}
-              title={hasDetails ? (isExpanded ? "Clic para contraer" : "Clic para ver detalle y diagnóstico") : ""}
-            >
-              <span className={`ma-plan-dot ${step.status}`} />
-              <span className="ma-plan-step-icon">{ROLE_ICONS[step.role]}</span>
-              <div className="ma-plan-step-body">
-                <div className="ma-plan-step-head-row">
-                  <span className="ma-plan-step-title">{step.title}</span>
-                  {hasDetails && (
-                    <span className="ma-plan-step-chevron">
-                      <ChevronDown size={11} className={isExpanded ? "chevron-open" : ""} />
-                    </span>
-                  )}
-                </div>
-                {step.status === "running" && (
-                  <span className="ma-plan-step-running">{t.multiagent.running}…</span>
-                )}
-                {step.status === "completed" && step.resultSummary && (
-                  <div className={`ma-plan-step-summary ${isExpanded ? "expanded" : ""}`}>
-                    {isExpanded ? step.resultSummary : (step.resultSummary.slice(0, 160) + (step.resultSummary.length > 160 ? "…" : ""))}
-                  </div>
-                )}
-                {step.status === "failed" && (
-                  <div className={`ma-plan-step-summary error ${isExpanded ? "expanded" : ""}`}>
-                    {step.resultSummary || t.multiagent.failed}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {plan.isCompleted && (
-        <div className="ma-plan-footer">
-          <Zap size={10} className="text-cyan" />
-          <span>{plan.totalTokens.toLocaleString()} tok</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface ChatProps {
   sessionId: string;
   config: ChatConfig;
@@ -420,8 +337,6 @@ interface ChatProps {
   blockReason: string;
   agentMode?: AgentMode;
   onToggleMode?: (mode: AgentMode) => void;
-  multiAgentMode?: "auto" | "always" | "off";
-  onToggleMultiAgentMode?: (mode: "auto" | "always" | "off") => void;
   models?: string[];
   activeModel?: string;
   onSelectModel?: (model: string) => void;
@@ -450,8 +365,6 @@ export default function Chat({
   blockReason,
   agentMode = "act",
   onToggleMode,
-  multiAgentMode: multiAgentModeProp,
-  onToggleMultiAgentMode,
   models = [],
   activeModel,
   onSelectModel,
@@ -486,7 +399,7 @@ export default function Chat({
     });
   };
   const rt = useSessionRuntime(sessionId);
-  const { busy, messages, turnActivities, thinking, plan, currentAssistantId, runningTool, draftInput, draftAttachments, todos, pendingQuestion, pendingApproval } = rt;
+  const { busy, messages, turnActivities, thinking, currentAssistantId, runningTool, draftInput, draftAttachments, todos, pendingQuestion, pendingApproval } = rt;
   const [questionDraft, setQuestionDraft] = useState("");
   const [approvalFeedback, setApprovalFeedback] = useState("");
   const [todosExpanded, setTodosExpanded] = useState(false);
@@ -524,13 +437,6 @@ export default function Chat({
     },
     [sessionId],
   );
-
-  const [localMultiAgentMode, setLocalMultiAgentMode] = useState<"auto" | "always" | "off">("auto");
-  const multiAgentMode = multiAgentModeProp ?? localMultiAgentMode;
-  const setMultiAgentMode = (mam: "auto" | "always" | "off") => {
-    setLocalMultiAgentMode(mam);
-    onToggleMultiAgentMode?.(mam);
-  };
 
   // Handle injected prompt from viewers (e.g. PDF viewer "Analizar con Makora")
   useEffect(() => {
@@ -887,15 +793,6 @@ export default function Chat({
     isAutoScrollEnabled.current = true;
 
     const system = await buildSystem();
-    let useMultiAgent = false;
-    if (effectiveMode === "act") {
-      if (multiAgentMode === "always") {
-        useMultiAgent = true;
-      } else if (multiAgentMode === "auto") {
-        const decision = shouldAutoUseMultiAgent(content, folders, messages.length);
-        useMultiAgent = decision.useMultiAgent;
-      }
-    }
     void sendTurn(sessionId, {
       config,
       system,
@@ -905,7 +802,6 @@ export default function Chat({
       content,
       images,
       displayText: text,
-      useMultiAgent,
       planMode: effectiveMode === "plan",
       budgetUsd,
       onUsage,
@@ -1000,27 +896,6 @@ export default function Chat({
               <ScrollText size={10} />
               <span>{t.chat.planMode}</span>
             </button>
-            <button
-              className={`mode-pill ma-pill ${multiAgentMode !== "off" ? "active" : ""} ${multiAgentMode === "auto" ? "ma-auto" : ""}`}
-              onClick={() => {
-                playToggle();
-                const next: "auto" | "always" | "off" =
-                  multiAgentMode === "auto" ? "always" : multiAgentMode === "always" ? "off" : "auto";
-                setMultiAgentMode(next);
-              }}
-              title={
-                multiAgentMode === "auto"
-                  ? t.multiagent.autoHint
-                  : multiAgentMode === "always"
-                  ? t.multiagent.alwaysHint
-                  : t.multiagent.offHint
-              }
-            >
-              <Workflow size={10} />
-              <span>
-                {multiAgentMode === "auto" ? t.multiagent.auto : multiAgentMode === "always" ? t.multiagent.always : t.multiagent.off}
-              </span>
-            </button>
           </div>
         </div>
 
@@ -1064,8 +939,6 @@ export default function Chat({
           )}
         </div>
       </div>
-
-      {plan && <MultiAgentPanel plan={plan} busy={busy} />}
 
       <div
         className="chat-messages"

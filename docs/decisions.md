@@ -466,6 +466,17 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
 
 - **Consecuencias:** el modelo deja de gastar turnos en comandos Unix que fallan; un corte por límite de tokens ya no termina el turno en blanco; la app muestra el icono correcto en Windows. 55 tests Rust; `cargo build`, `npm run build` y `npm run tauri build` OK.
 
+## ADR-058 — Modelo por sesión + limpieza del multiagente huérfano (2026-08-21)
+
+- **Problema:** (1) el modelo era GLOBAL (`settings.model`): cambiar de modelo en una sesión afectaba a todas; `ChatSession.model` existía pero no se usaba. (2) El multiagente se eliminó del backend en ADR-056 (`run_multiagent` = `run`), pero la UI seguía mostrando el pill "Multi-Agente", el panel de plan y `shouldAutoUseMultiAgent` (un no-op engañoso).
+
+- **Decisión:**
+  1. **Modelo por sesión:** `activeSessionModel = activeSession?.model || settings.model`; `modelConfig`/`requestConfig`/`ready`/`activeModel` se derivan de la sesión activa (no del global). `onSelectModel` → `handleSelectSessionModel` actualiza SOLO `ChatSession.model` de la sesión activa. `onUsage`/`onTranscriptChange`/`onSelectThinkingLevel` pasan el modelo de la sesión. Nueva sesión hereda el global (`makeSession(settings.model)`) como default.
+  2. **Sin romper turnos en curso:** el `ChatConfig` se captura al enviar cada turno (`sendTurn`); `busy`/cancel son por sesión. Cambiar el modelo de una sesión solo afecta al siguiente turno de ESA sesión.
+  3. **Eliminación del multiagente huérfano:** se borran `multiagent.rs`, los comandos `run_multiagent_plan`/`create_multiagent_plan`, el evento `MultiAgentPlanEvent`, `run_multiagent` (Rust), y en el frontend el pill "Multi-Agente", `MultiAgentPanel`, `shouldAutoUseMultiAgent`/`autoRouter.ts`, `useMultiAgent`/`runMultiagentPlan`, el campo `plan` del runtime y `multiAgentMode` del workspace.
+
+- **Consecuencias:** cada sesión puede usar un modelo distinto sin afectar a las demás ni a los turnos en curso; la UI ya no ofrece una opción multiagente que no hace nada. 55 tests Rust + 62 vitest; `cargo build` y `npm run build` OK.
+
 
 
 

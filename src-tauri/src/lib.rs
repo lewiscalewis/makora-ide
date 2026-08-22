@@ -3,7 +3,6 @@ mod balance;
 mod gateway;
 mod history;
 mod mcp;
-mod multiagent;
 mod repo_map;
 mod symbol_index;
 mod terminal;
@@ -536,35 +535,6 @@ async fn generate_title(app: AppHandle, config: ChatConfig, content: String) -> 
     } else {
         Ok(title)
     }
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn run_multiagent_plan(
-    app: AppHandle,
-    config: ChatConfig,
-    system: String,
-    messages: Vec<ChatMessage>,
-    folders: Vec<String>,
-    chat_id: String,
-    objective: String,
-    plan_mode: bool,
-    budget_usd: Option<f64>,
-) -> Result<ChatResult, String> {
-    let folders = effective_folders(folders);
-    agent::run_multiagent(
-        &app,
-        &config,
-        &chat_id,
-        &system,
-        &messages,
-        &folders,
-        &objective,
-        &MCP,
-        plan_mode,
-        budget_usd,
-    )
-    .await
 }
 
 #[tauri::command]
@@ -1440,12 +1410,6 @@ fn get_initial_file() -> Result<Option<String>, String> {
     Ok(None)
 }
 
-#[tauri::command]
-#[specta::specta]
-fn create_multiagent_plan(session_id: String, objective: String) -> multiagent::MultiAgentPlanState {
-    multiagent::create_default_plan(&session_id, &objective)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta_builder = Builder::new()
@@ -1472,8 +1436,6 @@ pub fn run() {
             approval_reply,
             revert_last_turn,
             generate_title,
-            run_multiagent_plan,
-            create_multiagent_plan,
             mcp_configure,
             fetch_balance,
             term_spawn,
@@ -1515,7 +1477,6 @@ pub fn run() {
             StreamEvent,
             ChatDeltaEvent,
             ChatTextFinal,
-            multiagent::MultiAgentPlanEvent
         ]);
 
     tauri::Builder::default()

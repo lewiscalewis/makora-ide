@@ -94,7 +94,6 @@ function defaultWorkspace(): SessionWorkspaceState {
     openFiles: [],
     activeFilePath: null,
     agentMode: "act",
-    multiAgentMode: "auto",
     thinkingLevel: "medium",
     status: "idle",
     diff: null,
@@ -362,6 +361,9 @@ function App() {
   const activeSession = activeSessionId
     ? sessions.find((s) => s.id === activeSessionId) ?? openSessions[0] ?? null
     : openSessions[0] ?? null;
+  // Modelo efectivo de la sesión activa: cada sesión conserva su propio modelo
+  // (`ChatSession.model`); si la sesión no tiene modelo asignado, hereda el global.
+  const activeSessionModel = activeSession?.model || settings.model;
   const activeWorkspace: SessionWorkspaceState = activeSession?.workspace ?? defaultWorkspace();
   const activeWorkspaceRef = useRef(activeWorkspace);
   activeWorkspaceRef.current = activeWorkspace;
@@ -484,19 +486,19 @@ function App() {
 
   const preset = presetById(settings.providerId);
   const modelConfig =
-    config.models.find((m) => m.id === settings.model) ||
-    (settings.model ? inferModelConfig(settings.model, settings.providerId) : undefined);
+    config.models.find((m) => m.id === activeSessionModel) ||
+    (activeSessionModel ? inferModelConfig(activeSessionModel, settings.providerId) : undefined);
   const thinkingLevel: ThinkingLevel = modelConfig?.thinkingLevel ?? "medium";
 
   const isVisionActive =
     modelConfig?.visionEnabled ??
-    (settings.model ? inferModelConfig(settings.model, settings.providerId).visionEnabled : false);
+    (activeSessionModel ? inferModelConfig(activeSessionModel, settings.providerId).visionEnabled : false);
 
   const requestConfig: ChatConfig = useMemo(
     () => ({
       kind: preset.kind,
       baseUrl: settings.baseUrl || preset.baseUrl,
-      model: settings.model,
+      model: activeSessionModel,
       apiKey: settings.apiKey,
       reasoningEffort:
         modelConfig?.reasoningEnabled &&
@@ -513,7 +515,7 @@ function App() {
       preset.kind,
       preset.baseUrl,
       settings.baseUrl,
-      settings.model,
+      activeSessionModel,
       settings.apiKey,
       modelConfig,
       isVisionActive,
@@ -1094,13 +1096,14 @@ function App() {
     }
   }, [homePath, updateActiveWorkspace]);
 
-  const updateModelConfig = (patch: Partial<ModelConfig>) => {
-    if (!settings.model) return;
+  const updateModelConfig = (patch: Partial<ModelConfig>, modelId?: string) => {
+    const targetModel = modelId || settings.model;
+    if (!targetModel) return;
     setConfig((c) => {
-      const exists = c.models.some((m) => m.id === settings.model);
+      const exists = c.models.some((m) => m.id === targetModel);
       const fallback: ModelConfig = {
-        id: settings.model,
-        label: settings.model,
+        id: targetModel,
+        label: targetModel,
         providerId: settings.providerId,
         thinkingLevel: "medium",
         contextWindow: 128000,
@@ -1112,7 +1115,7 @@ function App() {
       };
       const models = exists
         ? c.models.map((m) =>
-            m.id === settings.model ? { ...m, ...patch } : m,
+            m.id === targetModel ? { ...m, ...patch } : m,
           )
         : [...c.models, { ...fallback, ...patch }];
       return { ...c, models };
@@ -1241,6 +1244,21 @@ function App() {
       setShowHistory(false);
     },
     [],
+  );
+
+  // Cambia el modelo SOLO de la sesión activa (cada sesión tiene su propio modelo).
+  // No toca `settings.model` (el global, usado como default para sesiones nuevas) ni
+  // afecta a un turno en curso: el ChatConfig se captura al enviar cada turno.
+  const handleSelectSessionModel = useCallback(
+    (modelId: string) => {
+      setSessionState((prev) => {
+        const sessions = prev.sessions.map((s) =>
+          s.id === activeSessionId ? { ...s, model: modelId } : s,
+        );
+        return { ...prev, sessions };
+      });
+    },
+    [activeSessionId],
   );
 
   // Cierra exclusivamente la pestaña de la barra superior sin eliminar la sesión del historial
@@ -1410,28 +1428,26 @@ function App() {
         key={activeSessionId}
         sessionId={activeSessionId}
         config={requestConfig}
-        ready={settings.model !== ""}
+        ready={activeSessionModel !== ""}
         folders={effectiveFolders}
         skillsContent={skillsContent}
         thinkingLevel={thinkingLevel}
-        onSelectThinkingLevel={(t) => updateModelConfig({ thinkingLevel: t })}
+        onSelectThinkingLevel={(t) => updateModelConfig({ thinkingLevel: t }, activeSessionModel)}
         models={models}
-        activeModel={settings.model}
-        onSelectModel={(m) => setSettings((s) => ({ ...s, model: m }))}
+        activeModel={activeSessionModel}
+        onSelectModel={handleSelectSessionModel}
         includeWorkspace={config.context.includeWorkspace}
         visionEnabled={modelConfig?.visionEnabled ?? false}
         blocked={balanceBlocked}
         blockReason={blockReason}
         agentMode={activeWorkspace.agentMode ?? "act"}
         onToggleMode={(mode) => updateActiveWorkspace((w) => ({ ...w, agentMode: mode }), activeSessionId)}
-        multiAgentMode={activeWorkspace.multiAgentMode ?? "auto"}
-        onToggleMultiAgentMode={(mam) => updateActiveWorkspace((w) => ({ ...w, multiAgentMode: mam }), activeSessionId)}
         modelConfig={modelConfig}
         providerId={settings.providerId}
-        onUsage={(u) => addUsage(activeSessionId, u, settings.model)}
+        onUsage={(u) => addUsage(activeSessionId, u, activeSessionModel)}
         onApplyArtifact={applyArtifact}
         onClearSessionTrigger={handleNewSession}
-        onTranscriptChange={(m) => persistTranscript(activeSessionId, m, settings.model)}
+        onTranscriptChange={(m) => persistTranscript(activeSessionId, m, activeSessionModel)}
         injectedPrompt={injectedPrompt}
         onClearInjectedPrompt={() => setInjectedPrompt(null)}
         budgetUsd={settings.maxCostPerTurn > 0 ? settings.maxCostPerTurn : null}
@@ -1440,7 +1456,7 @@ function App() {
   }, [
     activeSessionId,
     requestConfig,
-    settings.model,
+    activeSessionModel,
     effectiveFolders,
     skillsContent,
     thinkingLevel,
@@ -1450,7 +1466,6 @@ function App() {
     balanceBlocked,
     blockReason,
     activeWorkspace.agentMode,
-    activeWorkspace.multiAgentMode,
     settings.providerId,
     addUsage,
     applyArtifact,
@@ -1458,6 +1473,7 @@ function App() {
     persistTranscript,
     injectedPrompt,
     updateActiveWorkspace,
+    handleSelectSessionModel,
   ]);
 
   const agentBusy = activeRuntime.busy;

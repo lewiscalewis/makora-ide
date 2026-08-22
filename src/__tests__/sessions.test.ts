@@ -64,7 +64,6 @@ describe("Session Management and Sanitization", () => {
       openFiles: [],
       activeFilePath: null,
       agentMode: "plan",
-      multiAgentMode: "always",
       thinkingLevel: "high",
       status: "idle",
       diff: null,
@@ -76,19 +75,16 @@ describe("Session Management and Sanitization", () => {
       openFiles: [],
       activeFilePath: null,
       agentMode: "act",
-      multiAgentMode: "auto",
       thinkingLevel: "low",
       status: "idle",
       diff: null,
     };
 
-    expect(session1.workspace.agentMode).toBe("plan");
-    expect(session1.workspace.multiAgentMode).toBe("always");
-    expect(session1.workspace.thinkingLevel).toBe("high");
+    expect(session1.workspace?.agentMode).toBe("plan");
+    expect(session1.workspace?.thinkingLevel).toBe("high");
 
-    expect(session2.workspace.agentMode).toBe("act");
-    expect(session2.workspace.multiAgentMode).toBe("auto");
-    expect(session2.workspace.thinkingLevel).toBe("low");
+    expect(session2.workspace?.agentMode).toBe("act");
+    expect(session2.workspace?.thinkingLevel).toBe("low");
   });
 
   it("initSessions preserves all user-opened sessions reliably without destructive pruning", () => {

@@ -113,8 +113,6 @@ function sanitizeWorkspace(raw: unknown): SessionWorkspaceState | undefined {
       ? w.status
       : "idle";
   const agentMode: AgentMode = w.agentMode === "plan" ? "plan" : "act";
-  const multiAgentMode: "auto" | "always" | "off" =
-    w.multiAgentMode === "always" || w.multiAgentMode === "off" ? w.multiAgentMode : "auto";
   const thinkingLevel =
     w.thinkingLevel === "none" ||
     w.thinkingLevel === "minimal" ||
@@ -129,7 +127,6 @@ function sanitizeWorkspace(raw: unknown): SessionWorkspaceState | undefined {
     openFiles,
     activeFilePath: typeof w.activeFilePath === "string" ? w.activeFilePath : null,
     agentMode,
-    multiAgentMode,
     thinkingLevel,
     status,
     diff:
@@ -339,7 +336,6 @@ export function makeSession(model: string, workspace?: SessionWorkspaceState): C
     openFiles: [],
     activeFilePath: null,
     agentMode: "act",
-    multiAgentMode: "auto",
     thinkingLevel: "medium",
     status: "idle",
     diff: null,

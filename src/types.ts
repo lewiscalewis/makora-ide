@@ -146,11 +146,6 @@ export interface ThinkingDeltaEvent {
   text: string;
 }
 
-export interface MultiAgentPlanEvent {
-  chatId: string;
-  plan: MultiAgentPlanState;
-}
-
 export interface TodoItem {
   content: string;
   status: string;
@@ -336,7 +331,6 @@ export interface SessionWorkspaceState {
   openFiles: OpenFile[];
   activeFilePath: string | null;
   agentMode?: AgentMode;
-  multiAgentMode?: "auto" | "always" | "off";
   thinkingLevel?: ThinkingLevel;
   status: "idle" | "running" | "completed" | "error";
   diff?: DiffInfo | null;
@@ -395,27 +389,6 @@ export interface UniversalTelemetry {
   totalCachedTokens: number;
   totalCostUsd: number;
   modelUsage: Record<string, { input: number; output: number; cached: number; cost: number; turns: number }>;
-}
-
-export type SubagentRole = "explorer" | "coder" | "tester" | "reviewer";
-
-export interface MultiAgentPlanStep {
-  stepIndex: number;
-  title: string;
-  role: SubagentRole;
-  status: "pending" | "running" | "completed" | "failed";
-  resultSummary?: string | null;
-}
-
-export interface MultiAgentPlanState {
-  planId: string;
-  sessionId: string;
-  objective: string;
-  steps: MultiAgentPlanStep[];
-  activeStepIndex?: number | null;
-  isCompleted: boolean;
-  totalTokens: number;
-  totalCostUsd: number;
 }
 
 

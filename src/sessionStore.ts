@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { approvalReply, chat, chatCancel, chatCleanup, questionReply, runMultiagentPlan } from "./api";
+import { approvalReply, chat, chatCancel, chatCleanup, questionReply } from "./api";
 import { computeCostUsd } from "./defaults";
 import { formatResponse } from "./responseFormat";
 import { playError, playNotify, playSend, playSuccess } from "./sounds";
@@ -13,8 +13,6 @@ import type {
   ChatTextFinal,
   ChatUsage,
   ModelConfig,
-  MultiAgentPlanEvent,
-  MultiAgentPlanState,
   PendingApproval,
   PendingQuestion,
   QuestionAskEvent,
@@ -192,7 +190,6 @@ export interface SessionRuntimeSnapshot {
   messages: UiMessage[];
   transcript: ChatMessage[];
   currentAssistantId: number;
-  plan: MultiAgentPlanState | null;
   error: string | null;
   draftInput: string;
   draftAttachments: Attachment[];
@@ -220,7 +217,6 @@ const EMPTY_RUNTIME: SessionRuntime = Object.freeze({
   messages: [],
   transcript: [],
   currentAssistantId: 0,
-  plan: null,
   error: null,
   draftInput: "",
   draftAttachments: [],
@@ -260,7 +256,6 @@ function createRuntime(transcript: ChatMessage[] = []): SessionRuntime {
     messages,
     transcript: clean,
     currentAssistantId: 0,
-    plan: null,
     error: null,
     draftInput: "",
     draftAttachments: [],
@@ -482,9 +477,6 @@ function installEventRouting(): void {
       requestAnimationFrame(flushThinking);
     }
   });
-  on<MultiAgentPlanEvent>("multiagent-plan-event", (p) =>
-    update(p.chatId, () => ({ plan: p.plan })),
-  );
   on<TodoUpdateEvent>("todo-update", (t) =>
     update(t.chatId, () => ({ todos: t.todos ?? [] })),
   );
@@ -521,7 +513,6 @@ export interface SendTurnOptions {
   content: string;
   images: string[];
   displayText: string;
-  useMultiAgent?: boolean;
   planMode?: boolean;
   budgetUsd?: number | null;
   onUsage: (u: ChatUsage) => void;
@@ -543,7 +534,6 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     thinking: null,
     error: null,
     abortRequested: false,
-    plan: null,
     draftInput: "",
     draftAttachments: [],
     todos: [],
@@ -621,10 +611,6 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
     });
 
     const requestTranscript = newTranscript.slice(0, -1);
-    const objective =
-      opts.displayText && opts.displayText.trim()
-        ? opts.displayText
-        : opts.content.slice(0, 600);
 
     // Pasar los precios del modelo al backend para que el coste persistido en
     // SQLite use la MISMA fuente de verdad que `computeCostUsd` (configurable).
@@ -635,26 +621,15 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
       cachedPricePer1m: 0,
     };
 
-    const result = opts.useMultiAgent
-      ? await runMultiagentPlan(
-          cfgWithPrices,
-          opts.system,
-          requestTranscript,
-          opts.folders,
-          sessionId,
-          objective,
-          Boolean(opts.planMode),
-          opts.budgetUsd ?? null,
-        )
-      : await chat(
-          cfgWithPrices,
-          opts.system,
-          requestTranscript,
-          opts.folders,
-          sessionId,
-          Boolean(opts.planMode),
-          opts.budgetUsd ?? null,
-        );
+    const result = await chat(
+      cfgWithPrices,
+      opts.system,
+      requestTranscript,
+      opts.folders,
+      sessionId,
+      Boolean(opts.planMode),
+      opts.budgetUsd ?? null,
+    );
     const durationMs = Math.max(50, Date.now() - startTime);
     opts.onUsage(result);
 
@@ -708,13 +683,6 @@ export async function sendTurn(sessionId: string, opts: SendTurnOptions): Promis
           ? "⚠️ El turno finalizó sin una respuesta final del modelo."
           : "⚠️ El turno finalizó sin una respuesta final del modelo.");
       currentUi.metrics = metrics;
-    }
-
-    if (opts.useMultiAgent && uiMsgs.length > 0 && uiMsgs[uiMsgs.length - 1].role === "assistant") {
-      const liveActivities = snapshot?.turnActivities[assistantId] ?? [];
-      if (liveActivities.length > 0) {
-        uiMsgs[uiMsgs.length - 1].activities = liveActivities;
-      }
     }
 
     update(sessionId, () => ({
