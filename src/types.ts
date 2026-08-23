@@ -347,6 +347,8 @@ export interface ChatSession {
   updatedAt: number;
   messageCount: number;
   model: string;
+  providerId: string;
+  baseUrl: string;
   messages: ChatMessage[];
   totalCostUsd: number;
   inputTokens: number;
@@ -392,5 +394,24 @@ export interface UniversalTelemetry {
 }
 
 
+export interface RemoteConfig {
+  providerId: string;
+  model: string;
+  baseUrl: string | null;
+  kind: string;
+  reasoningEffort: string | null;
+  temperature: number | null;
+  maxOutputTokens: number | null;
+}
 
-
+export interface RemoteStatus {
+  running: boolean;
+  port: number | null;
+  fingerprint: string;
+  pairCodeActive: boolean;
+  deviceLabel: string | null;
+  configured: boolean;
+  config: RemoteConfig;
+  tunnelActive: boolean;
+  tunnelUrl: string | null;
+}

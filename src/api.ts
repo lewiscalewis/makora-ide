@@ -4,6 +4,8 @@ import type {
   ChatConfig,
   ChatMessage,
   ChatResult,
+  RemoteConfig,
+  RemoteStatus,
   DirEntry,
   McpSpec,
 } from "./types";
@@ -122,6 +124,18 @@ export const getInitialFile = () =>
   invoke<string | null>("get_initial_file");
 export const checkBetaValidity = () =>
   invoke<void>("check_beta_validity");
+export const getLanIps = () => invoke<string[]>("get_lan_ips");
+export const remoteStatus = () => invoke<RemoteStatus>("remote_status");
+export const remoteStart = (port: number | null) =>
+  invoke<RemoteStatus>("remote_start", { port });
+export const remoteStop = () => invoke<void>("remote_stop");
+export const remoteTunnelStart = () => invoke<string>("remote_tunnel_start");
+export const remoteTunnelStop = () => invoke<void>("remote_tunnel_stop");
+export const remotePairCode = () => invoke<string>("remote_pair_code");
+export const remoteRevoke = () => invoke<void>("remote_revoke");
+export const remoteGetConfig = () => invoke<RemoteConfig>("remote_get_config");
+export const remoteSyncConfig = (config: RemoteConfig) =>
+  invoke<RemoteConfig>("remote_sync_config", { config });
 export const saveSessionsStore = (json: string) =>
   invoke<void>("save_sessions_store", { json });
 export const loadSessionsStore = () =>

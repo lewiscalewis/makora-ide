@@ -85,6 +85,23 @@ Fuera del prototipo (v2+): colaboración multiusuario, plugins de terceros, sand
 - `src-tauri/src/balance.rs` — saldo de crédito: DeepSeek (`/user/balance`) y OpenRouter (`/api/v1/credits`); el resto usa estimador local por precios del modelo.
 - Frontend: SplitPane redimensionable persistente (`src/core/SplitPane.tsx`), terminal xterm.js, renderizado Markdown con diffs/artifacts (`src/components/Markdown.tsx`), @mentions + adjuntos (imágenes/drag&drop), monitor de consumo/crédito.
 
+### Nota: costes y proveedor por sesión (estado real de implementación)
+
+- **Costes:** el coste por turno se calcula en el frontend (`src/App.tsx` →
+  `computeCostUsd`) con precios estáticos de `src/providers.ts`
+  (`MODERN_PROVIDER_MODELS` / `inferModelConfig`). El backend devuelve `usage`
+  (tokens) y el frontend aplica la tarifa. **No hay sincronización de precios en
+  vivo con el proveedor** (no existe API estándar); el saldo real solo está
+  disponible para DeepSeek (`/user/balance`) y OpenRouter (`/api/v1/credits`) en
+  `src-tauri/src/balance.rs`.
+- **Proveedor/modelo por sesión:** `ChatSession` conserva `providerId`, `model` y
+  `baseUrl`. El proveedor efectivo de una sesión es
+  `activeSession.providerId || settings.providerId`; al cambiar de proveedor en
+  SettingsModal se propaga a la sesión activa, y `requestConfig` /
+  `remoteSyncConfig` usan el proveedor de la sesión. Al restaurar una sesión se
+  valida que su modelo siga existiendo en el proveedor activo (evita errores 404
+  con modelos retirados).
+
 ## 5. Flujo de un turno
 
 1. Usuario envía prompt o aprueba acción → comando IPC `agent.send_prompt`.

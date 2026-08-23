@@ -27,13 +27,25 @@ tiktoken-rs = "0.6"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 portable-pty = "0.8"
-tokio = { version = "1", features = ["time", "process", "io-util", "sync", "macros"] }
+tokio = { version = "1", features = ["time", "process", "io-util", "sync", "macros", "net", "rt"] }
 keyring = "3"
 rusqlite = { version = "0.40", features = ["bundled"] }
 chrono = "0.4"
 regex = "1.10"
 ignore = "0.4"
 html2md = "0.2"
+
+# --- Servidor remoto (acceso desde móvil/navegador) ---
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rcgen = "0.13"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+local-ip-address = "0.6"
+include_dir = "0.7"
+rustls = "0.23"
+rustls-pemfile = "2"
 
 [profile.release]
 panic = "unwind"

@@ -3,22 +3,30 @@ mod balance;
 mod gateway;
 mod history;
 mod mcp;
+pub(crate) mod remote;
+
+use remote::{
+    remote_get_config, remote_list_models, remote_pair_code, remote_revoke, remote_start,
+    remote_status, remote_stop, remote_sync_config, remote_tunnel_start, remote_tunnel_stop,
+};
+
 mod repo_map;
 mod symbol_index;
 mod terminal;
 mod token_engine;
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use specta::Type;
 #[cfg(debug_assertions)]
 use specta_typescript::Typescript;
 use tauri::AppHandle;
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
 static TERMINALS: LazyLock<terminal::Terminals> = LazyLock::new(Default::default);
-static MCP: LazyLock<mcp::McpRegistry> = LazyLock::new(Default::default);
+pub(crate) static MCP: LazyLock<mcp::McpRegistry> = LazyLock::new(Default::default);
 
 #[derive(Clone, serde::Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -419,6 +427,31 @@ async fn list_models(config: ChatConfig) -> Result<Vec<String>, String> {
     gateway::fetch_models(&config).await
 }
 
+/// Devuelve las IPs de red local de este equipo (sin enviar tráfico real).
+#[tauri::command]
+#[specta::specta]
+async fn get_lan_ips() -> Result<Vec<String>, String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")
+        .map_err(|e| format!("error creando socket: {e}"))?;
+    let mut ips: Vec<String> = Vec::new();
+    for dst in [
+        "8.8.8.8:80",
+        "1.1.1.1:80",
+        "192.168.1.1:80",
+        "10.0.0.1:80",
+    ] {
+        if socket.connect(dst).is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                let ip = addr.ip().to_string();
+                if !ips.contains(&ip) {
+                    ips.push(ip);
+                }
+            }
+        }
+    }
+    Ok(ips)
+}
+
 fn effective_folders(mut folders: Vec<String>) -> Vec<String> {
     if folders.is_empty() {
         if let Some(h) = dirs::home_dir() {
@@ -730,6 +763,12 @@ async fn workspace_summary(folders: Vec<String>) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 fn keyring_get(provider_id: String) -> Result<Option<String>, String> {
+    keyring_get_impl(&provider_id)
+}
+
+/// Lógica interna de lectura de clave (reutilizable por el servidor remoto,
+/// que nunca expone la clave por la red).
+pub(crate) fn keyring_get_impl(provider_id: &str) -> Result<Option<String>, String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
 
@@ -1450,6 +1489,17 @@ pub fn run() {
             keyring_get,
             keyring_set,
             keyring_delete,
+            remote_status,
+            remote_start,
+            remote_stop,
+            remote_tunnel_start,
+            remote_tunnel_stop,
+            remote_pair_code,
+            remote_revoke,
+            remote_sync_config,
+            remote_get_config,
+            remote_list_models,
+            get_lan_ips,
             detect_project_rules,
             detect_ollama,
             git_status,
@@ -1490,6 +1540,7 @@ pub fn run() {
             if let Err(e) = specta_builder.export(Typescript::default(), "../src/bindings.ts") {
                 eprintln!("[specta] no se pudo exportar bindings.ts: {e}");
             }
+            app.manage(Arc::new(remote::RemoteState::new(app.handle().clone())));
             Ok(())
         })
         .run(tauri::generate_context!())
