@@ -627,11 +627,13 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "web_search".into(),
-            description: "Busca en la web mediante un motor de búsqueda y devuelve los 5 mejores resultados con título, URL y extracto/snippet. Úsalo SIEMPRE para consultar información sobre videojuegos, librerías, documentación, errores o temas externos.".into(),
+            description: "Busca en la web mediante un motor de búsqueda híbrido (DDG + Instant Knowledge + Wikipedia) y devuelve los mejores resultados clasificados con título, URL, dominio y extracto/snippet. Úsalo SIEMPRE para consultar noticias, videojuegos, documentación, librerías o información externa.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "Término o frase de búsqueda en la web" }
+                    "query": { "type": "string", "description": "Término o frase de búsqueda en la web" },
+                    "domain": { "type": "string", "description": "Opcional: dominio al que restringir la búsqueda (ej. 'github.com', 'reddit.com', 'wikipedia.org', 'docs.rs')" },
+                    "max_results": { "type": "integer", "description": "Opcional: cantidad máxima de resultados (1-10, por defecto 5)" }
                 },
                 "required": ["query"]
             }),
@@ -1793,15 +1795,115 @@ async fn fetch_url_markdown(raw_url: &str) -> Result<String, String> {
     Ok(out)
 }
 
-async fn run_web_search(query: &str) -> Result<String, String> {
-    let clean_query = query.trim();
-    if clean_query.is_empty() {
-        return Err("parámetro 'query' vacío".into());
+struct InstantAnswer {
+    heading: String,
+    abstract_text: String,
+    url: String,
+}
+
+struct SearchResultItem {
+    title: String,
+    url: String,
+    snippet: String,
+    domain: String,
+}
+
+fn clean_search_query(q: &str) -> String {
+    let stop_words: std::collections::HashSet<&'static str> = [
+        // Español
+        "puedes", "puede", "podrias", "podrías", "buscar", "busca", "buscame", "búscame",
+        "consultar", "consulta", "investigar", "investiga", "dime", "cuentame", "cuéntame",
+        "dame", "informacion", "información", "noticia", "noticias", "novedades", "actualidad",
+        "ultmia", "ultima", "última", "ultimas", "últimas", "reciente", "recientes",
+        "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas", "al",
+        "en", "por", "para", "con", "sobre", "acerca", "favor", "porfavor", "gracias",
+        "internet", "web", "online", "que", "qué", "quien", "quién", "como", "cómo",
+        "cuando", "cuándo", "donde", "dónde", "es", "son", "hay", "existe", "tienes",
+        // Inglés
+        "can", "could", "you", "please", "search", "find", "look", "up", "tell", "me",
+        "about", "information", "latest", "news", "updates", "recent", "the", "a", "an",
+        "of", "in", "on", "for", "with", "from", "at", "what", "who", "where", "when",
+        "how", "is", "are", "do", "does"
+    ].iter().cloned().collect();
+
+    let clean = q
+        .replace('?', " ")
+        .replace('¿', " ")
+        .replace('!', " ")
+        .replace('¡', " ")
+        .replace('"', " ")
+        .replace('\'', " ")
+        .replace(':', " ")
+        .replace(',', " ");
+
+    let tokens: Vec<&str> = clean
+        .split_whitespace()
+        .filter(|t| !t.is_empty() && !stop_words.contains(t.to_lowercase().as_str()))
+        .collect();
+
+    if tokens.len() >= 2 {
+        tokens.join(" ")
+    } else {
+        q.trim().to_string()
+    }
+}
+
+fn extract_domain(url: &str) -> String {
+    if let Some(host) = url.split("://").nth(1) {
+        let domain = host.split('/').next().unwrap_or(host);
+        let domain_clean = domain.strip_prefix("www.").unwrap_or(domain);
+        domain_clean.to_string()
+    } else {
+        String::new()
+    }
+}
+
+async fn fetch_ddg_instant_knowledge(query: &str) -> Option<InstantAnswer> {
+    let url = format!(
+        "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+        urlencoding_encode(query)
+    );
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        FETCH_CLIENT
+            .get(&url)
+            .header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .send(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
     }
 
-    let params = [("q", clean_query)];
+    let val = resp.json::<serde_json::Value>().await.ok()?;
+    let heading = val.get("Heading").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let abstract_text = val.get("Abstract").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let abs_url = val.get("AbstractURL").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+    if !heading.is_empty() && !abstract_text.is_empty() {
+        Some(InstantAnswer {
+            heading,
+            abstract_text,
+            url: abs_url,
+        })
+    } else {
+        None
+    }
+}
+
+async fn fetch_ddg_lite(query: &str, domain_filter: Option<&str>) -> Vec<SearchResultItem> {
+    let effective_query = if let Some(d) = domain_filter {
+        format!("site:{d} {query}")
+    } else {
+        query.to_string()
+    };
+
+    let params = [("q", effective_query.as_str())];
     let text = match tokio::time::timeout(
-        std::time::Duration::from_secs(12),
+        std::time::Duration::from_secs(10),
         FETCH_CLIENT
             .post("https://lite.duckduckgo.com/lite/")
             .form(&params)
@@ -1819,12 +1921,20 @@ async fn run_web_search(query: &str) -> Result<String, String> {
         _ => String::new(),
     };
 
-    let link_re = regex::Regex::new(
+    let link_re = match regex::Regex::new(
         r#"(?is)<a\s+[^>]*href=['"]([^'"]+)['"][^>]*class=['"]result-link['"][^>]*>(.*?)</a>|<a\s+[^>]*class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#
-    ).map_err(|e| e.to_string())?;
-    let snip_re = regex::Regex::new(r#"(?is)<td\s+[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>"#)
-        .map_err(|e| e.to_string())?;
-    let strip_tags_re = regex::Regex::new(r"<[^>]+>").map_err(|e| e.to_string())?;
+    ) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let snip_re = match regex::Regex::new(r#"(?is)<td\s+[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>"#) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let strip_tags_re = match regex::Regex::new(r"<[^>]+>") {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
 
     let mut links: Vec<(String, String)> = Vec::new();
     for cap in link_re.captures_iter(&text) {
@@ -1836,7 +1946,7 @@ async fn run_web_search(query: &str) -> Result<String, String> {
         }
     }
 
-    let mut snippets: Vec<String> = snip_re
+    let snippets: Vec<String> = snip_re
         .captures_iter(&text)
         .map(|cap| {
             let raw_s = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -1845,53 +1955,137 @@ async fn run_web_search(query: &str) -> Result<String, String> {
         })
         .collect();
 
-    // Fallback: If DDG Lite yielded no links, query Wikipedia search API
-    if links.is_empty() {
-        if let Ok(Ok(resp)) = tokio::time::timeout(
-            std::time::Duration::from_secs(8),
-            FETCH_CLIENT
-                .get(format!(
-                    "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&utf8=1",
-                    urlencoding_encode(clean_query)
-                ))
-                .header(reqwest::header::USER_AGENT, "MakoraIDE/1.0 (Desktop Assistant)")
-                .send(),
-        )
-        .await
-        {
-            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                if let Some(items) = val.pointer("/query/search").and_then(|v| v.as_array()) {
-                    for item in items.iter().take(5) {
-                        if let (Some(title), Some(snippet), Some(pageid)) = (
-                            item.get("title").and_then(|v| v.as_str()),
-                            item.get("snippet").and_then(|v| v.as_str()),
-                            item.get("pageid").and_then(|v| v.as_i64()),
-                        ) {
-                            let clean_snip = strip_tags_re.replace_all(snippet, "").trim().to_string();
-                            links.push((
-                                title.to_string(),
-                                format!("https://en.wikipedia.org/?curid={pageid}"),
-                            ));
-                            snippets.push(clean_snip);
-                        }
-                    }
+    let mut results = Vec::new();
+    for (i, (title, url)) in links.into_iter().enumerate() {
+        let snippet = snippets.get(i).cloned().unwrap_or_default();
+        let domain = extract_domain(&url);
+        results.push(SearchResultItem {
+            title,
+            url,
+            snippet,
+            domain,
+        });
+    }
+    results
+}
+
+async fn fetch_wikipedia_results(query: &str) -> Vec<SearchResultItem> {
+    let url = format!(
+        "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&utf8=1",
+        urlencoding_encode(query)
+    );
+    let resp = match tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        FETCH_CLIENT
+            .get(&url)
+            .header(reqwest::header::USER_AGENT, "MakoraIDE/1.0 (Desktop Assistant)")
+            .send(),
+    )
+    .await
+    {
+        Ok(Ok(r)) if r.status().is_success() => r,
+        _ => return Vec::new(),
+    };
+
+    let strip_tags_re = match regex::Regex::new(r"<[^>]+>") {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+    if let Ok(val) = resp.json::<serde_json::Value>().await {
+        if let Some(items) = val.pointer("/query/search").and_then(|v| v.as_array()) {
+            for item in items.iter().take(4) {
+                if let (Some(title), Some(snippet), Some(pageid)) = (
+                    item.get("title").and_then(|v| v.as_str()),
+                    item.get("snippet").and_then(|v| v.as_str()),
+                    item.get("pageid").and_then(|v| v.as_i64()),
+                ) {
+                    let clean_snip = strip_tags_re.replace_all(snippet, "").trim().to_string();
+                    results.push(SearchResultItem {
+                        title: title.to_string(),
+                        url: format!("https://en.wikipedia.org/?curid={pageid}"),
+                        snippet: html_unescape(&clean_snip),
+                        domain: "wikipedia.org".to_string(),
+                    });
                 }
             }
         }
     }
+    results
+}
 
-    if links.is_empty() {
-        return Ok(format!("No se encontraron resultados en la web para «{clean_query}». Prueba simplificando los términos de búsqueda."));
+async fn run_web_search(query: &str, domain_filter: Option<&str>, max_results: usize) -> Result<String, String> {
+    let raw_query = query.trim();
+    if raw_query.is_empty() {
+        return Err("parámetro 'query' vacío".into());
     }
 
-    let mut out = format!("Resultados de búsqueda web para «{clean_query}»:\n\n");
-    let count = links.len().min(5);
-    for i in 0..count {
-        let (title, url) = &links[i];
-        let snippet = snippets.get(i).map(|s| s.as_str()).unwrap_or("");
-        out.push_str(&format!("{}. [{}]({})\n   {}\n\n", i + 1, title, url, snippet));
+    let clean_q = clean_search_query(raw_query);
+    let search_q = if clean_q.is_empty() { raw_query } else { &clean_q };
+
+    // Parallel fetch with tokio::join!
+    let (mut ddg_res, instant_res, wiki_res) = tokio::join!(
+        fetch_ddg_lite(search_q, domain_filter),
+        fetch_ddg_instant_knowledge(search_q),
+        async {
+            if domain_filter.is_none() {
+                fetch_wikipedia_results(search_q).await
+            } else {
+                Vec::new()
+            }
+        }
+    );
+
+    // Fallback: If cleaned query returned 0 results and clean_q != raw_query, try raw query
+    if ddg_res.is_empty() && clean_q != raw_query {
+        ddg_res = fetch_ddg_lite(raw_query, domain_filter).await;
     }
-    out.push_str("\n(Puedes responder directamente con este resumen al usuario o usar `webfetch` con las URLs para más detalles si fuera necesario.)");
+
+    // Merge Wikipedia if needed
+    if ddg_res.len() < max_results && !wiki_res.is_empty() {
+        let existing_urls: std::collections::HashSet<String> = ddg_res.iter().map(|r| r.url.clone()).collect();
+        for w in wiki_res {
+            if !existing_urls.contains(&w.url) {
+                ddg_res.push(w);
+            }
+        }
+    }
+
+    if ddg_res.is_empty() && instant_res.is_none() {
+        return Ok(format!("No se encontraron resultados web para «{search_q}». Prueba simplificando los términos de búsqueda."));
+    }
+
+    let mut out = format!("### 🌐 Resultados de Búsqueda Web: «{search_q}»\n\n");
+
+    if let Some(inst) = instant_res {
+        out.push_str(&format!("> 💡 **Información Directa ({heading}):**\n> {abstract_text}\n", heading = inst.heading, abstract_text = inst.abstract_text));
+        if !inst.url.is_empty() {
+            out.push_str(&format!("> *Fuente oficial:* [{heading}]({url})\n\n", heading = inst.heading, url = inst.url));
+        } else {
+            out.push('\n');
+        }
+    }
+
+    if !ddg_res.is_empty() {
+        out.push_str("#### Enlaces y Fuentes Principales:\n");
+        let limit = ddg_res.len().min(max_results);
+        for i in 0..limit {
+            let item = &ddg_res[i];
+            let dom_badge = if !item.domain.is_empty() {
+                format!(" · `{}`", item.domain)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("{}. **[{}]({})**{}\n", i + 1, item.title, item.url, dom_badge));
+            if !item.snippet.is_empty() {
+                out.push_str(&format!("   {}\n", item.snippet));
+            }
+            out.push('\n');
+        }
+    }
+
+    out.push_str("(Puedes responder directamente al usuario sintetizando esta información o usar `webfetch` con alguna de las URLs para leer el artículo íntegro si fuera necesario.)");
     Ok(out)
 }
 
@@ -2415,7 +2609,13 @@ async fn execute_tool_inner(
             if query.trim().is_empty() {
                 return Err("web_search requiere un parámetro 'query' no vacío".into());
             }
-            run_web_search(&query).await
+            let domain = args.get("domain").and_then(|v| v.as_str()).map(String::from);
+            let max_results = args
+                .get("max_results")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5)
+                .clamp(1, 10) as usize;
+            run_web_search(&query, domain.as_deref(), max_results).await
         }
         "webfetch" => {
             let url = s("url");
@@ -3914,5 +4114,30 @@ mod tests {
         let snip_cap = snip_re.captures(html_sample).unwrap();
         let snip = strip_tags_re.replace_all(snip_cap.get(1).unwrap().as_str(), "").trim().to_string();
         assert_eq!(snip, "Latest updates and DLC details for Dragon's Dogma 2.");
+    }
+
+    #[test]
+    fn test_clean_search_query() {
+        assert_eq!(
+            clean_search_query("Puedes buscar la ultima informacion de dragons dogma 2 en internet?"),
+            "dragons dogma 2"
+        );
+        assert_eq!(
+            clean_search_query("what is the release date of rust 1.85?"),
+            "release date rust 1.85"
+        );
+        assert_eq!(clean_search_query("actix-web"), "actix-web");
+    }
+
+    #[test]
+    fn test_extract_domain() {
+        assert_eq!(
+            extract_domain("https://www.dragonsdogma.com/2/es/"),
+            "dragonsdogma.com"
+        );
+        assert_eq!(
+            extract_domain("http://github.com/rust-lang/rust"),
+            "github.com"
+        );
     }
 }
