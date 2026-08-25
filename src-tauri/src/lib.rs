@@ -868,7 +868,7 @@ fn detect_project_rules(folders: Vec<String>) -> Result<Option<String>, String> 
 #[specta::specta]
 async fn detect_ollama() -> Result<bool, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(800))
+        .timeout(std::time::Duration::from_millis(2000))
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client.get("http://localhost:11434/api/tags").send().await;
