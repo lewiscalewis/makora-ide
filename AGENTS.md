@@ -44,7 +44,7 @@ Las siguientes herramientas residen en [`src-tauri/src/agent.rs`](file:///c:/Use
 6. `apply_patch`: Aplicación de parches quirúrgicos multi-bloque.
 7. `write_file`: Creación de archivos nuevos (solo archivos no existentes).
 8. `bash`: Ejecución de comandos de terminal en Windows (`cmd.exe` / `powershell`).
-9. `web_search`: Búsqueda orgánica en internet vía DuckDuckGo Lite con los 5 mejores resultados (título, URL verificado y snippet).
+9. `web_search`: Búsqueda híbrida concurrente en internet (DuckDuckGo Lite + Instant Knowledge API + Wikipedia) con limpiador NLP de preguntas naturales, filtros opcionales de dominio (`domain`) y cantidad (`max_results`).
 10. `webfetch`: Descarga de páginas web públicas con cabeceras de navegador completo y conversión a Markdown.
 11. `todowrite`: Gestión de tareas pendientes durante la ejecución agéntica.
 12. `question`: Preguntas interactivas al usuario que bloquean la ejecución hasta recibir respuesta.
