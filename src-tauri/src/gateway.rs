@@ -414,6 +414,53 @@ fn is_local_endpoint(base: &str) -> bool {
         || lower.contains("127.0.0.1")
         || lower.contains("[::1]")
         || lower.contains("0.0.0.0")
+        || lower.contains(":11434")
+        || lower.contains(":1234")
+        || lower.starts_with("http://172.")
+        || lower.starts_with("http://192.168.")
+        || lower.starts_with("http://10.")
+}
+
+pub async fn resolve_active_ollama_url(base: &str) -> String {
+    let client = &*HTTP_CLIENT;
+    let mut candidate_bases = vec![
+        base.to_string(),
+        "http://localhost:11434/v1".to_string(),
+        "http://127.0.0.1:11434/v1".to_string(),
+    ];
+    if let Some(wsl_ip) = get_wsl_ip() {
+        candidate_bases.push(format!("http://{wsl_ip}:11434/v1"));
+    }
+
+    for b in &candidate_bases {
+        let clean = b.trim_end_matches('/').trim_end_matches("/v1");
+        let tag_url = format!("{clean}/api/tags");
+        if let Ok(resp) = client.get(&tag_url).timeout(std::time::Duration::from_millis(600)).send().await {
+            if resp.status().is_success() {
+                return format!("{clean}/v1/chat/completions");
+            }
+        }
+    }
+
+    for _ in 0..4 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        for b in &candidate_bases {
+            let clean = b.trim_end_matches('/').trim_end_matches("/v1");
+            let tag_url = format!("{clean}/api/tags");
+            if let Ok(resp) = client.get(&tag_url).timeout(std::time::Duration::from_millis(600)).send().await {
+                if resp.status().is_success() {
+                    return format!("{clean}/v1/chat/completions");
+                }
+            }
+        }
+    }
+
+    if let Some(wsl_ip) = get_wsl_ip() {
+        format!("http://{wsl_ip}:11434/v1/chat/completions")
+    } else {
+        let clean = base.trim_end_matches('/').trim_end_matches("/v1");
+        format!("{clean}/v1/chat/completions")
+    }
 }
 
 fn norm_effort_openai(e: &str) -> Option<String> {
@@ -627,12 +674,11 @@ pub async fn openai_turn(
     tools: &[ToolDef],
 ) -> Result<TurnOutcome, String> {
     let base = cfg.base_url.trim_end_matches('/');
-    let mut url = format!("{base}/chat/completions");
-    if base.contains("localhost:11434") || base.contains("127.0.0.1:11434") {
-        if let Some(wsl_ip) = get_wsl_ip() {
-            url = format!("http://{wsl_ip}:11434/v1/chat/completions");
-        }
-    }
+    let url = if is_local_endpoint(base) || cfg.kind == "ollama" {
+        resolve_active_ollama_url(&cfg.base_url).await
+    } else {
+        format!("{base}/chat/completions")
+    };
 
     let mut msgs: Vec<Value> = Vec::new();
     if !system.trim().is_empty() {
