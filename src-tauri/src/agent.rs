@@ -457,7 +457,7 @@ Eres Makora, el asistente de desarrollo de software integrado en MakoraIDE.
 3. Modifica archivos existentes con `edit` (old_string exacto y único, con contexto, + new_string). `write_file` solo para archivos 100% nuevos; `apply_patch` para parches multi-bloque.
 4. Agrupa todas las lecturas o búsquedas independientes en una única ronda de llamadas.
 5. NO uses comandos Unix (`ls`, `find`, `cat`, `grep`, `sed`, `awk`, `head`, `tail`, `rm`) dentro de `bash` en Windows: la shell es `cmd.exe`. Para listar/leer/buscar usa SIEMPRE las herramientas `list_dir`, `read_file`, `read_file_range` y `grep`.
-6. Para buscar información en Internet (videojuegos, documentación de librerías, noticias o datos externos), usa SIEMPRE la herramienta `web_search` primero. NUNCA adivines ni inventes URLs para `webfetch`. Usa `webfetch` solo con URLs reales obtenidas de `web_search` o indicadas por el usuario.
+6. Para consultar información externa, noticias, videojuegos, documentación o bibliotecas en internet, usa SIEMPRE la herramienta `web_search`. Para descargar el contenido completo de una URL específica usa `webfetch`. El acceso web en `bash` está prohibido (`curl`/`wget`/`nc`/`telnet`).
 7. Si una herramienta devuelve ERROR, interpreta el mensaje, corrige los argumentos y reintenta o adapta la estrategia. NUNCA repitas la misma llamada fallida.
 8. No releas archivos que ya leíste en este turno ni explores proyectos/carpetas no relacionados. Concéntrate SOLO en los archivos que requiere la tarea.
 
@@ -627,18 +627,18 @@ fn core_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "web_search".into(),
-            description: "Busca en Internet mediante DuckDuckGo información actualizada, noticias, documentación de librerías, videojuegos o preguntas generales. Devuelve una lista de resultados con títulos, fragmentos y URLs.".into(),
+            description: "Busca en la web mediante un motor de búsqueda y devuelve los 5 mejores resultados con título, URL y extracto/snippet. Úsalo SIEMPRE para consultar información sobre videojuegos, librerías, documentación, errores o temas externos.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "Término o frase de búsqueda en la web (ej. 'Dragon\\'s Dogma 2 Capcom novedades', 'Rust reqwest timeout')" }
+                    "query": { "type": "string", "description": "Término o frase de búsqueda en la web" }
                 },
                 "required": ["query"]
             }),
         },
         ToolDef {
             name: "webfetch".into(),
-            description: "Descarga una página web pública y la convierte a Markdown. Solo http/https, máx 5 MB.".into(),
+            description: "Descarga una página web y la convierte a Markdown. Solo http/https, máx 5 MB; requiere aprobación del usuario por URL.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -922,7 +922,7 @@ pub fn is_ignored_path(name: &str) -> bool {
 pub fn is_read_only_tool(name: &str) -> bool {
     matches!(
         name,
-        "read_file" | "read_file_range" | "grep" | "list_dir" | "skill" | "repo_map_query" | "web_search" | "webfetch"
+        "read_file" | "read_file_range" | "grep" | "list_dir" | "skill" | "repo_map_query"
     )
 }
 
@@ -1741,8 +1741,12 @@ static FETCH_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock:
         .unwrap_or_default()
 });
 
-async fn fetch_url_markdown(url: &str) -> Result<String, String> {
-    if !is_public_url(url) {
+async fn fetch_url_markdown(raw_url: &str) -> Result<String, String> {
+    let mut url = raw_url.trim().to_string();
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        url = format!("https://{url}");
+    }
+    if !is_public_url(&url) {
         return Err(
             "solo se permiten URLs http/https públicas (sin localhost, IPs privadas ni destinos internos)"
                 .into(),
@@ -1752,18 +1756,23 @@ async fn fetch_url_markdown(url: &str) -> Result<String, String> {
         std::time::Duration::from_secs(25),
         async {
             let resp = FETCH_CLIENT
-                .get(url)
+                .get(&url)
                 .header(
                     reqwest::header::USER_AGENT,
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 )
-                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                .header(reqwest::header::ACCEPT_LANGUAGE, "es-ES,es;q=0.9,en;q=0.8")
+                .header("Sec-Fetch-Dest", "document")
+                .header("Sec-Fetch-Mode", "navigate")
+                .header("Sec-Fetch-Site", "none")
+                .header("Upgrade-Insecure-Requests", "1")
                 .send()
                 .await
-                .map_err(|e| format!("error descargando {url}: {e}"))?;
+                .map_err(|e| format!("error descargando {url}: {e}. Si la URL falló, usa `web_search` para encontrar enlaces alternativos válidos."))?;
             let status = resp.status();
             if !status.is_success() {
-                return Err(format!("HTTP {status} descargando {url}"));
+                return Err(format!("HTTP {status} descargando {url}. Prueba buscando con `web_search` para encontrar la URL oficial correcta."));
             }
             if resp.content_length().unwrap_or(0) > 5_000_000 {
                 return Err("respuesta demasiado grande (>5 MB)".into());
@@ -1778,29 +1787,96 @@ async fn fetch_url_markdown(url: &str) -> Result<String, String> {
     if text.len() > 5_000_000 {
         return Err("respuesta demasiado grande (>5 MB)".into());
     }
-     let markdown = html_to_markdown(&text);
-     let mut out = format!("Contenido de {url} (convertido a Markdown):\n\n");
-     out.push_str(&truncate_tool_output("webfetch", &markdown, 6000));
-     Ok(out)
- }
+    let markdown = html_to_markdown(&text);
+    let mut out = format!("Contenido de {url} (convertido a Markdown):\n\n");
+    out.push_str(&truncate_tool_output("webfetch", &markdown, 6000));
+    Ok(out)
+}
 
- #[tauri::command]
- async fn webfetch(url: String) -> Result<String, String> {
-     // Validar que la URL sea segura y pública
-     if !is_public_url(&url) {
-         return Err("La URL debe ser pública (no localhost ni direcciones privadas)".to_string());
-     }
-     
-     // Verificar tamaño máximo de la respuesta
-     match fetch_url_markdown(&url).await {
-         Ok(content) => {
-             Ok(content)
-         },
-         Err(e) => {
-             Err(format!("Falló el intento de obtener la página web: {}", e))
-         }
-     }
- }
+async fn run_web_search(query: &str) -> Result<String, String> {
+    let clean_query = query.trim();
+    if clean_query.is_empty() {
+        return Err("parámetro 'query' vacío".into());
+    }
+
+    let params = [("q", clean_query)];
+    let text = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        async {
+            let resp = FETCH_CLIENT
+                .post("https://lite.duckduckgo.com/lite/")
+                .form(&params)
+                .header(
+                    reqwest::header::USER_AGENT,
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                )
+                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+                .header(reqwest::header::ACCEPT_LANGUAGE, "es-ES,es;q=0.9,en;q=0.8")
+                .send()
+                .await
+                .map_err(|e| format!("error conectando con el motor de búsqueda: {e}"))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(format!("HTTP {status} en el motor de búsqueda"));
+            }
+            resp.text()
+                .await
+                .map_err(|e| format!("error leyendo resultados: {e}"))
+        },
+    )
+    .await
+    .map_err(|_| "timeout (15s) buscando en la web".to_string())??;
+
+    let link_re = regex::Regex::new(r#"<a[^>]+class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#)
+        .map_err(|e| e.to_string())?;
+    let snip_re = regex::Regex::new(r#"<td[^>]+class=['"]result-snippet['"][^>]*>(.*?)</td>"#)
+        .map_err(|e| e.to_string())?;
+    let strip_tags_re = regex::Regex::new(r"<[^>]+>").map_err(|e| e.to_string())?;
+
+    let links: Vec<(String, String)> = link_re
+        .captures_iter(&text)
+        .map(|cap| {
+            let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+            let raw_title = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            let clean_title = strip_tags_re.replace_all(raw_title, "").trim().to_string();
+            (html_unescape(&clean_title), html_unescape(&url))
+        })
+        .filter(|(t, u)| !u.contains("duckduckgo.com/y.js") && !t.contains("more info"))
+        .collect();
+
+    let snippets: Vec<String> = snip_re
+        .captures_iter(&text)
+        .map(|cap| {
+            let raw_s = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            let clean_s = strip_tags_re.replace_all(raw_s, "").trim().to_string();
+            html_unescape(&clean_s)
+        })
+        .collect();
+
+    if links.is_empty() {
+        return Ok(format!("No se encontraron resultados en la web para «{clean_query}». Intenta con otros términos o palabras clave."));
+    }
+
+    let mut out = format!("Resultados de búsqueda web para «{clean_query}»:\n\n");
+    let count = links.len().min(5);
+    for i in 0..count {
+        let (title, url) = &links[i];
+        let snippet = snippets.get(i).map(|s| s.as_str()).unwrap_or("");
+        out.push_str(&format!("{}. [{}]({})\n   {}\n\n", i + 1, title, url, snippet));
+    }
+    out.push_str("\n(Puedes usar `webfetch` con cualquiera de las URLs anteriores para leer su contenido completo si necesitas más detalles.)");
+    Ok(out)
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+}
 
 fn html_to_markdown(html: &str) -> String {
     let mut cleaned = html.to_string();
@@ -1817,156 +1893,6 @@ fn html_to_markdown(html: &str) -> String {
         }
     }
     html2md::parse_html(&cleaned)
-}
-
-async fn search_web_duckduckgo(query: &str) -> Result<String, String> {
-    let clean_query = query.trim();
-    if clean_query.is_empty() {
-        return Err("query de búsqueda no puede estar vacía".into());
-    }
-
-    let encoded_query = urlencoding_simple(clean_query);
-    let search_url = format!("https://html.duckduckgo.com/html/?q={encoded_query}");
-
-    let text = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        async {
-            let resp = FETCH_CLIENT
-                .get(&search_url)
-                .header(
-                    reqwest::header::USER_AGENT,
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-                )
-                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
-                .header(reqwest::header::ACCEPT_LANGUAGE, "es-ES,es;q=0.9,en;q=0.8")
-                .send()
-                .await
-                .map_err(|e| format!("error al conectar con el buscador: {e}"))?;
-
-            let status = resp.status();
-            if !status.is_success() {
-                return Err(format!("HTTP {status} en el buscador web"));
-            }
-            resp.text()
-                .await
-                .map_err(|e| format!("error leyendo resultados de búsqueda: {e}"))
-        },
-    )
-    .await
-    .map_err(|_| "timeout (15s) buscando en la web".to_string())??;
-
-    let mut results: Vec<(String, String)> = Vec::new(); // (snippet, url)
-
-    let snippet_re = regex::Regex::new(r#"(?is)<a class="result__snippet"[^>]*href="([^"]*)"[^>]*>(.*?)</a>"#)
-        .map_err(|e| e.to_string())?;
-
-    for cap in snippet_re.captures_iter(&text) {
-        if results.len() >= 6 {
-            break;
-        }
-        let raw_url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let raw_snippet = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-
-        let final_url = decode_ddg_url(raw_url);
-        let clean_snippet = strip_html_tags(raw_snippet);
-
-        if !clean_snippet.is_empty() && !final_url.is_empty() {
-            results.push((clean_snippet, final_url));
-        }
-    }
-
-    if results.is_empty() {
-        let general_re = regex::Regex::new(r#"(?is)<div class="result__body">.*?<a class="result__url"[^>]*href="([^"]*)".*?<a class="result__snippet"[^>]*>(.*?)</a>"#).ok();
-        if let Some(re) = general_re {
-            for cap in re.captures_iter(&text) {
-                if results.len() >= 6 {
-                    break;
-                }
-                let raw_url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                let raw_snippet = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                let final_url = decode_ddg_url(raw_url);
-                let clean_snippet = strip_html_tags(raw_snippet);
-                if !clean_snippet.is_empty() {
-                    results.push((clean_snippet, final_url));
-                }
-            }
-        }
-    }
-
-    if results.is_empty() {
-        return Ok(format!("No se encontraron resultados web para la consulta: «{clean_query}». Intenta reformular la búsqueda."));
-    }
-
-    let mut out = format!("### Resultados de búsqueda web para «{clean_query}»:\n\n");
-    for (i, (snippet, url)) in results.iter().enumerate() {
-        out.push_str(&format!("{}. **URL:** {}\n   **Fragmento:** {}\n\n", i + 1, url, snippet));
-    }
-    out.push_str("(Para ver el contenido completo de una de estas URLs, usa la herramienta `webfetch` con la URL deseada.)");
-    Ok(out)
-}
-
-fn decode_ddg_url(raw: &str) -> String {
-    if let Some(pos) = raw.find("uddg=") {
-        let rest = &raw[pos + 5..];
-        let enc = rest.split('&').next().unwrap_or(rest);
-        urlencoding_decode(enc)
-    } else if raw.starts_with("//") {
-        format!("https:{raw}")
-    } else {
-        raw.to_string()
-    }
-}
-
-fn urlencoding_simple(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            b' ' => out.push('+'),
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
-}
-
-fn urlencoding_decode(s: &str) -> String {
-    let mut out = Vec::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(val) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
-                out.push(val);
-                i += 3;
-                continue;
-            }
-        } else if bytes[i] == b'+' {
-            out.push(b' ');
-            i += 1;
-            continue;
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
-}
-
-fn strip_html_tags(s: &str) -> String {
-    if let Ok(re) = regex::Regex::new(r"<[^>]*>") {
-        let no_tags = re.replace_all(s, "");
-        no_tags
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&nbsp;", " ")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        s.to_string()
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2110,30 +2036,28 @@ fn repair_tool_name<'a>(name: &'a str, mcp_names: &[String]) -> std::borrow::Cow
         "bash",
         "todowrite",
         "question",
+        "web_search",
         "webfetch",
         "skill",
         "repo_map_query",
     ];
-    let collapse = |s: &str| -> String {
-        s.trim()
-            .to_lowercase()
-            .replace(['-', ' ', ':', '/'], "_")
-            .split('_')
-            .filter(|p| !p.is_empty())
-            .collect::<Vec<_>>()
-            .join("_")
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(|c| c.to_lowercase())
+            .collect()
     };
     if CORE.iter().any(|c| *c == name) || mcp_names.iter().any(|c| c == name) {
         return std::borrow::Cow::Borrowed(name);
     }
-    let target = collapse(name);
+    let target = norm(name);
     for c in CORE {
-        if collapse(c) == target {
+        if norm(c) == target {
             return std::borrow::Cow::Owned(c.to_string());
         }
     }
     for m in mcp_names {
-        if collapse(m) == target {
+        if norm(m) == target {
             return std::borrow::Cow::Owned(m.clone());
         }
     }
@@ -2447,7 +2371,10 @@ async fn execute_tool_inner(
         }
         "web_search" => {
             let query = s("query");
-            search_web_duckduckgo(&query).await
+            if query.trim().is_empty() {
+                return Err("web_search requiere un parámetro 'query' no vacío".into());
+            }
+            run_web_search(&query).await
         }
         "webfetch" => {
             let url = s("url");
@@ -3670,24 +3597,8 @@ mod tests {
     fn test_is_read_only_tool() {
         assert!(is_read_only_tool("read_file"));
         assert!(is_read_only_tool("grep"));
-        assert!(is_read_only_tool("web_search"));
-        assert!(is_read_only_tool("webfetch"));
         assert!(!is_read_only_tool("write_file"));
         assert!(!is_read_only_tool("bash"));
-    }
-
-    #[test]
-    fn test_decode_ddg_url() {
-        let enc = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fstore.steampowered.com%2Fapp%2F2054970%2FDragons_Dogma_2%2F&rut=123";
-        let dec = decode_ddg_url(enc);
-        assert_eq!(dec, "https://store.steampowered.com/app/2054970/Dragons_Dogma_2/");
-    }
-
-    #[test]
-    fn test_strip_html_tags() {
-        let raw = "<b>Dragon&#39;s</b> <b>Dogma</b> &amp; 2";
-        let clean = strip_html_tags(raw);
-        assert_eq!(clean, "Dragon's Dogma & 2");
     }
 
     #[test]
@@ -3918,5 +3829,18 @@ mod tests {
         assert!(summarize_old_tool_result("ERROR: no existe").contains("con error"));
         assert!(summarize_old_tool_result("exit: 0\nhola\nadios").contains("Comando previo"));
         assert!(summarize_old_tool_result("a\nb\nc").contains("Resultado previo de herramienta"));
+    }
+
+    #[test]
+    fn test_html_unescape() {
+        assert_eq!(html_unescape("Dragon&#x27;s Dogma &amp; &lt;2&gt;"), "Dragon's Dogma & <2>");
+    }
+
+    #[test]
+    fn test_repair_tool_name_web_search() {
+        let mcp = vec![];
+        assert_eq!(repair_tool_name("web_search", &mcp), "web_search");
+        assert_eq!(repair_tool_name("web search", &mcp), "web_search");
+        assert_eq!(repair_tool_name("WebSearch", &mcp), "web_search");
     }
 }

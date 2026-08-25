@@ -5,6 +5,7 @@ import ImageViewer from "./viewers/ImageViewer";
 import SvgViewer from "./viewers/SvgViewer";
 import PdfViewer from "./viewers/PdfViewer";
 import EditorPanel from "./EditorPanel";
+import ContextMenu, { type ContextMenuItem, type ContextMenuState } from "./ContextMenu";
 import {
   Sparkles,
   Columns2,
@@ -24,8 +25,14 @@ import { useI18n } from "../i18n";
 interface UnifiedWorkspaceProps {
   openFiles: OpenFile[];
   activePath: string | null;
+  workspaceFolders?: string[];
   onActivateFile: (path: string | null) => void;
   onCloseFile: (path: string) => void;
+  onCloseOtherFiles?: (path: string) => void;
+  onCloseFilesToRight?: (path: string) => void;
+  onCloseFilesToLeft?: (path: string) => void;
+  onCloseAllFiles?: () => void;
+  onCloseSavedFiles?: () => void;
   onUpdateContent: (path: string, content: string) => void;
   onSaveFile: (path: string) => void;
   diff: DiffInfo | null;
@@ -59,32 +66,41 @@ function getFileIcon(filename: string) {
     case "py":
       return <Code2 size={13} className="text-blue" />;
     case "json":
-      return <Code2 size={13} className="text-gold" />;
+    case "yaml":
+    case "yml":
+    case "toml":
+      return <FileCode size={13} className="text-yellow" />;
     case "md":
-    case "mdx":
-      return <FileText size={13} className="text-blue" />;
+    case "markdown":
+    case "txt":
+      return <FileText size={13} className="text-green" />;
     case "pdf":
       return <FileText size={13} className="text-purple" />;
     case "png":
     case "jpg":
     case "jpeg":
-    case "webp":
     case "gif":
-    case "svg":
-      return <Image size={13} className="text-green" />;
+    case "webp":
+      return <Image size={13} className="text-pink" />;
     case "csv":
     case "tsv":
-      return <Table size={13} className="text-cyan" />;
+      return <Table size={13} className="text-green" />;
     default:
-      return <FileText size={13} className="opacity-70" />;
+      return <FileCode size={13} className="text-muted" />;
   }
 }
 
 export default function UnifiedWorkspace({
   openFiles,
   activePath,
+  workspaceFolders,
   onActivateFile,
   onCloseFile,
+  onCloseOtherFiles,
+  onCloseFilesToRight,
+  onCloseFilesToLeft,
+  onCloseAllFiles,
+  onCloseSavedFiles,
   onUpdateContent,
   onSaveFile,
   diff,
@@ -101,6 +117,7 @@ export default function UnifiedWorkspace({
 }: UnifiedWorkspaceProps) {
   const { t } = useI18n();
   const isChatTabActive = activePath === null;
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const [splitRatio, setSplitRatio] = useState<number>(() => {
     const saved = localStorage.getItem("makora.splitRatio");
@@ -133,6 +150,118 @@ export default function UnifiedWorkspace({
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
   }, [splitRatio]);
+
+  const handleFileTabContextMenu = (e: React.MouseEvent, file: OpenFile, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const items: ContextMenuItem[] = [
+      {
+        label: t.workspace.close,
+        onSelect: () => onCloseFile(file.path),
+      },
+      {
+        label: t.workspace.closeOthers,
+        onSelect: () => onCloseOtherFiles?.(file.path),
+      },
+    ];
+
+    if (index < openFiles.length - 1) {
+      items.push({
+        label: t.workspace.closeToRight,
+        onSelect: () => onCloseFilesToRight?.(file.path),
+      });
+    }
+
+    if (index > 0) {
+      items.push({
+        label: t.workspace.closeToLeft,
+        onSelect: () => onCloseFilesToLeft?.(file.path),
+      });
+    }
+
+    if (openFiles.some((f) => !f.isDirty)) {
+      items.push({
+        label: t.workspace.closeSaved,
+        onSelect: () => onCloseSavedFiles?.(),
+      });
+    }
+
+    items.push({
+      label: t.workspace.closeAll,
+      danger: openFiles.some((f) => f.isDirty),
+      onSelect: () => onCloseAllFiles?.(),
+    });
+
+    items.push({
+      label: t.workspace.copyRelativePath,
+      onSelect: () => {
+        let rel = file.path;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          for (const folder of workspaceFolders) {
+            if (rel.startsWith(folder)) {
+              rel = rel.slice(folder.length).replace(/^[\\/]/, "");
+              break;
+            }
+          }
+        }
+        navigator.clipboard.writeText(rel);
+      },
+    });
+
+    items.push({
+      label: t.workspace.copyAbsolutePath,
+      onSelect: () => {
+        navigator.clipboard.writeText(file.path);
+      },
+    });
+
+    items.push({
+      label: t.workspace.splitView,
+      onSelect: () => onToggleSplit(),
+    });
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items,
+    });
+  };
+
+  const handleMasterChatContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const items: ContextMenuItem[] = [];
+    if (openFiles.length > 0) {
+      items.push({
+        label: t.workspace.closeAll,
+        onSelect: () => onCloseAllFiles?.(),
+      });
+      if (openFiles.some((f) => !f.isDirty)) {
+        items.push({
+          label: t.workspace.closeSaved,
+          onSelect: () => onCloseSavedFiles?.(),
+        });
+      }
+    }
+    items.push({
+      label: t.workspace.splitView,
+      onSelect: () => onToggleSplit(),
+    });
+    if (onNewChat) {
+      items.push({
+        label: t.workspace.newChat,
+        onSelect: () => onNewChat(),
+      });
+    }
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items,
+    });
+  };
 
   // Determine active file for editor (fallback to last open file if in split mode with chat selected)
   const targetFile = activePath
@@ -221,6 +350,7 @@ export default function UnifiedWorkspace({
             <div
               className={`master-chat-tab ${isChatTabActive ? "active" : ""}`}
               onClick={() => onActivateFile(null)}
+              onContextMenu={handleMasterChatContextMenu}
               title={t.workspace.masterChat}
             >
               <Sparkles size={12} className="master-tab-icon" />
@@ -233,7 +363,7 @@ export default function UnifiedWorkspace({
           </div>
 
           {/* Open File Tabs */}
-          {openFiles.map((file) => {
+          {openFiles.map((file, index) => {
             const isActive = !isChatTabActive && file.path === activePath;
             const name = file.path.split(/[\\/]/).pop() || file.path;
 
@@ -242,6 +372,7 @@ export default function UnifiedWorkspace({
                 key={file.path}
                 className={`file-tab ${isActive ? "active" : ""}`}
                 onClick={() => onActivateFile(file.path)}
+                onContextMenu={(e) => handleFileTabContextMenu(e, file, index)}
                 title={file.path}
               >
                 <span className="tab-file-icon">{getFileIcon(name)}</span>
@@ -317,6 +448,9 @@ export default function UnifiedWorkspace({
           </>
         )}
       </div>
+
+      {/* Context Menu for Tabs */}
+      <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />
     </div>
   );
 }

@@ -68,6 +68,15 @@ export interface TranslationSchema {
     runningBackground: string;
     closeSession: string;
     newSessionTooltip: string;
+    close: string;
+    closeOthers: string;
+    closeToRight: string;
+    closeToLeft: string;
+    closeAll: string;
+    closeSaved: string;
+    copyRelativePath: string;
+    copyAbsolutePath: string;
+    revealInExplorer: string;
   };
   explorer: {
     title: string;

@@ -1062,6 +1062,87 @@ function App() {
     [updateActiveWorkspace],
   );
 
+  const closeOtherFiles = useCallback(
+    (path: string) => {
+      updateActiveWorkspace((ws) => {
+        const next = ws.openFiles.filter((f) => f.path === path);
+        return {
+          ...ws,
+          openFiles: next,
+          activeFilePath: path,
+          diff: null,
+        };
+      });
+    },
+    [updateActiveWorkspace],
+  );
+
+  const closeFilesToRight = useCallback(
+    (path: string) => {
+      updateActiveWorkspace((ws) => {
+        const idx = ws.openFiles.findIndex((f) => f.path === path);
+        if (idx === -1) return ws;
+        const next = ws.openFiles.slice(0, idx + 1);
+        const activeFilePath = next.some((f) => f.path === ws.activeFilePath)
+          ? ws.activeFilePath
+          : path;
+        return {
+          ...ws,
+          openFiles: next,
+          activeFilePath,
+          diff: next.some((f) => f.path === ws.activeFilePath) ? ws.diff : null,
+        };
+      });
+    },
+    [updateActiveWorkspace],
+  );
+
+  const closeFilesToLeft = useCallback(
+    (path: string) => {
+      updateActiveWorkspace((ws) => {
+        const idx = ws.openFiles.findIndex((f) => f.path === path);
+        if (idx === -1) return ws;
+        const next = ws.openFiles.slice(idx);
+        const activeFilePath = next.some((f) => f.path === ws.activeFilePath)
+          ? ws.activeFilePath
+          : path;
+        return {
+          ...ws,
+          openFiles: next,
+          activeFilePath,
+          diff: next.some((f) => f.path === ws.activeFilePath) ? ws.diff : null,
+        };
+      });
+    },
+    [updateActiveWorkspace],
+  );
+
+  const closeAllFiles = useCallback(() => {
+    updateActiveWorkspace((ws) => ({
+      ...ws,
+      openFiles: [],
+      activeFilePath: null,
+      diff: null,
+    }));
+  }, [updateActiveWorkspace]);
+
+  const closeSavedFiles = useCallback(() => {
+    updateActiveWorkspace((ws) => {
+      const next = ws.openFiles.filter((f) => f.isDirty);
+      const activeFilePath = next.some((f) => f.path === ws.activeFilePath)
+        ? ws.activeFilePath
+        : next.length > 0
+          ? next[next.length - 1].path
+          : null;
+      return {
+        ...ws,
+        openFiles: next,
+        activeFilePath,
+        diff: next.some((f) => f.path === ws.activeFilePath) ? ws.diff : null,
+      };
+    });
+  }, [updateActiveWorkspace]);
+
   const updateFileContent = useCallback(
     (path: string, content: string) => {
       const normalized = content.replace(/\r\n/g, "\n");
@@ -1690,8 +1771,14 @@ function App() {
           <UnifiedWorkspace
             openFiles={openFiles}
             activePath={activePath}
+            workspaceFolders={activeWorkspace.folders}
             onActivateFile={(path) => updateActiveWorkspace({ activeFilePath: path })}
             onCloseFile={closeFile}
+            onCloseOtherFiles={closeOtherFiles}
+            onCloseFilesToRight={closeFilesToRight}
+            onCloseFilesToLeft={closeFilesToLeft}
+            onCloseAllFiles={closeAllFiles}
+            onCloseSavedFiles={closeSavedFiles}
             onUpdateContent={updateFileContent}
             onSaveFile={saveFile}
             diff={diff}
