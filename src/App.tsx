@@ -48,11 +48,13 @@ const GitModal = lazy(() => import("./components/GitModal"));
 const AnalyticsModal = lazy(() => import("./components/AnalyticsModal"));
 const HistoryModal = lazy(() => import("./components/HistoryModal"));
 const BetaAgreementModal = lazy(() => import("./components/BetaAgreementModal"));
+const LocalAiSetupModal = lazy(() => import("./components/LocalAiSetupModal"));
 import {
   initSessions,
   saveSessions,
   saveOpenTabIds,
   setActiveSessionId as persistActiveSessionId,
+  getActiveSessionId,
   makeSession,
   sanitizeMessages,
   deriveTitle,
@@ -188,6 +190,7 @@ function App() {
   const [showGitModal, setShowGitModal] = useState(false);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showLocalAiModal, setShowLocalAiModal] = useState(false);
 
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -328,7 +331,9 @@ function App() {
     let cancelled = false;
     loadSessionsFromStore()
       .then((stored) => {
-        if (cancelled || !stored || stored.length === 0) return;
+        if (cancelled) return;
+        bootHydratedRef.current = true;
+        if (!stored || stored.length === 0) return;
         setSessionState((prev) => {
           const totalMessages = (list: ChatSession[]) =>
             list.reduce((n, s) => n + (s.messages?.length ?? 0), 0);
@@ -337,12 +342,30 @@ function App() {
             stored.length > prev.sessions.length ||
             totalMessages(stored) > totalMessages(prev.sessions);
           if (!useStore) return prev;
-          const nextTabs = stored.slice(0, 3).map((s) => s.id);
-          const nextActive = nextTabs[0] ?? stored[0]?.id ?? "";
-          return { sessions: stored, openTabIds: nextTabs, activeId: nextActive };
+          // Restaura la sesión que estaba activa al cerrar (localStorage
+          // "makora.activeSession") en lugar de forzar siempre la primera,
+          // para no cambiar de sesión al reabrir la app.
+          const savedActiveId = getActiveSessionId();
+          const storedIds = new Set(stored.map((s) => s.id));
+          const restoredActive =
+            savedActiveId && storedIds.has(savedActiveId)
+              ? savedActiveId
+              : stored[0]?.id ?? "";
+          const nextActiveTabs = stored.slice(0, 3).map((s) => s.id);
+          const nextTabs =
+            restoredActive && !nextActiveTabs.includes(restoredActive)
+              ? [restoredActive, ...nextActiveTabs]
+              : nextActiveTabs;
+          return {
+            sessions: stored,
+            openTabIds: nextTabs,
+            activeId: restoredActive,
+          };
         });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        bootHydratedRef.current = true;
+      });
     return () => {
       cancelled = true;
     };
@@ -357,13 +380,31 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const sessionStateRef = useRef(sessionState);
   const saveTimerRef = useRef<number | null>(null);
+  // Mientras no termina la hidratación desde SQLite, NO guardamos sesiones: la
+  // sesión vacía de fallback creada en `initSessions` podría sobrescribir el
+  // historial durable antes de restaurarlo y perder chats/proveedor/modelo.
+  const bootHydratedRef = useRef(false);
 
   const activeSession = activeSessionId
     ? sessions.find((s) => s.id === activeSessionId) ?? openSessions[0] ?? null
     : openSessions[0] ?? null;
+  // Proveedor/baseUrl efectivos de la sesión activa: cada sesión conserva su
+  // proveedor y baseUrl; si no los tiene (sesiones antiguas), hereda el global.
+  const activeSessionProviderId = activeSession?.providerId || settings.providerId;
+  const activeSessionBaseUrl = activeSession?.baseUrl || settings.baseUrl || "";
   // Modelo efectivo de la sesión activa: cada sesión conserva su propio modelo
-  // (`ChatSession.model`); si la sesión no tiene modelo asignado, hereda el global.
-  const activeSessionModel = activeSession?.model || settings.model;
+  // (`ChatSession.model`); si no tiene modelo, hereda el global. Además valida
+  // que el modelo siga existiendo en el proveedor actual para evitar errores
+  // 404 al restaurar sesiones con modelos retirados del proveedor.
+  const activeSessionModel = useMemo(() => {
+    const sessionModel = activeSession?.model || settings.model;
+    const sameProvider = activeSessionProviderId === settings.providerId;
+    if (sameProvider && models.length > 0 && !models.includes(sessionModel)) {
+      if (settings.model && models.includes(settings.model)) return settings.model;
+      return models[0];
+    }
+    return sessionModel;
+  }, [activeSession?.model, settings.model, settings.providerId, activeSessionProviderId, models]);
   const activeWorkspace: SessionWorkspaceState = activeSession?.workspace ?? defaultWorkspace();
   const activeWorkspaceRef = useRef(activeWorkspace);
   activeWorkspaceRef.current = activeWorkspace;
@@ -484,20 +525,20 @@ function App() {
     };
   }, [checkGitStatus, refreshTick]);
 
-  const preset = presetById(settings.providerId);
+  const preset = presetById(activeSessionProviderId);
   const modelConfig =
     config.models.find((m) => m.id === activeSessionModel) ||
-    (activeSessionModel ? inferModelConfig(activeSessionModel, settings.providerId) : undefined);
+    (activeSessionModel ? inferModelConfig(activeSessionModel, activeSessionProviderId) : undefined);
   const thinkingLevel: ThinkingLevel = modelConfig?.thinkingLevel ?? "medium";
 
   const isVisionActive =
     modelConfig?.visionEnabled ??
-    (activeSessionModel ? inferModelConfig(activeSessionModel, settings.providerId).visionEnabled : false);
+    (activeSessionModel ? inferModelConfig(activeSessionModel, activeSessionProviderId).visionEnabled : false);
 
   const requestConfig: ChatConfig = useMemo(
     () => ({
       kind: preset.kind,
-      baseUrl: settings.baseUrl || preset.baseUrl,
+      baseUrl: activeSessionBaseUrl || preset.baseUrl,
       model: activeSessionModel,
       apiKey: settings.apiKey,
       reasoningEffort:
@@ -514,7 +555,7 @@ function App() {
     [
       preset.kind,
       preset.baseUrl,
-      settings.baseUrl,
+      activeSessionBaseUrl,
       activeSessionModel,
       settings.apiKey,
       modelConfig,
@@ -523,6 +564,7 @@ function App() {
     ],
   );
 
+  // Mantén sincronizado el config remoto (acceso móvil) con el proveedor/modelo activo.
   const skillsContent = config.skills
     .map((s) => `### ${s.name}\n${s.content}`)
     .join("\n\n");
@@ -538,13 +580,29 @@ function App() {
 
   const costUsd = (activeSession?.totalCostUsd ?? 0) > 0
     ? activeSession!.totalCostUsd
-    : computeCostUsd(usage, modelConfig, settings.model, settings.providerId);
+    : computeCostUsd(usage, modelConfig, activeSessionModel, activeSessionProviderId);
 
+  // El saldo ya descuenta cada llamada realizada, así que compararlo contra el
+  // coste histórico acumulado de la sesión no tiene sentido (una sesión larga
+  // siempre acumula más coste que el saldo restante). Solo tiene sentido
+  // comprobar si el saldo cubre el siguiente turno, estimado con el coste medio
+  // por turno de la sesión (aprox. 1 mensaje de asistente por turno).
+  const turnCount = activeSession
+    ? Math.max(1, Math.ceil(activeSession.messageCount / 2))
+    : 0;
+  const estimatedNextTurnCost =
+    activeSession && activeSession.totalCostUsd > 0 && turnCount > 0
+      ? activeSession.totalCostUsd / turnCount
+      : null;
   const balanceBlocked =
-    balance !== null && balance.amount > 0 && costUsd >= balance.amount;
-  const blockReason = balance
-    ? `Coste de sesión (${costUsd.toFixed(4)} ${balance.currency}) ≥ saldo (${balance.amount.toFixed(2)} ${balance.currency}).`
-    : "";
+    balance !== null &&
+    balance.amount > 0 &&
+    estimatedNextTurnCost !== null &&
+    estimatedNextTurnCost >= balance.amount;
+  const blockReason =
+    balance && estimatedNextTurnCost !== null
+      ? `Saldo insuficiente: coste medio por turno (${estimatedNextTurnCost.toFixed(4)} ${balance.currency}) ≥ saldo (${balance.amount.toFixed(2)} ${balance.currency}).`
+      : "";
 
   useEffect(() => {
     const safeSettings = { ...settings, apiKey: "" };
@@ -632,6 +690,7 @@ function App() {
 
   // Debounced persistence avoids hammering localStorage on every token chunk.
   useEffect(() => {
+    if (!bootHydratedRef.current) return;
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => saveSessions(sessionState.sessions), 400);
     return () => {
@@ -652,7 +711,7 @@ function App() {
   useEffect(() => {
     const flush = () => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
-      saveSessions(sessionStateRef.current.sessions);
+      if (bootHydratedRef.current) saveSessions(sessionStateRef.current.sessions);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
@@ -840,7 +899,7 @@ function App() {
       setLastUsage(u);
       refreshBalance();
       const usedModel = sessionModel || settings.model;
-      const turnCost = computeCostUsd(u, modelConfig, usedModel, settings.providerId);
+      const turnCost = computeCostUsd(u, modelConfig, usedModel, activeSessionProviderId);
       setSessionState((prev) => ({
         ...prev,
         sessions: prev.sessions.map((s) => {
@@ -861,7 +920,7 @@ function App() {
         }),
       }));
     },
-    [modelConfig, settings.model, settings.providerId, refreshBalance],
+    [modelConfig, settings.model, activeSessionProviderId, refreshBalance],
   );
 
   const isFileSafe = useCallback((path: string): boolean => {
@@ -1104,7 +1163,7 @@ function App() {
       const fallback: ModelConfig = {
         id: targetModel,
         label: targetModel,
-        providerId: settings.providerId,
+        providerId: activeSessionProviderId,
         thinkingLevel: "medium",
         contextWindow: 128000,
         maxOutputTokens: 8192,
@@ -1168,6 +1227,8 @@ function App() {
         const updated: ChatSession = {
           ...target,
           model: sessionModel || target.model || settings.model,
+          providerId: target.providerId || settings.providerId,
+          baseUrl: target.baseUrl || settings.baseUrl || "",
           title,
           updatedAt: Date.now(),
           messageCount: cleaned.length,
@@ -1190,13 +1251,18 @@ function App() {
     setSessionState((prev) => {
       // Siempre se crea una pestaña nueva con sesión limpia añadida al historial
       const inheritFolders = [...activeWorkspaceRef.current.folders];
-      const fresh = makeSession(settings.model || "", {
-        folders: inheritFolders,
-        openFiles: [],
-        activeFilePath: null,
-        status: "idle",
-        diff: null,
-      });
+      const fresh = makeSession(
+        activeSessionModel || settings.model || "",
+        activeSessionProviderId,
+        activeSessionBaseUrl || presetById(activeSessionProviderId).baseUrl,
+        {
+          folders: inheritFolders,
+          openFiles: [],
+          activeFilePath: null,
+          status: "idle",
+          diff: null,
+        },
+      );
       const nextSessions = [fresh, ...prev.sessions];
       const nextOpenTabs = [fresh.id, ...prev.openTabIds];
       saveSessions(nextSessions);
@@ -1208,7 +1274,7 @@ function App() {
         activeId: fresh.id,
       };
     });
-  }, [settings.model]);
+  }, [settings.model, activeSessionModel, activeSessionProviderId, activeSessionBaseUrl]);
 
   // Selecciona o activa una pestaña existente de la barra superior
   const handleSelectSessionTab = useCallback(
@@ -1276,7 +1342,13 @@ function App() {
             nextActiveId = nextOpenTabs[0];
           } else {
             // Si era la única pestaña abierta, crear una nueva sesión limpia
-            const fresh = makeSession(settings.model || "");
+            // heredando proveedor/modelo/baseUrl de la sesión más reciente.
+            const fallback = prev.sessions[0];
+            const fresh = makeSession(
+              fallback?.model || settings.model || "",
+              fallback?.providerId || settings.providerId,
+              fallback?.baseUrl || settings.baseUrl || "",
+            );
             nextSessions = [fresh, ...prev.sessions];
             nextOpenTabs.push(fresh.id);
             nextActiveId = fresh.id;
@@ -1294,7 +1366,7 @@ function App() {
         };
       });
     },
-    [settings.model],
+    [settings.model, settings.providerId, settings.baseUrl],
   );
 
   // Elimina permanentemente una sesión del historial (y de las pestañas si estaba abierta)
@@ -1311,7 +1383,7 @@ function App() {
         let nextTabs = remainingTabs;
 
         if (nextSessions.length === 0) {
-          const fresh = makeSession(settings.model || "");
+          const fresh = makeSession(settings.model || "", settings.providerId, settings.baseUrl || "");
           nextSessions = [fresh];
           nextTabs = [fresh.id];
           nextActiveId = fresh.id;
@@ -1335,7 +1407,7 @@ function App() {
         };
       });
     },
-    [settings.model],
+    [settings.model, settings.providerId, settings.baseUrl],
   );
 
   const handleRenameHistorySession = useCallback((id: string, title: string) => {
@@ -1357,7 +1429,7 @@ function App() {
         cancelTurn(s.id);
         destroySessionRuntime(s.id);
       });
-      const fresh = makeSession(settings.model || "");
+      const fresh = makeSession(settings.model || "", settings.providerId, settings.baseUrl || "");
       const nextSessions = [fresh];
       const nextTabs = [fresh.id];
       saveSessions(nextSessions);
@@ -1369,7 +1441,7 @@ function App() {
         activeId: fresh.id,
       };
     });
-  }, [settings.model]);
+  }, [settings.model, settings.providerId, settings.baseUrl]);
 
   // Terminal: el cwd se fija al abrir el terminal en el workspace activo de ese momento.
   const toggleTerminal = useCallback(() => {
@@ -1443,7 +1515,7 @@ function App() {
         agentMode={activeWorkspace.agentMode ?? "act"}
         onToggleMode={(mode) => updateActiveWorkspace((w) => ({ ...w, agentMode: mode }), activeSessionId)}
         modelConfig={modelConfig}
-        providerId={settings.providerId}
+        providerId={activeSessionProviderId}
         onUsage={(u) => addUsage(activeSessionId, u, activeSessionModel)}
         onApplyArtifact={applyArtifact}
         onClearSessionTrigger={handleNewSession}
@@ -1466,7 +1538,7 @@ function App() {
     balanceBlocked,
     blockReason,
     activeWorkspace.agentMode,
-    settings.providerId,
+    activeSessionProviderId,
     addUsage,
     applyArtifact,
     handleNewSession,
@@ -1481,6 +1553,24 @@ function App() {
 
   const showLeftSidebar = explorerOpen && !zenMode;
   const showRightPanel = panelOpen && !zenMode;
+
+  // Al guardar la configuración de proveedor/modelo, propaga la selección a la
+  // sesión activa para que cada sesión conserve el proveedor con el que trabaja.
+  const handleSaveSettings: typeof setSettings = (next) => {
+    setSettings(next);
+    const resolved = typeof next === "function" ? next(settings) : next;
+    if (!activeSessionId) return;
+    const providerId = resolved.providerId;
+    const baseUrl = resolved.baseUrl || presetById(providerId).baseUrl;
+    setSessionState((prev) => ({
+      ...prev,
+      sessions: prev.sessions.map((s) =>
+        s.id === activeSessionId
+          ? { ...s, providerId, baseUrl, model: resolved.model || s.model || settings.model }
+          : s,
+      ),
+    }));
+  };
 
   return (
     <div
@@ -1660,6 +1750,7 @@ function App() {
                 balance={balance}
                 balanceLoading={balanceLoading}
                 costUsd={costUsd}
+                nextTurnCost={estimatedNextTurnCost}
                 onRefreshBalance={() => refreshBalance(true)}
                 onCollapse={() => setPanelOpen(false)}
                 contextWindow={modelConfig?.contextWindow ?? 128000}
@@ -1720,7 +1811,7 @@ function App() {
             config={config}
             onConfig={setConfig}
             settings={settings}
-            onSaveSettings={setSettings}
+            onSaveSettings={handleSaveSettings}
             models={models}
             connecting={connecting}
             modelsError={modelsError}
@@ -1729,6 +1820,16 @@ function App() {
             currentTheme={theme}
             onSelectTheme={setTheme}
             onClose={() => setShowSettings(false)}
+            onOpenLocalAiModal={() => setShowLocalAiModal(true)}
+          />
+        )}
+
+        {showLocalAiModal && (
+          <LocalAiSetupModal
+            isOpen={showLocalAiModal}
+            onClose={() => setShowLocalAiModal(false)}
+            settings={settings}
+            onSaveSettings={handleSaveSettings}
           />
         )}
 

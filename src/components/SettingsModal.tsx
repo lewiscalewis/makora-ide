@@ -63,6 +63,7 @@ interface Props {
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
   onClose: () => void;
+  onOpenLocalAiModal?: () => void;
 }
 
 function num(v: string, fallback: number): number {
@@ -83,6 +84,7 @@ export default function SettingsModal({
   currentTheme,
   onSelectTheme,
   onClose,
+  onOpenLocalAiModal,
 }: Props) {
   const { language, setLanguage, t } = useI18n();
   const [tab, setTab] = useState<Tab>("providers");
@@ -385,6 +387,39 @@ export default function SettingsModal({
                     ))}
                   </select>
                 </div>
+
+                {settings.providerId === "makoraai" && onOpenLocalAiModal && (
+                  <div
+                    style={{
+                      margin: "8px 0 16px",
+                      padding: "12px 16px",
+                      backgroundColor: "rgba(99, 102, 241, 0.08)",
+                      border: "1px solid rgba(99, 102, 241, 0.25)",
+                      borderRadius: "8px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "12px",
+                    }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: "0.88rem", color: "var(--primary-color, #6366f1)" }}>
+                        ⚡ MakoraAI Embebido & Model Hub
+                      </strong>
+                      <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                        Descarga y administra modelos locales adaptados a tu tarjeta gráfica.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ fontSize: "0.78rem", padding: "6px 14px", whiteSpace: "nowrap" }}
+                      onClick={() => onOpenLocalAiModal()}
+                    >
+                      Abrir Gestor de Modelos
+                    </button>
+                  </div>
+                )}
 
                 {/* Base URL (editable if custom or local) */}
                 <div className="field">

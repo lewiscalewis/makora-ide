@@ -347,6 +347,8 @@ export interface ChatSession {
   updatedAt: number;
   messageCount: number;
   model: string;
+  providerId: string;
+  baseUrl: string;
   messages: ChatMessage[];
   totalCostUsd: number;
   inputTokens: number;
@@ -391,6 +393,50 @@ export interface UniversalTelemetry {
   modelUsage: Record<string, { input: number; output: number; cached: number; cost: number; turns: number }>;
 }
 
+export interface HardwareProfile {
+  gpuName: string;
+  vramGb: number;
+  ramGb: number;
+  cpuCores: number;
+  recommendedTier: string;
+  recommendedModelId: string;
+  tierDescription: string;
+}
 
+export interface ModelCatalogEntry {
+  id: string;
+  name: string;
+  family: string;
+  parameterSize: string;
+  quantization: string;
+  sizeGb: number;
+  minVramGb: number;
+  minRamGb: number;
+  downloadUrl: string;
+  filename: string;
+  description: string;
+  tier: string;
+  isDownloaded: boolean;
+  isActive: boolean;
+  speedRating: string;
+}
+
+export interface DownloadProgress {
+  modelId: string;
+  bytesDownloaded: number;
+  totalBytes: number;
+  percentage: number;
+  speedMbS: number;
+  status: string;
+  errorMessage?: string | null;
+}
+
+export interface LocalServerStatus {
+  isRunning: boolean;
+  backendType: string;
+  baseUrl: string;
+  activeModelId: string;
+  port: number;
+}
 
 

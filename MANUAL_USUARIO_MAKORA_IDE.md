@@ -66,7 +66,9 @@ Siempre te explica qué cambió y dónde (con la ruta y la línea exactas). Tú 
 ## 4. Lo que puedes hacer con MakoraIDE
 
 - 🖥️ **Interfaz de escritorio completa**: paneles redimensionables, explorador de archivos en árbol y una terminal integrada que tú y el agente compartís.
-- 🧠 **Conecta tu propio modelo de IA** mediante API key. Soporta varios proveedores: **OpenAI, DeepSeek, OpenRouter, Anthropic, Ollama** (modelos locales) y conexiones personalizadas.
+- ⚡ **MakoraAI Embebido (IA Local 100% Privada y Gratuita)**: ejecuta modelos agénticos en tu propio hardware sin necesidad de configurar terminales, WSL ni instalar Ollama manualmente. El IDE detecta tu tarjeta gráfica y descarga el modelo idóneo con un solo clic.
+- 🧠 **Conecta tu propio modelo de IA** mediante API key si prefieres la nube. Soporta varios proveedores: **DeepSeek, OpenAI, Google Gemini, OpenRouter, Anthropic, Ollama, LM Studio** y conexiones personalizadas.
+- 🔐 **Baúl de Claves con Almacén Seguro Dual**: guarda y alterna fácilmente entre tus claves de API protegidas con cifrado en el almacén de credenciales del sistema operativo y respaldo local en SQLite.
 - 🔌 **Extensiones MCP** (Model Context Protocol): conectar herramientas externas adicionales desde la interfaz.
 - 🖼️ **Multimodal**: pegar imágenes o arrastrar archivos al chat para que el agente los tenga en cuenta.
 - 🗂️ **Múltiples sesiones en paralelo**: abre tantas pestañas de conversación como necesites (el botón **+** siempre está disponible) para trabajar en un proyecto distinto por pestaña, cada una con su propio workspace y chat independientes con persistencia protegida.
@@ -79,7 +81,7 @@ Siempre te explica qué cambió y dónde (con la ruta y la línea exactas). Tú 
 
 ## 5. Empezar a usarlo en 4 pasos
 
-1. **Conecta tu modelo**: en la configuración, introduce tu API key y elige el proveedor (por defecto DeepSeek).
+1. **Elige tu IA**: usa **MakoraAI Embebido** (gratuito y local en tu PC) o introduce tu API key en la configuración (por defecto DeepSeek).
 2. **Abre tu proyecto**: selecciona la carpeta del workspace sobre la que quieres trabajar.
 3. **Pide algo**: escribe tu primera tarea en el chat, en lenguaje natural.
 4. **Revisa los cambios**: el agente te mostrará qué hizo; aplica los cambios cuando estés conforme.
@@ -102,7 +104,7 @@ Siempre te explica qué cambió y dónde (con la ruta y la línea exactas). Tú 
 No. Puedes usar lenguaje natural. Si además sabes programar, aprovecharás aún más sus funciones avanzadas.
 
 **¿Necesito una API key?**
-Sí, para los proveedores en la nube (OpenAI, DeepSeek, OpenRouter, Anthropic). Si usas **Ollama**, puedes ejecutar modelos en tu propio equipo sin coste por API.
+No necesariamente. Con **MakoraAI Embebido** puedes ejecutar la IA en tu propio ordenador de forma 100% gratuita y sin límites de tokens. Si prefieres modelos en la nube (DeepSeek, OpenAI, Anthropic, Gemini), puedes añadir tu API key personal.
 
 **¿El agente comete errores?**
 Como cualquier herramienta, a veces. Por eso te muestra siempre qué hizo y te pide confirmación en los cambios importantes.

@@ -154,6 +154,8 @@ function sanitizeSession(raw: unknown): ChatSession | null {
     updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
     messageCount: typeof s.messageCount === "number" ? s.messageCount : 0,
     model: safeString(s.model),
+    providerId: safeString(s.providerId),
+    baseUrl: safeString(s.baseUrl),
     messages: sanitizeMessages(Array.isArray(s.messages) ? s.messages : []),
     totalCostUsd:
       typeof s.totalCostUsd === "number" && Number.isFinite(s.totalCostUsd)
@@ -329,7 +331,12 @@ export function setActiveSessionId(id: string): void {
   }
 }
 
-export function makeSession(model: string, workspace?: SessionWorkspaceState): ChatSession {
+export function makeSession(
+  model: string,
+  providerId: string = "",
+  baseUrl: string = "",
+  workspace?: SessionWorkspaceState
+): ChatSession {
   const now = Date.now();
   const defaultWs: SessionWorkspaceState = {
     folders: [],
@@ -347,6 +354,8 @@ export function makeSession(model: string, workspace?: SessionWorkspaceState): C
     updatedAt: now,
     messageCount: 0,
     model,
+    providerId,
+    baseUrl,
     messages: [],
     totalCostUsd: 0,
     inputTokens: 0,
@@ -381,7 +390,7 @@ export function initSessions(): InitialSessionState {
 
   // Si no hay sesiones guardadas en absoluto, iniciar exactamente con 1 sesión limpia.
   if (loaded.length === 0) {
-    const fresh = makeSession("", {
+    const fresh = makeSession("", "", "", {
       folders,
       openFiles: [],
       activeFilePath: null,

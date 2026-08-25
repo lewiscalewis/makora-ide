@@ -157,6 +157,17 @@ fn with_conn<T>(f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T>
     f(conn).ok()
 }
 
+fn xor_encipher(plain: &str) -> String {
+    let key = b"Makora_Vault_Hardware_Salt_2026";
+    let bytes = plain.as_bytes();
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for (i, b) in bytes.iter().enumerate() {
+        let x = b ^ key[i % key.len()];
+        out.push_str(&format!("{:02x}", x));
+    }
+    out
+}
+
 fn xor_decipher(hex: &str) -> Option<String> {
     if hex.len() % 2 != 0 {
         return None;
@@ -174,7 +185,29 @@ fn xor_decipher(hex: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-pub fn legacy_vault_get(key: &str) -> Option<String> {
+pub fn vault_set(key: &str, secret: &str) -> bool {
+    let enc = xor_encipher(secret);
+    with_conn(|conn| {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS makora_vault (
+                key TEXT PRIMARY KEY,
+                secret TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO makora_vault (key, secret, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET secret = ?2, updated_at = ?3",
+            rusqlite::params![key, enc, now_ms()],
+        )?;
+        Ok(())
+    })
+    .is_some()
+}
+
+pub fn vault_get(key: &str) -> Option<String> {
     with_conn(|conn| {
         let table_exists: bool = conn
             .query_row(
@@ -198,6 +231,14 @@ pub fn legacy_vault_get(key: &str) -> Option<String> {
         Ok(None)
     })
     .flatten()
+}
+
+pub fn vault_delete(key: &str) -> bool {
+    with_conn(|conn| {
+        let _ = conn.execute("DELETE FROM makora_vault WHERE key = ?1", rusqlite::params![key]);
+        Ok(())
+    })
+    .is_some()
 }
 
 pub fn now_ms() -> i64 {

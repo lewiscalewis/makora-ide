@@ -336,6 +336,7 @@ export const es: TranslationSchema = {
     costSub: "Basado en precios de entrada/salida de",
     availableBalance: "Saldo Disponible",
     balanceLive: "Consultado en tiempo real desde la API",
+    balanceVsCost: "El saldo es el restante tras TODAS las sesiones; el coste es la estimación de esta sesión, no suman.",
     balanceUnlimited: "Ilimitado / Local",
     cacheEfficiency: "Eficiencia de Caché",
     estimatedSavings: "Ahorro estimado:",

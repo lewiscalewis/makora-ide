@@ -157,7 +157,9 @@ export default function AnalyticsModal({
                   {balance ? `${balance.amount.toFixed(2)} ${balance.currency}` : t.analytics.balanceUnlimited}
                 </div>
                 <div className="card-sub-val muted small">
-                  {balance ? t.analytics.balanceLive : t.analytics.balanceUnlimited}
+                  {balance
+                    ? `${t.analytics.balanceLive}. ${t.analytics.balanceVsCost}`
+                    : t.analytics.balanceUnlimited}
                 </div>
               </div>
 
@@ -263,16 +265,6 @@ export default function AnalyticsModal({
                           {cacheHitRate.toFixed(1)}% {cacheHitRate >= 60 ? "⚡" : ""}
                         </span>
                       </td>
-                    </tr>
-                    <tr>
-                      <td><Sparkles size={11} className="inline-icon text-cyan" /> {t.analytics.surgicalEfficiency}</td>
-                      <td>≥ 0.88</td>
-                      <td><span className="accent-green">0.92</span></td>
-                    </tr>
-                    <tr>
-                      <td><Layers size={11} className="inline-icon text-purple" /> {t.analytics.compactionRatio}</td>
-                      <td>4.2x</td>
-                      <td><span className="accent-green">4.5x</span></td>
                     </tr>
                   </tbody>
                 </table>

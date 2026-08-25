@@ -353,6 +353,7 @@ export interface TranslationSchema {
     costSub: string;
     availableBalance: string;
     balanceLive: string;
+    balanceVsCost: string;
     balanceUnlimited: string;
     cacheEfficiency: string;
     estimatedSavings: string;

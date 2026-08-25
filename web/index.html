@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0b0d14" />
+  <title>Makora Mobile</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Barra superior -->
+    <header class="topbar">
+      <button id="chatsBtn" class="icon-btn" title="Chats del historial" aria-label="Chats">☰</button>
+      <div class="brand">
+        <span class="logo">◆</span>
+        <span>Makora</span>
+        <span class="brand-accent">Mobile</span>
+      </div>
+      <button id="configBtn" class="icon-btn" title="Proveedor y modelo" aria-label="Configuración">⚙</button>
+    </header>
+
+    <!-- Panel de chats (historial local) -->
+    <aside id="chatsPanel" class="drawer hidden">
+      <div class="drawer-head">
+        <span class="drawer-title">Chats</span>
+        <button id="newChatBtn" class="btn-primary small">+ Nuevo</button>
+      </div>
+      <ul id="chatsList" class="chats-list"></ul>
+    </aside>
+
+    <!-- Panel de proveedor/modelo -->
+    <aside id="configPanel" class="drawer hidden">
+      <div class="drawer-head">
+        <span class="drawer-title">Modelo y proveedor</span>
+        <button id="closeConfigBtn" class="icon-btn">×</button>
+      </div>
+      <div class="config-body">
+        <label class="field-label" for="providerSelect">Proveedor</label>
+        <select id="providerSelect" class="field-select"></select>
+        <label class="field-label" for="modelSelect">Modelo</label>
+        <select id="modelSelect" class="field-select"></select>
+        <button id="applyConfigBtn" class="btn-primary block">Aplicar cambios</button>
+        <div id="configStatus" class="muted small"></div>
+      </div>
+    </aside>
+
+    <!-- Chat -->
+    <main class="chat">
+      <div id="messages" class="messages"></div>
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" placeholder="Escribe un mensaje…"></textarea>
+        <button id="sendBtn" class="btn-primary" type="submit">➤</button>
+      </form>
+    </main>
+
+    <div id="status" class="statusbar muted small">Conectando…</div>
+  </div>
+
+  <!-- Pantalla de emparejamiento (código) -->
+  <div id="pairScreen" class="pair-screen hidden">
+    <div class="pair-card">
+      <div class="brand big"><span class="logo">◆</span> Makora</div>
+      <p class="muted">Introduce el código de 6 dígitos que muestra el IDE.</p>
+      <input id="pairCode" class="pair-input" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code" />
+      <button id="pairBtn" class="btn-primary block">Conectar</button>
+      <div id="pairStatus" class="muted small"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

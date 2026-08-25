@@ -7197,3 +7197,7 @@ select:focus {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(20, 29, 44, 0.6);
 }
+
+/* ===== Recuerda: estilos de las tabs/queries de git en GitModal ===== */
+.small { font-size: 12px; }
+.mono { font-family: "JetBrains Mono", ui-monospace, monospace; }

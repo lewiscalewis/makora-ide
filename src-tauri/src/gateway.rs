@@ -1,4 +1,4 @@
-﻿use std::collections::BTreeMap;
+use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -414,6 +414,53 @@ fn is_local_endpoint(base: &str) -> bool {
         || lower.contains("127.0.0.1")
         || lower.contains("[::1]")
         || lower.contains("0.0.0.0")
+        || lower.contains(":11434")
+        || lower.contains(":1234")
+        || lower.starts_with("http://172.")
+        || lower.starts_with("http://192.168.")
+        || lower.starts_with("http://10.")
+}
+
+pub async fn resolve_active_ollama_url(base: &str) -> String {
+    let client = &*HTTP_CLIENT;
+    let mut candidate_bases = vec![
+        base.to_string(),
+        "http://localhost:11434/v1".to_string(),
+        "http://127.0.0.1:11434/v1".to_string(),
+    ];
+    if let Some(wsl_ip) = get_wsl_ip() {
+        candidate_bases.push(format!("http://{wsl_ip}:11434/v1"));
+    }
+
+    for b in &candidate_bases {
+        let clean = b.trim_end_matches('/').trim_end_matches("/v1");
+        let tag_url = format!("{clean}/api/tags");
+        if let Ok(resp) = client.get(&tag_url).timeout(std::time::Duration::from_millis(600)).send().await {
+            if resp.status().is_success() {
+                return format!("{clean}/v1/chat/completions");
+            }
+        }
+    }
+
+    for _ in 0..4 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        for b in &candidate_bases {
+            let clean = b.trim_end_matches('/').trim_end_matches("/v1");
+            let tag_url = format!("{clean}/api/tags");
+            if let Ok(resp) = client.get(&tag_url).timeout(std::time::Duration::from_millis(600)).send().await {
+                if resp.status().is_success() {
+                    return format!("{clean}/v1/chat/completions");
+                }
+            }
+        }
+    }
+
+    if let Some(wsl_ip) = get_wsl_ip() {
+        format!("http://{wsl_ip}:11434/v1/chat/completions")
+    } else {
+        let clean = base.trim_end_matches('/').trim_end_matches("/v1");
+        format!("{clean}/v1/chat/completions")
+    }
 }
 
 fn norm_effort_openai(e: &str) -> Option<String> {
@@ -627,7 +674,11 @@ pub async fn openai_turn(
     tools: &[ToolDef],
 ) -> Result<TurnOutcome, String> {
     let base = cfg.base_url.trim_end_matches('/');
-    let url = format!("{base}/chat/completions");
+    let url = if is_local_endpoint(base) || cfg.kind == "ollama" {
+        resolve_active_ollama_url(&cfg.base_url).await
+    } else {
+        format!("{base}/chat/completions")
+    };
 
     let mut msgs: Vec<Value> = Vec::new();
     if !system.trim().is_empty() {
@@ -1129,12 +1180,23 @@ pub async fn anthropic_turn(
             "message_start" => {
                 if let Some(msg) = v.get("message") {
                     if let Some(u) = msg.get("usage") {
-                        usage.input_tokens =
-                            u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-                        usage.cached_tokens = u
+                        // Anthropic reporta `input_tokens` como los tokens tras el
+                        // último breakpoint de caché (EXCLUYE los leídos de caché),
+                        // y `cache_read_input_tokens` aparte. Para unificar la
+                        // semántica con OpenAI-compat (donde `input_tokens` SÍ
+                        // incluye los cacheados), sumamos los reads de caché al
+                        // input. Así el coste (non_cached = input - cached) y la
+                        // telemetría reflejan el total real facturado.
+                        let cached = u
                             .get("cache_read_input_tokens")
                             .and_then(|x| x.as_u64())
                             .unwrap_or(0) as u32;
+                        usage.input_tokens = (u
+                            .get("input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32)
+                            .saturating_add(cached);
+                        usage.cached_tokens = cached;
                     }
                 }
             }
@@ -1230,6 +1292,28 @@ pub async fn anthropic_turn(
     })
 }
 
+pub fn get_wsl_ip() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = std::process::Command::new("wsl");
+        cmd.args(["hostname", "-I"]).creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = cmd.output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(ip) = stdout.split_whitespace().next() {
+                    let ip = ip.trim();
+                    if !ip.is_empty() && ip.contains('.') {
+                        return Some(ip.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
     let client = &*HTTP_CLIENT;
     let api_key = cfg.api_key.trim();
@@ -1252,22 +1336,45 @@ pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
         }
         "ollama" => {
             let base = cfg.base_url.trim_end_matches('/').trim_end_matches("/v1");
-            let url = format!("{base}/api/tags");
-            let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-            let status = resp.status();
-            let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-            if !status.is_success() {
-                return Err(format!("HTTP {status}: {body}"));
+            let mut urls = vec![format!("{base}/api/tags")];
+            if base.contains("localhost") {
+                urls.push(base.replace("localhost", "127.0.0.1") + "/api/tags");
+                if let Some(wsl_ip) = get_wsl_ip() {
+                    urls.push(format!("http://{wsl_ip}:11434/api/tags"));
+                }
+            } else if base.contains("127.0.0.1") {
+                urls.push(base.replace("127.0.0.1", "localhost") + "/api/tags");
+                if let Some(wsl_ip) = get_wsl_ip() {
+                    urls.push(format!("http://{wsl_ip}:11434/api/tags"));
+                }
             }
-            Ok(body
-                .get("models")
-                .and_then(|m| m.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|m| m.get("name").and_then(|x| x.as_str()).map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default())
+
+            let mut last_err = String::new();
+            for url in urls {
+                if let Ok(resp) = client.get(&url).send().await {
+                    let status = resp.status();
+                    if let Ok(body) = resp.json::<Value>().await {
+                        if status.is_success() {
+                            return Ok(body
+                                .get("models")
+                                .and_then(|m| m.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|m| m.get("name").and_then(|x| x.as_str()).map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default());
+                        } else {
+                            last_err = format!("HTTP {status}: {body}");
+                        }
+                    }
+                }
+            }
+            if last_err.is_empty() {
+                Err(format!("No se pudo conectar con Ollama en {}. Revisa si el servicio está activo.", cfg.base_url))
+            } else {
+                Err(last_err)
+            }
         }
         _ => {
             let url = format!("{}/models", cfg.base_url.trim_end_matches('/'));

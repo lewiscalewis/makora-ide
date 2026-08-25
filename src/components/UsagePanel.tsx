@@ -34,6 +34,7 @@ interface UsagePanelProps {
   balance: BalanceInfo | null;
   balanceLoading: boolean;
   costUsd: number;
+  nextTurnCost: number | null;
   onRefreshBalance: () => void;
   onCollapse: () => void;
   contextWindow: number;
@@ -67,6 +68,7 @@ export default function UsagePanel({
   balance,
   balanceLoading,
   costUsd,
+  nextTurnCost,
   onRefreshBalance,
   onCollapse,
   contextWindow,
@@ -78,7 +80,7 @@ export default function UsagePanel({
   const preset = PROVIDERS.find((p) => p.id === settings.providerId) ?? PROVIDERS[0];
   const showBaseUrl = preset.id === "custom";
   const canBalance = settings.providerId === "deepseek" || settings.providerId === "openrouter";
-  const remaining = balance ? Math.max(0, balance.amount - costUsd) : null;
+  const remaining = balance ? Math.max(0, balance.amount - (nextTurnCost ?? 0)) : null;
 
   const cached = lastUsage?.cachedTokens ?? 0;
   const input = lastUsage?.inputTokens ?? 0;
