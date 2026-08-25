@@ -1800,51 +1800,43 @@ async fn run_web_search(query: &str) -> Result<String, String> {
     }
 
     let params = [("q", clean_query)];
-    let text = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        async {
-            let resp = FETCH_CLIENT
-                .post("https://lite.duckduckgo.com/lite/")
-                .form(&params)
-                .header(
-                    reqwest::header::USER_AGENT,
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                )
-                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
-                .header(reqwest::header::ACCEPT_LANGUAGE, "es-ES,es;q=0.9,en;q=0.8")
-                .send()
-                .await
-                .map_err(|e| format!("error conectando con el motor de búsqueda: {e}"))?;
-            let status = resp.status();
-            if !status.is_success() {
-                return Err(format!("HTTP {status} en el motor de búsqueda"));
-            }
-            resp.text()
-                .await
-                .map_err(|e| format!("error leyendo resultados: {e}"))
-        },
+    let text = match tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        FETCH_CLIENT
+            .post("https://lite.duckduckgo.com/lite/")
+            .form(&params)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            )
+            .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+            .header(reqwest::header::ACCEPT_LANGUAGE, "es-ES,es;q=0.9,en;q=0.8")
+            .send(),
     )
     .await
-    .map_err(|_| "timeout (15s) buscando en la web".to_string())??;
+    {
+        Ok(Ok(resp)) if resp.status().is_success() => resp.text().await.unwrap_or_default(),
+        _ => String::new(),
+    };
 
-    let link_re = regex::Regex::new(r#"<a[^>]+class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#)
-        .map_err(|e| e.to_string())?;
-    let snip_re = regex::Regex::new(r#"<td[^>]+class=['"]result-snippet['"][^>]*>(.*?)</td>"#)
+    let link_re = regex::Regex::new(
+        r#"(?is)<a\s+[^>]*href=['"]([^'"]+)['"][^>]*class=['"]result-link['"][^>]*>(.*?)</a>|<a\s+[^>]*class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#
+    ).map_err(|e| e.to_string())?;
+    let snip_re = regex::Regex::new(r#"(?is)<td\s+[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>"#)
         .map_err(|e| e.to_string())?;
     let strip_tags_re = regex::Regex::new(r"<[^>]+>").map_err(|e| e.to_string())?;
 
-    let links: Vec<(String, String)> = link_re
-        .captures_iter(&text)
-        .map(|cap| {
-            let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
-            let raw_title = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            let clean_title = strip_tags_re.replace_all(raw_title, "").trim().to_string();
-            (html_unescape(&clean_title), html_unescape(&url))
-        })
-        .filter(|(t, u)| !u.contains("duckduckgo.com/y.js") && !t.contains("more info"))
-        .collect();
+    let mut links: Vec<(String, String)> = Vec::new();
+    for cap in link_re.captures_iter(&text) {
+        let url = cap.get(1).or_else(|| cap.get(3)).map(|m| m.as_str()).unwrap_or("").to_string();
+        let raw_title = cap.get(2).or_else(|| cap.get(4)).map(|m| m.as_str()).unwrap_or("");
+        let clean_title = strip_tags_re.replace_all(raw_title, "").trim().to_string();
+        if !url.contains("duckduckgo.com/y.js") && !clean_title.to_lowercase().contains("more info") && !url.is_empty() {
+            links.push((html_unescape(&clean_title), html_unescape(&url)));
+        }
+    }
 
-    let snippets: Vec<String> = snip_re
+    let mut snippets: Vec<String> = snip_re
         .captures_iter(&text)
         .map(|cap| {
             let raw_s = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -1853,8 +1845,43 @@ async fn run_web_search(query: &str) -> Result<String, String> {
         })
         .collect();
 
+    // Fallback: If DDG Lite yielded no links, query Wikipedia search API
     if links.is_empty() {
-        return Ok(format!("No se encontraron resultados en la web para «{clean_query}». Intenta con otros términos o palabras clave."));
+        if let Ok(Ok(resp)) = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            FETCH_CLIENT
+                .get(format!(
+                    "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&utf8=1",
+                    urlencoding_encode(clean_query)
+                ))
+                .header(reqwest::header::USER_AGENT, "MakoraIDE/1.0 (Desktop Assistant)")
+                .send(),
+        )
+        .await
+        {
+            if let Ok(val) = resp.json::<serde_json::Value>().await {
+                if let Some(items) = val.pointer("/query/search").and_then(|v| v.as_array()) {
+                    for item in items.iter().take(5) {
+                        if let (Some(title), Some(snippet), Some(pageid)) = (
+                            item.get("title").and_then(|v| v.as_str()),
+                            item.get("snippet").and_then(|v| v.as_str()),
+                            item.get("pageid").and_then(|v| v.as_i64()),
+                        ) {
+                            let clean_snip = strip_tags_re.replace_all(snippet, "").trim().to_string();
+                            links.push((
+                                title.to_string(),
+                                format!("https://en.wikipedia.org/?curid={pageid}"),
+                            ));
+                            snippets.push(clean_snip);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if links.is_empty() {
+        return Ok(format!("No se encontraron resultados en la web para «{clean_query}». Prueba simplificando los términos de búsqueda."));
     }
 
     let mut out = format!("Resultados de búsqueda web para «{clean_query}»:\n\n");
@@ -1864,8 +1891,22 @@ async fn run_web_search(query: &str) -> Result<String, String> {
         let snippet = snippets.get(i).map(|s| s.as_str()).unwrap_or("");
         out.push_str(&format!("{}. [{}]({})\n   {}\n\n", i + 1, title, url, snippet));
     }
-    out.push_str("\n(Puedes usar `webfetch` con cualquiera de las URLs anteriores para leer su contenido completo si necesitas más detalles.)");
+    out.push_str("\n(Puedes responder directamente con este resumen al usuario o usar `webfetch` con las URLs para más detalles si fuera necesario.)");
     Ok(out)
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+            out.push(b as char);
+        } else if b == b' ' {
+            out.push('+');
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
 }
 
 fn html_unescape(s: &str) -> String {
@@ -3842,5 +3883,36 @@ mod tests {
         assert_eq!(repair_tool_name("web_search", &mcp), "web_search");
         assert_eq!(repair_tool_name("web search", &mcp), "web_search");
         assert_eq!(repair_tool_name("WebSearch", &mcp), "web_search");
+    }
+
+    #[test]
+    fn test_parse_ddg_lite_html() {
+        let html_sample = r#"
+        <table border="0">
+          <tr>
+            <td>
+              <a rel="nofollow" href="https://game8.co/games/Dragons-Dogma-2" class='result-link'>Dragon's Dogma 2 News</a>
+            </td>
+            <td class='result-snippet'>
+              Latest updates and DLC details for Dragon's Dogma 2.
+            </td>
+          </tr>
+        </table>
+        "#;
+        let link_re = regex::Regex::new(
+            r#"(?is)<a\s+[^>]*href=['"]([^'"]+)['"][^>]*class=['"]result-link['"][^>]*>(.*?)</a>|<a\s+[^>]*class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#
+        ).unwrap();
+        let snip_re = regex::Regex::new(r#"(?is)<td\s+[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>"#).unwrap();
+        let strip_tags_re = regex::Regex::new(r"<[^>]+>").unwrap();
+
+        let cap = link_re.captures(html_sample).unwrap();
+        let url = cap.get(1).or_else(|| cap.get(3)).unwrap().as_str();
+        let title = cap.get(2).or_else(|| cap.get(4)).unwrap().as_str();
+        assert_eq!(url, "https://game8.co/games/Dragons-Dogma-2");
+        assert_eq!(title, "Dragon's Dogma 2 News");
+
+        let snip_cap = snip_re.captures(html_sample).unwrap();
+        let snip = strip_tags_re.replace_all(snip_cap.get(1).unwrap().as_str(), "").trim().to_string();
+        assert_eq!(snip, "Latest updates and DLC details for Dragon's Dogma 2.");
     }
 }
