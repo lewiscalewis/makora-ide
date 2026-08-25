@@ -871,8 +871,23 @@ async fn detect_ollama() -> Result<bool, String> {
         .timeout(std::time::Duration::from_millis(2000))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client.get("http://localhost:11434/api/tags").send().await;
-    Ok(resp.map(|r| r.status().is_success()).unwrap_or(false))
+
+    let mut candidate_urls = vec![
+        "http://localhost:11434/api/tags".to_string(),
+        "http://127.0.0.1:11434/api/tags".to_string(),
+    ];
+    if let Some(wsl_ip) = gateway::get_wsl_ip() {
+        candidate_urls.push(format!("http://{wsl_ip}:11434/api/tags"));
+    }
+
+    for u in candidate_urls {
+        if let Ok(resp) = client.get(&u).send().await {
+            if resp.status().is_success() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-﻿use std::collections::BTreeMap;
+use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -627,7 +627,12 @@ pub async fn openai_turn(
     tools: &[ToolDef],
 ) -> Result<TurnOutcome, String> {
     let base = cfg.base_url.trim_end_matches('/');
-    let url = format!("{base}/chat/completions");
+    let mut url = format!("{base}/chat/completions");
+    if base.contains("localhost:11434") || base.contains("127.0.0.1:11434") {
+        if let Some(wsl_ip) = get_wsl_ip() {
+            url = format!("http://{wsl_ip}:11434/v1/chat/completions");
+        }
+    }
 
     let mut msgs: Vec<Value> = Vec::new();
     if !system.trim().is_empty() {
@@ -1241,6 +1246,28 @@ pub async fn anthropic_turn(
     })
 }
 
+pub fn get_wsl_ip() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = std::process::Command::new("wsl");
+        cmd.args(["hostname", "-I"]).creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = cmd.output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(ip) = stdout.split_whitespace().next() {
+                    let ip = ip.trim();
+                    if !ip.is_empty() && ip.contains('.') {
+                        return Some(ip.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
     let client = &*HTTP_CLIENT;
     let api_key = cfg.api_key.trim();
@@ -1263,22 +1290,45 @@ pub async fn fetch_models(cfg: &ChatConfig) -> Result<Vec<String>, String> {
         }
         "ollama" => {
             let base = cfg.base_url.trim_end_matches('/').trim_end_matches("/v1");
-            let url = format!("{base}/api/tags");
-            let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-            let status = resp.status();
-            let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-            if !status.is_success() {
-                return Err(format!("HTTP {status}: {body}"));
+            let mut urls = vec![format!("{base}/api/tags")];
+            if base.contains("localhost") {
+                urls.push(base.replace("localhost", "127.0.0.1") + "/api/tags");
+                if let Some(wsl_ip) = get_wsl_ip() {
+                    urls.push(format!("http://{wsl_ip}:11434/api/tags"));
+                }
+            } else if base.contains("127.0.0.1") {
+                urls.push(base.replace("127.0.0.1", "localhost") + "/api/tags");
+                if let Some(wsl_ip) = get_wsl_ip() {
+                    urls.push(format!("http://{wsl_ip}:11434/api/tags"));
+                }
             }
-            Ok(body
-                .get("models")
-                .and_then(|m| m.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|m| m.get("name").and_then(|x| x.as_str()).map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default())
+
+            let mut last_err = String::new();
+            for url in urls {
+                if let Ok(resp) = client.get(&url).send().await {
+                    let status = resp.status();
+                    if let Ok(body) = resp.json::<Value>().await {
+                        if status.is_success() {
+                            return Ok(body
+                                .get("models")
+                                .and_then(|m| m.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|m| m.get("name").and_then(|x| x.as_str()).map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default());
+                        } else {
+                            last_err = format!("HTTP {status}: {body}");
+                        }
+                    }
+                }
+            }
+            if last_err.is_empty() {
+                Err(format!("No se pudo conectar con Ollama en {}. Revisa si el servicio está activo.", cfg.base_url))
+            } else {
+                Err(last_err)
+            }
         }
         _ => {
             let url = format!("{}/models", cfg.base_url.trim_end_matches('/'));
