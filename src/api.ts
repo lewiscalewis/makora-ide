@@ -4,8 +4,6 @@ import type {
   ChatConfig,
   ChatMessage,
   ChatResult,
-  RemoteConfig,
-  RemoteStatus,
   DirEntry,
   McpSpec,
 } from "./types";
@@ -124,19 +122,24 @@ export const getInitialFile = () =>
   invoke<string | null>("get_initial_file");
 export const checkBetaValidity = () =>
   invoke<void>("check_beta_validity");
-export const getLanIps = () => invoke<string[]>("get_lan_ips");
-export const remoteStatus = () => invoke<RemoteStatus>("remote_status");
-export const remoteStart = (port: number | null) =>
-  invoke<RemoteStatus>("remote_start", { port });
-export const remoteStop = () => invoke<void>("remote_stop");
-export const remoteTunnelStart = () => invoke<string>("remote_tunnel_start");
-export const remoteTunnelStop = () => invoke<void>("remote_tunnel_stop");
-export const remotePairCode = () => invoke<string>("remote_pair_code");
-export const remoteRevoke = () => invoke<void>("remote_revoke");
-export const remoteGetConfig = () => invoke<RemoteConfig>("remote_get_config");
-export const remoteSyncConfig = (config: RemoteConfig) =>
-  invoke<RemoteConfig>("remote_sync_config", { config });
 export const saveSessionsStore = (json: string) =>
   invoke<void>("save_sessions_store", { json });
 export const loadSessionsStore = () =>
   invoke<string | null>("load_sessions_store");
+
+export const getHardwareProfile = () =>
+  invoke<import("./types").HardwareProfile>("get_hardware_profile");
+export const listLocalModels = (activeModelId = "") =>
+  invoke<import("./types").ModelCatalogEntry[]>("list_local_models", { activeModelId });
+export const startModelDownload = (modelId: string) =>
+  invoke<void>("start_model_download", { modelId });
+export const cancelModelDownload = (modelId: string) =>
+  invoke<boolean>("cancel_model_download", { modelId });
+export const getModelDownloadProgress = (modelId: string) =>
+  invoke<import("./types").DownloadProgress | null>("get_model_download_progress", { modelId });
+export const deleteLocalModel = (filename: string) =>
+  invoke<boolean>("delete_local_model", { filename });
+export const startLocalAi = (modelId: string, filename: string) =>
+  invoke<import("./types").LocalServerStatus>("start_local_ai", { modelId, filename });
+export const getLocalAiStatus = () =>
+  invoke<import("./types").LocalServerStatus>("get_local_ai_status");

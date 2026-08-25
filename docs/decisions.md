@@ -477,6 +477,40 @@ Fecha: 2026-08-18. Evidencia cacheada en `docs/research/*.md` (no re-fetchear; p
 
 - **Consecuencias:** cada sesión puede usar un modelo distinto sin afectar a las demás ni a los turnos en curso; la UI ya no ofrece una opción multiagente que no hace nada. 55 tests Rust + 62 vitest; `cargo build` y `npm run build` OK.
 
+## ADR-059 — Restauración robusta de sesiones + contabilidad de tokens (2026-08-24)
+
+- **Problema:** al reabrir el IDE se perdían mensajes y el proveedor/modelo de la sesión activa. Causas: (1) el guardado debounced (`saveSessions`) podía dispararse en el montaje con la sesión vacía de fallback de `initSessions` y sobrescribir el blob durable de SQLite antes de que terminara la hidratación; (2) la hidratación forzaba como activa la primera sesión del store en vez de la que estaba activa al cerrar; (3) la contabilidad de coste/tokens de Anthropic subestimaba el input real: `usage.input_tokens` excluye los reads de caché, pero las funciones de coste restan `cached` a `input` (doble resta).
+
+- **Decisión:** (1) el guardado debounced queda bloqueado hasta que `bootHydratedRef` confirme que la hidratación terminó (y el flush de `beforeunload` también) → nunca se pisa el historial durable con la sesión de fallback. (2) La hidratación restaura `activeId` desde `makora.activeSession` y reabre esa pestaña. (3) En `gateway.rs` (Anthropic) se normaliza `input_tokens` a `input_tokens + cache_read_input_tokens` para que `input` INCLUYA los cacheados, alineando la semántica con OpenAI-compat y haciendo correcto el `non_cached = input - cached`.
+
+- **Consecuencias:** las sesiones conservan mensajes y proveedor/modelo al reabrir; la sesión activa es la misma; el coste y la telemetría de Anthropic reflejan el input total facturado. 55 tests Rust + 62 vitest; `cargo build` y `npm run build` OK.
+
+## ADR-060 — Eliminación del acceso remoto (móvil/navegador) + telemetría honesta (2026-08-24)
+
+- **Problema:** la función "conectar en remoto" (servidor HTTPS + WebSocket para acceder al IDE desde el móvil/navegador: `remote/`, emparejamiento por código, túnel Cloudflare) estaba llena de fallos y no aportaba valor en la fase actual. Además, la sección de telemetría mostraba métricas inventadas (eficiencia quirúrgica 0.92, ratio de compactación 4.5x) y comparaba mal dos magnitudes distintas (saldo restante vs coste acumulado de una sesión), haciendo que el usuario percibiera un desajuste entre "gasto" y "saldo".
+
+- **Decisión:** (1) se ELIMINA por completo la función de acceso remoto: módulo `remote/` (auth/cert/chat/remote_config/tunnel/mod), comandos `remote_*`, `get_lan_ips`, las dependencias de Cargo (axum, axum-server, rcgen, sha2, rand, base64, local-ip-address, include_dir, rustls, rustls-pemfile), la UI `RemotePanel`, los tipos `RemoteConfig`/`RemoteStatus` y el botón "Acceso remoto" del header. Se conservan intactos los remotos de git (`git_remote_*`), que son una función distinta. (2) Se eliminan las métricas fabricadas de la telemetría y se añade una not aclaratoria de que el saldo es el restante tras TODAS las sesiones y el coste es la estimación de la sesión activa (no suman).
+
+- **Consecuencias:** menos superficie de código y dependencias (binario más pequeño y sin red de servidor), sin la vía rota de acceso móvil; la telemetría ya no miente y deja claro el sentido del "gasto" frente al saldo. 55 tests Rust + 62 vitest; `cargo build` y `npm run build` OK.
+
+## ADR-061 — MakoraAI Embebido: Hardware Profiler + Model Hub + Descargador Resumible (2026-08-25)
+
+- **Contexto & Problema:** para distribuir MakoraIDE a terceros sin fricción, los usuarios no deben verse obligados a instalar Ollama, WSL2 ni configurar modelos por línea de comandos. El IDE debe ser autosuficiente para ejecutar IA agéntica local.
+- **Decisión:**
+  1. **Hardware Profiler (`hardware_profiler.rs`):** Detección nativa de GPU, VRAM real (64-bit DXGI en Windows) y RAM física (`GlobalMemoryStatusEx`) con recomendación automática en 3 Tiers (Tier 1: 30B MoE, Tier 2: 8B, Tier 3: 1.5B).
+  2. **Model Downloader Resumible (`model_downloader.rs`):** Descarga streaming por chunks HTTP con cabecera `Range: bytes=OFFSET-` y verificación de integridad hacia `%APPDATA%/MakoraIDE/models`. Emite eventos en tiempo real `model-download-progress`.
+  3. **Local Server Sidecar Manager (`local_server.rs`):** Ciclo de vida gestionado para `llama-server` en puerto dinámico local, flags de aceleración Flash Attention + KV Cache Q8, y fallback transparente a Ollama si ya está corriendo.
+  4. **Frontend UI (`LocalAiSetupModal.tsx`):** Model Hub con GPU detectada, tarjetas de descarga interactiva y activación con un solo clic.
+
+## ADR-062 — Resiliencia del Baúl de Claves: Almacén Seguro Dual OS Keyring + SQLite WAL Cifrado (2026-08-25)
+
+- **Contexto & Problema:** en ciertos PCs de usuarios (cuentas locales sin PIN, políticas de grupo o fallos del Administrador de Credenciales de Windows), `keyring::Entry::set_password` fallaba y arrojaba error "No se encontró la clave en el almacén seguro" al intentar usar claves guardadas del baúl.
+- **Decisión:**
+  1. **Doble Capa de Persistencia:** `keyring_set` persiste SIEMPRE en la tabla SQLite cifrada `makora_vault` con salt de hardware y, en paralelo, en el almacén nativo del SO si está disponible.
+  2. **Lectura con Auto-Reparación:** `keyring_get_impl` consulta el OS Keyring y, si no está disponible o falla, lee de `makora_vault` y reintenta poblar el OS Keyring de forma transparente.
+  3. **Garantía:** Cero pérdida de claves de API en cualquier máquina Windows/Linux/macOS independientemente de los permisos de Credential Manager.
+
+
 
 
 

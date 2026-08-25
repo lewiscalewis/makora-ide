@@ -27,7 +27,6 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenPalette: () => void;
   onOpenHistory: () => void;
-  onOpenRemote: () => void;
   explorerOpen?: boolean;
   onToggleExplorer?: () => void;
   panelOpen?: boolean;
@@ -47,7 +46,6 @@ export default function Header({
   onOpenSettings,
   onOpenPalette,
   onOpenHistory,
-  onOpenRemote,
   explorerOpen = true,
   onToggleExplorer,
   panelOpen = true,
@@ -334,15 +332,6 @@ export default function Header({
           onClick={() => { playClick(); onOpenHistory(); }}
         >
           <History size={14} />
-        </button>
-
-        <button
-          className="icon-btn"
-          title="Acceso remoto desde el móvil"
-          aria-label="Acceso remoto"
-          onClick={() => { playClick(); onOpenRemote(); }}
-        >
-          <Globe size={14} />
         </button>
 
         <button

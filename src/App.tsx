@@ -15,7 +15,6 @@ import {
   getInitialFile,
   checkBetaValidity,
   detectOllama,
-  remoteSyncConfig,
 } from "./api";
 import { presetById } from "./providers";
 import { DEFAULT_CONFIG, getRecommendedModelsForProvider, inferModelConfig, computeCostUsd } from "./defaults";
@@ -48,13 +47,14 @@ const OnboardingModal = lazy(() => import("./components/OnboardingModal"));
 const GitModal = lazy(() => import("./components/GitModal"));
 const AnalyticsModal = lazy(() => import("./components/AnalyticsModal"));
 const HistoryModal = lazy(() => import("./components/HistoryModal"));
-const RemotePanel = lazy(() => import("./components/RemotePanel"));
 const BetaAgreementModal = lazy(() => import("./components/BetaAgreementModal"));
+const LocalAiSetupModal = lazy(() => import("./components/LocalAiSetupModal"));
 import {
   initSessions,
   saveSessions,
   saveOpenTabIds,
   setActiveSessionId as persistActiveSessionId,
+  getActiveSessionId,
   makeSession,
   sanitizeMessages,
   deriveTitle,
@@ -190,6 +190,7 @@ function App() {
   const [showGitModal, setShowGitModal] = useState(false);
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showLocalAiModal, setShowLocalAiModal] = useState(false);
 
   const [balance, setBalance] = useState<BalanceInfo | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -330,7 +331,9 @@ function App() {
     let cancelled = false;
     loadSessionsFromStore()
       .then((stored) => {
-        if (cancelled || !stored || stored.length === 0) return;
+        if (cancelled) return;
+        bootHydratedRef.current = true;
+        if (!stored || stored.length === 0) return;
         setSessionState((prev) => {
           const totalMessages = (list: ChatSession[]) =>
             list.reduce((n, s) => n + (s.messages?.length ?? 0), 0);
@@ -339,12 +342,30 @@ function App() {
             stored.length > prev.sessions.length ||
             totalMessages(stored) > totalMessages(prev.sessions);
           if (!useStore) return prev;
-          const nextTabs = stored.slice(0, 3).map((s) => s.id);
-          const nextActive = nextTabs[0] ?? stored[0]?.id ?? "";
-          return { sessions: stored, openTabIds: nextTabs, activeId: nextActive };
+          // Restaura la sesión que estaba activa al cerrar (localStorage
+          // "makora.activeSession") en lugar de forzar siempre la primera,
+          // para no cambiar de sesión al reabrir la app.
+          const savedActiveId = getActiveSessionId();
+          const storedIds = new Set(stored.map((s) => s.id));
+          const restoredActive =
+            savedActiveId && storedIds.has(savedActiveId)
+              ? savedActiveId
+              : stored[0]?.id ?? "";
+          const nextActiveTabs = stored.slice(0, 3).map((s) => s.id);
+          const nextTabs =
+            restoredActive && !nextActiveTabs.includes(restoredActive)
+              ? [restoredActive, ...nextActiveTabs]
+              : nextActiveTabs;
+          return {
+            sessions: stored,
+            openTabIds: nextTabs,
+            activeId: restoredActive,
+          };
         });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        bootHydratedRef.current = true;
+      });
     return () => {
       cancelled = true;
     };
@@ -357,9 +378,12 @@ function App() {
   }, [sessions, openTabIds]);
 
   const [showHistory, setShowHistory] = useState(false);
-  const [showRemote, setShowRemote] = useState(false);
   const sessionStateRef = useRef(sessionState);
   const saveTimerRef = useRef<number | null>(null);
+  // Mientras no termina la hidratación desde SQLite, NO guardamos sesiones: la
+  // sesión vacía de fallback creada en `initSessions` podría sobrescribir el
+  // historial durable antes de restaurarlo y perder chats/proveedor/modelo.
+  const bootHydratedRef = useRef(false);
 
   const activeSession = activeSessionId
     ? sessions.find((s) => s.id === activeSessionId) ?? openSessions[0] ?? null
@@ -541,28 +565,6 @@ function App() {
   );
 
   // Mantén sincronizado el config remoto (acceso móvil) con el proveedor/modelo activo.
-  useEffect(() => {
-    const id = setTimeout(() => {
-      remoteSyncConfig({
-        providerId: activeSessionProviderId,
-        model: activeSessionModel || settings.model,
-        baseUrl: activeSessionBaseUrl || preset.baseUrl,
-        kind: preset.kind,
-        reasoningEffort: null,
-        temperature: null,
-        maxOutputTokens: null,
-      }).catch(() => undefined);
-    }, 600);
-    return () => clearTimeout(id);
-  }, [
-    activeSessionProviderId,
-    settings.model,
-    activeSessionBaseUrl,
-    activeSessionModel,
-    preset.baseUrl,
-    preset.kind,
-  ]);
-
   const skillsContent = config.skills
     .map((s) => `### ${s.name}\n${s.content}`)
     .join("\n\n");
@@ -688,6 +690,7 @@ function App() {
 
   // Debounced persistence avoids hammering localStorage on every token chunk.
   useEffect(() => {
+    if (!bootHydratedRef.current) return;
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => saveSessions(sessionState.sessions), 400);
     return () => {
@@ -708,7 +711,7 @@ function App() {
   useEffect(() => {
     const flush = () => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
-      saveSessions(sessionStateRef.current.sessions);
+      if (bootHydratedRef.current) saveSessions(sessionStateRef.current.sessions);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
@@ -1639,7 +1642,6 @@ function App() {
         onOpenSettings={() => setShowSettings(true)}
         onOpenPalette={() => setShowPalette(true)}
         onOpenHistory={() => setShowHistory(true)}
-        onOpenRemote={() => setShowRemote(true)}
         explorerOpen={explorerOpen}
         onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
         panelOpen={panelOpen}
@@ -1818,6 +1820,16 @@ function App() {
             currentTheme={theme}
             onSelectTheme={setTheme}
             onClose={() => setShowSettings(false)}
+            onOpenLocalAiModal={() => setShowLocalAiModal(true)}
+          />
+        )}
+
+        {showLocalAiModal && (
+          <LocalAiSetupModal
+            isOpen={showLocalAiModal}
+            onClose={() => setShowLocalAiModal(false)}
+            settings={settings}
+            onSaveSettings={handleSaveSettings}
           />
         )}
 
@@ -1881,10 +1893,6 @@ function App() {
             onClearAll={handleClearAllHistory}
             onClose={() => setShowHistory(false)}
           />
-        )}
-
-        {showRemote && (
-          <RemotePanel isOpen={showRemote} onClose={() => setShowRemote(false)} />
         )}
 
         {showEula && (

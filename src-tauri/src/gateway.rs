@@ -1129,12 +1129,23 @@ pub async fn anthropic_turn(
             "message_start" => {
                 if let Some(msg) = v.get("message") {
                     if let Some(u) = msg.get("usage") {
-                        usage.input_tokens =
-                            u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-                        usage.cached_tokens = u
+                        // Anthropic reporta `input_tokens` como los tokens tras el
+                        // último breakpoint de caché (EXCLUYE los leídos de caché),
+                        // y `cache_read_input_tokens` aparte. Para unificar la
+                        // semántica con OpenAI-compat (donde `input_tokens` SÍ
+                        // incluye los cacheados), sumamos los reads de caché al
+                        // input. Así el coste (non_cached = input - cached) y la
+                        // telemetría reflejan el total real facturado.
+                        let cached = u
                             .get("cache_read_input_tokens")
                             .and_then(|x| x.as_u64())
                             .unwrap_or(0) as u32;
+                        usage.input_tokens = (u
+                            .get("input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32)
+                            .saturating_add(cached);
+                        usage.cached_tokens = cached;
                     }
                 }
             }

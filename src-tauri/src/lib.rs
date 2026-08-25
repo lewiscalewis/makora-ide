@@ -1,27 +1,22 @@
 mod agent;
 mod balance;
 mod gateway;
+mod hardware_profiler;
 mod history;
+mod local_server;
 mod mcp;
-pub(crate) mod remote;
-
-use remote::{
-    remote_get_config, remote_list_models, remote_pair_code, remote_revoke, remote_start,
-    remote_status, remote_stop, remote_sync_config, remote_tunnel_start, remote_tunnel_stop,
-};
-
+mod model_downloader;
 mod repo_map;
 mod symbol_index;
 mod terminal;
 mod token_engine;
 
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use specta::Type;
 #[cfg(debug_assertions)]
 use specta_typescript::Typescript;
 use tauri::AppHandle;
-use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
@@ -427,31 +422,6 @@ async fn list_models(config: ChatConfig) -> Result<Vec<String>, String> {
     gateway::fetch_models(&config).await
 }
 
-/// Devuelve las IPs de red local de este equipo (sin enviar tráfico real).
-#[tauri::command]
-#[specta::specta]
-async fn get_lan_ips() -> Result<Vec<String>, String> {
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")
-        .map_err(|e| format!("error creando socket: {e}"))?;
-    let mut ips: Vec<String> = Vec::new();
-    for dst in [
-        "8.8.8.8:80",
-        "1.1.1.1:80",
-        "192.168.1.1:80",
-        "10.0.0.1:80",
-    ] {
-        if socket.connect(dst).is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                let ip = addr.ip().to_string();
-                if !ips.contains(&ip) {
-                    ips.push(ip);
-                }
-            }
-        }
-    }
-    Ok(ips)
-}
-
 fn effective_folders(mut folders: Vec<String>) -> Vec<String> {
     if folders.is_empty() {
         if let Some(h) = dirs::home_dir() {
@@ -781,13 +751,24 @@ pub(crate) fn keyring_get_impl(provider_id: &str) -> Result<Option<String>, Stri
         }
     }
 
-    // 2. Fallback to direct key or legacy SQLite makora_vault with transparent auto-migration
-    if let Some(legacy) = history::legacy_vault_get(&key).or_else(|| history::legacy_vault_get(&clean_id)) {
-        if !legacy.trim().is_empty() {
-            if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
-                let _ = entry.set_password(&legacy);
+    if let Ok(entry) = keyring::Entry::new("makora-ide", &clean_id) {
+        if let Ok(p) = entry.get_password() {
+            if !p.trim().is_empty() {
+                return Ok(Some(p));
             }
-            return Ok(Some(legacy));
+        }
+    }
+
+    // 2. Fallback to encrypted SQLite makora_vault with transparent auto-migration
+    if let Some(val) = history::vault_get(&key)
+        .or_else(|| history::vault_get(&clean_id))
+        .or_else(|| history::vault_get(provider_id))
+    {
+        if !val.trim().is_empty() {
+            if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+                let _ = entry.set_password(&val);
+            }
+            return Ok(Some(val));
         }
     }
 
@@ -800,9 +781,14 @@ fn keyring_set(provider_id: String, secret: String) -> Result<(), String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
 
-    // OS Native Secure Store
-    let entry = keyring::Entry::new("makora-ide", &key).map_err(|e| e.to_string())?;
-    entry.set_password(&secret).map_err(|e| e.to_string())?;
+    // 1. Always persist to encrypted local SQLite vault (100% resilient across all machines)
+    history::vault_set(&key, &secret);
+    history::vault_set(&clean_id, &secret);
+
+    // 2. Also persist to OS Native Secure Store if available
+    if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+        let _ = entry.set_password(&secret);
+    }
 
     Ok(())
 }
@@ -813,7 +799,14 @@ fn keyring_delete(provider_id: String) -> Result<(), String> {
     let clean_id = provider_id.trim().to_lowercase().replace(':', "_");
     let key = format!("api_key_{}", clean_id);
 
+    history::vault_delete(&key);
+    history::vault_delete(&clean_id);
+    history::vault_delete(&provider_id);
+
     if let Ok(entry) = keyring::Entry::new("makora-ide", &key) {
+        let _ = entry.delete_credential();
+    }
+    if let Ok(entry) = keyring::Entry::new("makora-ide", &clean_id) {
         let _ = entry.delete_credential();
     }
 
@@ -881,6 +874,86 @@ async fn detect_ollama() -> Result<bool, String> {
     let resp = client.get("http://localhost:11434/api/tags").send().await;
     Ok(resp.map(|r| r.status().is_success()).unwrap_or(false))
 }
+
+#[tauri::command]
+#[specta::specta]
+fn get_hardware_profile() -> Result<hardware_profiler::HardwareProfile, String> {
+    Ok(hardware_profiler::detect_hardware())
+}
+
+#[tauri::command]
+#[specta::specta]
+fn list_local_models(active_model_id: String) -> Result<Vec<hardware_profiler::ModelCatalogEntry>, String> {
+    let dir = model_downloader::models_dir();
+    Ok(hardware_profiler::get_model_catalog(&dir, &active_model_id))
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn start_model_download(app: AppHandle, model_id: String) -> Result<(), String> {
+    let dir = model_downloader::models_dir();
+    let catalog = hardware_profiler::get_model_catalog(&dir, "");
+    let entry = catalog
+        .iter()
+        .find(|m| m.id == model_id)
+        .ok_or_else(|| format!("Modelo no encontrado en catálogo: {model_id}"))?;
+    model_downloader::start_download(
+        app,
+        entry.id.clone(),
+        entry.download_url.clone(),
+        entry.filename.clone(),
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+fn cancel_model_download(model_id: String) -> Result<bool, String> {
+    Ok(model_downloader::cancel_download(&model_id))
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_model_download_progress(
+    model_id: String,
+) -> Result<Option<model_downloader::DownloadProgress>, String> {
+    Ok(model_downloader::get_download_progress(&model_id))
+}
+
+#[tauri::command]
+#[specta::specta]
+fn delete_local_model(filename: String) -> Result<bool, String> {
+    let dir = model_downloader::models_dir();
+    let target = dir.join(&filename);
+    let part = dir.join(format!("{filename}.part"));
+    let mut deleted = false;
+    if target.exists() {
+        let _ = std::fs::remove_file(target);
+        deleted = true;
+    }
+    if part.exists() {
+        let _ = std::fs::remove_file(part);
+        deleted = true;
+    }
+    Ok(deleted)
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn start_local_ai(
+    app: AppHandle,
+    model_id: String,
+    filename: String,
+) -> Result<local_server::LocalServerStatus, String> {
+    local_server::start_local_model_server(&app, &filename, &model_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_local_ai_status() -> Result<local_server::LocalServerStatus, String> {
+    Ok(local_server::get_server_status())
+}
+
 
 
 #[derive(Clone, serde::Serialize, Type)]
@@ -1489,19 +1562,16 @@ pub fn run() {
             keyring_get,
             keyring_set,
             keyring_delete,
-            remote_status,
-            remote_start,
-            remote_stop,
-            remote_tunnel_start,
-            remote_tunnel_stop,
-            remote_pair_code,
-            remote_revoke,
-            remote_sync_config,
-            remote_get_config,
-            remote_list_models,
-            get_lan_ips,
             detect_project_rules,
             detect_ollama,
+            get_hardware_profile,
+            list_local_models,
+            start_model_download,
+            cancel_model_download,
+            get_model_download_progress,
+            delete_local_model,
+            start_local_ai,
+            get_local_ai_status,
             git_status,
             git_diff,
             git_log,
@@ -1540,7 +1610,6 @@ pub fn run() {
             if let Err(e) = specta_builder.export(Typescript::default(), "../src/bindings.ts") {
                 eprintln!("[specta] no se pudo exportar bindings.ts: {e}");
             }
-            app.manage(Arc::new(remote::RemoteState::new(app.handle().clone())));
             Ok(())
         })
         .run(tauri::generate_context!())

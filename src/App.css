@@ -7198,30 +7198,6 @@ select:focus {
   background: rgba(20, 29, 44, 0.6);
 }
 
-/* ===== RemotePanel: acceso remoto desde el móvil ===== */
-.remote-panel { max-width: 520px; width: 100%; max-height: 86vh; overflow-y: auto; }
-.remote-hero { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; background: rgba(255,255,255,0.03); margin-bottom: 12px; }
-.remote-hero-status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.remote-dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.25); display: inline-block; }
-.remote-dot.on { background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.8); }
-.remote-hero-meta { font-size: 12px; }
-.remote-error { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12px; color: #fca5a5; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); }
-.remote-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.remote-code-card { margin-bottom: 14px; padding: 14px 16px; border-radius: 10px; border: 1px dashed rgba(99,102,241,0.45); background: rgba(99,102,241,0.08); }
-.remote-code-label { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 10px; }
-.remote-ttl { margin-left: auto; font-weight: 500; color: #94a3b8; }
-.remote-ttl.warn { color: #fbbf24; }
-.remote-code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 34px; letter-spacing: 14px; text-align: center; padding: 10px 0 14px; color: #a5b4fc; }
-.remote-section { margin-bottom: 14px; padding-top: 2px; }
-.remote-section-title { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
-.remote-urls { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-.remote-url { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.07); }
-.remote-url code { font-size: 12px; color: #93c5fd; word-break: break-all; }
-.remote-steps { margin: 4px 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #cbd5e1; }
-.remote-steps li::marker { color: #6366f1; }
-.remote-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
-.remote-off-note { margin-top: 10px; display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: #94a3b8; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); padding: 8px 12px; border-radius: 8px; }
+/* ===== Recuerda: estilos de las tabs/queries de git en GitModal ===== */
 .small { font-size: 12px; }
 .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
-.remote-url-public { border-color: rgba(74, 222, 128, 0.45); background: rgba(74, 222, 128, 0.06); }
-.remote-url-public code { color: #86efac; font-weight: 600; }

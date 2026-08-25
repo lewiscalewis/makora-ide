@@ -45,31 +45,6 @@ export const commands = {
 	keyringGet: (providerId: string) => typedError<string | null, string>(__TAURI_INVOKE("keyring_get", { providerId })),
 	keyringSet: (providerId: string, secret: string) => typedError<null, string>(__TAURI_INVOKE("keyring_set", { providerId, secret })),
 	keyringDelete: (providerId: string) => typedError<null, string>(__TAURI_INVOKE("keyring_delete", { providerId })),
-	/**  Devuelve el estado actual del servidor remoto. */
-	remoteStatus: () => typedError<RemoteStatus, string>(__TAURI_INVOKE("remote_status")),
-	/**  Arranca el servidor HTTPS en el puerto configurado (o el indicado). */
-	remoteStart: (port: number | null) => typedError<RemoteStatus, string>(__TAURI_INVOKE("remote_start", { port })),
-	/**  Detiene el servidor HTTPS. */
-	remoteStop: () => typedError<null, string>(__TAURI_INVOKE("remote_stop")),
-	/**
-	 *  Expone el servidor HTTPS a internet mediante Cloudflare Quick Tunnel.
-	 *  Devuelve la URL pública `https://*.trycloudflare.com`.
-	 */
-	remoteTunnelStart: () => typedError<string, string>(__TAURI_INVOKE("remote_tunnel_start")),
-	/**  Detiene el túnel público (Cloudflare) sin detener el servidor HTTPS local. */
-	remoteTunnelStop: () => typedError<null, string>(__TAURI_INVOKE("remote_tunnel_stop")),
-	/**  Genera (o regenera) un código de emparejamiento de 8 caracteres alfanuméricos válido durante PAIR_CODE_TTL. */
-	remotePairCode: () => typedError<string, string>(__TAURI_INVOKE("remote_pair_code")),
-	/**  Revoca el token de acceso actual (desempareja el dispositivo). */
-	remoteRevoke: () => typedError<null, string>(__TAURI_INVOKE("remote_revoke")),
-	/**  Actualiza la configuración remota (modelo, proveedor, puerto, etc.). */
-	remoteSyncConfig: (config: RemoteConfig) => typedError<RemoteConfig, string>(__TAURI_INVOKE("remote_sync_config", { config })),
-	/**  Devuelve la configuración remota actual. */
-	remoteGetConfig: () => typedError<RemoteConfig, string>(__TAURI_INVOKE("remote_get_config")),
-	/**  Lista los modelos disponibles usando la configuración remota. */
-	remoteListModels: () => typedError<string[], string>(__TAURI_INVOKE("remote_list_models")),
-	/**  Devuelve las IPs de red local de este equipo (sin enviar tráfico real). */
-	getLanIps: () => typedError<string[], string>(__TAURI_INVOKE("get_lan_ips")),
 	detectProjectRules: (folders: string[]) => typedError<string | null, string>(__TAURI_INVOKE("detect_project_rules", { folders })),
 	detectOllama: () => typedError<boolean, string>(__TAURI_INVOKE("detect_ollama")),
 	gitStatus: (folder: string) => typedError<{
@@ -229,29 +204,6 @@ export type McpSpec = {
 	command: string,
 	args: string[],
 	enabled: boolean,
-};
-
-export type RemoteConfig = {
-	providerId: string,
-	model: string,
-	baseUrl: string,
-	/**  kind del proveedor: "openai" | "anthropic" | "openai-compatible" */
-	kind?: string,
-	reasoningEffort?: string | null,
-	temperature?: number | null,
-	maxOutputTokens?: number | null,
-};
-
-export type RemoteStatus = {
-	running: boolean,
-	port: number | null,
-	fingerprint: string,
-	pairCodeActive: boolean,
-	deviceLabel: string | null,
-	configured: boolean,
-	config: RemoteConfig,
-	tunnelActive: boolean,
-	tunnelUrl: string | null,
 };
 
 export type StreamChunk = {

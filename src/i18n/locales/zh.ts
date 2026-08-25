@@ -336,6 +336,7 @@ export const zh: TranslationSchema = {
     costSub: "基于当前模型输入与输出费率计费",
     availableBalance: "账户可用余额",
     balanceLive: "实时从服务商 API 查询获取",
+    balanceVsCost: "余额是全部会话后的剩余；费用是当前会话的估算——两者不相加。",
     balanceUnlimited: "无限制 / 本地模型",
     cacheEfficiency: "KV-Cache 缓存效率",
     estimatedSavings: "预估已节省费用:",
